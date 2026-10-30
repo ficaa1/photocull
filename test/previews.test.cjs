@@ -1,0 +1,103 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
+const sharp = require('sharp');
+const { PreviewService, orient } = require('../src/previews.cjs');
+const { Library } = require('../src/library.cjs');
+const { PriorityQueue } = require('../src/queue.cjs');
+const { fixtures } = require('../scripts/fixtures.cjs');
+
+test('visible work jumps ahead of prefetch, and duplicate work shares one promise', async () => {
+  const queue = new PriorityQueue(1), order = [];
+  let unblock;
+  const first = queue.add('first', 1, () => new Promise(resolve => { unblock = resolve; }));
+  await Promise.resolve();
+  const low = queue.add('prefetch', 1, () => order.push('prefetch'));
+  const high = queue.add('visible', 100, () => order.push('visible'));
+  assert.equal(queue.add('visible', 10, () => assert.fail('Duplicated job ran')), high);
+  unblock(); await Promise.all([first, low, high]);
+  assert.deepEqual(order, ['visible', 'prefetch']);
+});
+
+test('stale pending work is canceled while the active job can finish', async () => {
+  const queue = new PriorityQueue(1);
+  let finish;
+  const active = queue.add('active', 10, () => new Promise(resolve => { finish = resolve; }));
+  await Promise.resolve();
+  const stale = queue.add('stale', 1, () => assert.fail('Canceled preview ran'));
+  const rejection = assert.rejects(stale, /superseded/);
+  queue.cancelWhere(job => job.key === 'stale');
+  finish(); await Promise.all([active, rejection]);
+});
+
+test('all eight RAW orientation transforms agree with EXIF auto-orientation', async () => {
+  const width = 80, height = 60;
+  const rgb = Buffer.alloc(width * height * 3);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const n = (y * width + x) * 3;
+    rgb[n] = x < width / 2 ? 210 : 30;
+    rgb[n + 1] = y < height / 2 ? 210 : 30;
+    rgb[n + 2] = x < width / 2 ? 25 : 140;
+  }
+  const input = await sharp(rgb, { raw: { width, height, channels: 3 } }).png().toBuffer();
+  for (let orientation = 1; orientation <= 8; orientation++) {
+    const tagged = await sharp(input).withMetadata({ orientation }).png().toBuffer();
+    const expected = await sharp(tagged).autoOrient().raw().toBuffer({ resolveWithObject: true });
+    const actual = await orient(sharp(input), orientation).raw().toBuffer({ resolveWithObject: true });
+    assert.equal(actual.info.width, expected.info.width, `Orientation ${orientation} width`);
+    assert.equal(actual.info.height, expected.info.height, `Orientation ${orientation} height`);
+    assert.deepEqual(actual.data, expected.data, `Orientation ${orientation} pixels`);
+  }
+});
+
+test('preview pipeline orients JPEGs, reuses memory/disk, and invalidates edited sources', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'photocull-preview-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  await fixtures(path.join(root, 'photos'), 3);
+  const library = new Library(path.join(root, 'state')), s = await library.scan(path.join(root, 'photos'));
+  const cache = path.join(root, 'cache');
+  const previews = new PreviewService(cache);
+  t.after(() => previews.close());
+  const item = library.item(s.id, s.items[2].id);
+  const thumb = await previews.get(item, 'thumb');
+  const meta = await sharp(thumb).metadata();
+  assert.equal(meta.height, 400); assert.equal(meta.width, 267);
+  assert.equal(previews.stats.generated, 1);
+  assert.deepEqual(await previews.get(item, 'thumb'), thumb);
+  assert.equal(previews.stats.memoryHits, 1);
+  const fresh = new PreviewService(cache); t.after(() => fresh.close());
+  assert.deepEqual(await fresh.get(item, 'thumb'), thumb);
+  assert.equal(fresh.stats.diskHits, 1);
+  assert.notEqual(previews.key(item, 'thumb'), previews.key({ ...item, fingerprint: 'changed' }, 'thumb'));
+  const full = await previews.get(item, 'full');
+  const fullMeta = await sharp(full).metadata();
+  assert.equal(fullMeta.width, 1200); assert.equal(fullMeta.height, 1800);
+});
+
+test('real camera RAW uses an embedded JPEG without touching source bytes', { skip: !process.env.PHOTOCULL_RAW_FIXTURE }, async t => {
+  const { createHash } = require('node:crypto');
+  const fixture = path.resolve(process.env.PHOTOCULL_RAW_FIXTURE);
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'photocull-raw-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const sum = async () => createHash('sha256').update(await fs.readFile(fixture)).digest('hex');
+  const before = await sum(), stat = await fs.stat(fixture);
+  const item = { path: fixture, id: 'real-raw', raw: true, fingerprint: `${stat.size}:${stat.mtimeMs}` };
+  const previews = new PreviewService(path.join(root, 'cache')); t.after(() => previews.close());
+  const result = await previews.get(item, 'preview', 100);
+  const info = await sharp(result).metadata();
+  assert.ok(info.width > 500 && info.height > 500);
+  assert.match(previews.sourceInfo.get(item.id).source, /^Embedded /);
+  assert.equal(await sum(), before);
+});
+
+test('validated RAW ranges avoid an extraction subprocess; invalid offsets retain ExifTool fallback', async t => {
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'photocull-ranges-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const bytes=await sharp({create:{width:800,height:600,channels:3,background:'#628c70'}}).jpeg().toBuffer();
+  const file=path.join(root,'a.ARW');await fs.writeFile(file,Buffer.concat([Buffer.alloc(128),bytes]));
+  let calls=0;const exif={async readRaw(){return {JpgFromRaw:'binary',JpgFromRawStart:128,JpgFromRawLength:bytes.length,ImageWidth:800,ImageHeight:600};},async extractBinaryTagToBuffer(){calls++;return bytes;},async end(){}};
+  const item={id:'range',path:file,fingerprint:'one',raw:true};
+  const fast=new PreviewService(path.join(root,'fast'),{exif});t.after(()=>fast.close());await fast.get(item,'preview');assert.equal(calls,0);assert.equal(fast.stats.directExtractions,1);
+  const fallback=new PreviewService(path.join(root,'fallback'),{exif:{...exif,async readRaw(){return{JpgFromRaw:'binary',JpgFromRawStart:1,JpgFromRawLength:bytes.length};}}});t.after(()=>fallback.close());await fallback.get(item,'preview');assert.equal(calls,1);
+});

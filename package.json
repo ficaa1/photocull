@@ -1,0 +1,29 @@
+{
+  "name": "photocull",
+  "productName": "PhotoCull",
+  "version": "0.6.0",
+  "private": true,
+  "description": "A local, preview-first RAW and JPEG culling desktop app",
+  "main": "src/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.cjs",
+    "test:ui": "node scripts/ui-smoke.cjs",
+    "benchmark": "node scripts/benchmark.cjs",
+    "pack:win": "node scripts/package-windows.cjs",
+    "update:win": "node scripts/update-windows.cjs",
+    "pack:mac": "node scripts/package-macos.cjs",
+    "perf:audit": "node scripts/performance-audit.cjs"
+  },
+  "dependencies": {
+    "@xmldom/xmldom": "^0.9.10",
+    "exiftool-vendored": "^39.1.0",
+    "libraw-wasm-nothread": "1.6.0-nothread.1",
+    "sharp": "^0.35.5"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "electron": "^45.1.0",
+    "playwright-core": "^1.58.2"
+  }
+}

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="350" viewBox="0 0 1080 350">
+<rect width="1080" height="350" fill="#fff"/><g font-family="Arial, sans-serif" fill="#24303b"><text x="28" y="32" font-size="20">PhotoCull backend measurements</text><text x="28" y="54" font-size="12" fill="#607080">WSL/Linux · same local workloads · lower is better · not display latency</text>
+<text x="28" y="100" font-size="16">Cold RAW preview</text>
+<text x="28" y="120" font-size="11" fill="#607080">Median of 9 requests</text>
+<text x="28" y="150" font-size="12">Before: 513.81 ms</text>
+<rect x="28" y="162" width="250.00" height="28" rx="2" fill="#9aabb9"/>
+<text x="28" y="225" font-size="12">After: 296.03 ms</text>
+<rect x="28" y="237" width="144.04" height="28" rx="2" fill="#3975a5"/>
+<text x="378" y="100" font-size="16">100-decision burst</text>
+<text x="378" y="120" font-size="11" fill="#607080">3,000-image session</text>
+<text x="378" y="150" font-size="12">Before: 271.66 ms</text>
+<rect x="378" y="162" width="250.00" height="28" rx="2" fill="#9aabb9"/>
+<text x="378" y="225" font-size="12">After: 8.28 ms</text>
+<rect x="378" y="237" width="7.62" height="28" rx="2" fill="#3975a5"/>
+<text x="728" y="100" font-size="16">Group and sort</text>
+<text x="728" y="120" font-size="11" fill="#607080">5,000 filenames</text>
+<text x="728" y="150" font-size="12">Before: 27.11 ms</text>
+<rect x="728" y="162" width="250.00" height="28" rx="2" fill="#9aabb9"/>
+<text x="728" y="225" font-size="12">After: 13.03 ms</text>
+<rect x="728" y="237" width="120.16" height="28" rx="2" fill="#3975a5"/>
+<text x="28" y="320" font-size="11" fill="#607080">Warm OS caches; fresh app cache for RAW requests. Synthetic save burst. Small sample; repeat timings vary.</text></g></svg>

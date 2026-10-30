@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' photocull: data:; connect-src 'self' photocull:; object-src 'none'; base-uri 'none'">
+  <title>PhotoCull</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <button id="toggle-sidebar" class="icon-button pane-toggle" aria-label="Hide sources" aria-controls="sources" aria-expanded="true" title="Sources (B)"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></button><div class="brand"><svg class="brand-symbol" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m9.5 3.4 6 10.4M18.2 5.4l-6 10.4m8.6-4.4h-12m6.9 9.2-6-10.4M5.8 18.6l6-10.4m-8.6 4.4h12"/></svg><span>PhotoCull</span></div>
+    <div id="breadcrumb" class="breadcrumb"></div>
+    <button id="open-folder" class="button quiet"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg><span>Open folder</span></button>
+    <button id="export" class="button primary" disabled><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg><span>Copy picks</span></button>
+  </header>
+  <div class="workspace">
+    <aside id="sources" class="sidebar" aria-label="Sources and filters">
+      <div id="folder-name" class="folder-name">No folder open</div>
+      <div id="folder-detail" class="subtle small"></div>
+      <div id="devices-panel" class="devices-panel" hidden>
+        <div class="sidebar-label">Cards</div>
+        <div id="device-list"></div>
+        <p id="device-status" class="subtle small" role="status"></p>
+      </div>
+      <nav class="filters" aria-label="Filter photos">
+        <button class="filter active" data-filter="all"><span><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>All photos</span><b id="count-all">0</b></button>
+        <button class="filter" data-filter="unreviewed"><span><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/></svg>Unreviewed</span><b id="count-unreviewed">0</b></button>
+        <button class="filter" data-filter="pick"><span><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4m0 0c4-4 9 4 14 0v10c-5 4-10-4-14 0"/></svg>Picks</span><b id="count-pick">0</b></button>
+        <button class="filter" data-filter="reject"><span><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>Rejects</span><b id="count-reject">0</b></button>
+        <button class="filter" data-filter="rated"><span><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9Z"/></svg>Rated</span><b id="count-rated">0</b></button>
+      </nav>
+      <div class="progress-label"><span>Reviewed</span><strong id="progress-text">0 of 0</strong></div>
+      <div class="progress-track"><div id="progress-fill"></div></div>
+      <div class="sidebar-bottom">
+        <button id="settings-open" class="text-button"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 4 .7-2h3.6l.7 2 2 .9 2.1-.3 1.8 3.1-1.3 1.7.2 2.2 1.2 1.7-1.8 3.1-2.1-.3-2 .9-.7 2h-3.6l-.7-2-2-.9-2.1.3-1.8-3.1L4.7 12l-.2-2.2-1.2-1.7 1.8-3.1 2.1.3Z"/><circle cx="12" cy="10.5" r="3"/></svg><span>Settings</span></button>
+        <button id="shortcuts" class="text-button" title="Keyboard shortcuts" aria-label="Keyboard shortcuts">?</button>
+      </div>
+    </aside>
+    <main class="main">
+      <div class="toolbar">
+        <div class="view-heading"><h1 id="view-title">Photos</h1><span id="view-count" class="subtle small"></span></div>
+        <div class="toolbar-right">
+          <select id="color-filter" aria-label="Filter color"><option value="">All colors</option></select>
+          <input id="search" type="search" aria-label="Search filenames" placeholder="Search">
+          <label id="grid-size-control" class="grid-size-control" title="Thumbnail size" hidden><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8" cy="9" r="1"/><path d="m3 17 5-5 4 4 4-5 5 6"/></svg><input id="grid-size" type="range" min="160" max="320" step="5" value="205" aria-label="Thumbnail size"></label><div class="view-switch" aria-label="View mode"><button id="review-mode" class="active" title="Review (E)" aria-label="Review view"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8" cy="9" r="1"/><path d="m3 17 5-5 4 4 4-5 5 6"/></svg></button><button id="grid-mode" title="Contact sheet (G)" aria-label="Contact sheet"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></button></div><button id="toggle-inspector" class="icon-button pane-toggle" aria-label="Hide details" aria-controls="inspector" aria-expanded="true" title="Details (I)"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
+        </div>
+      </div>
+      <div id="empty" class="empty-state">
+        <div class="empty-symbol"><svg class="brand-symbol" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m9.5 3.4 6 10.4M18.2 5.4l-6 10.4m8.6-4.4h-12m6.9 9.2-6-10.4M5.8 18.6l6-10.4m-8.6 4.4h12"/></svg></div><button id="empty-open" class="button primary"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg><span>Open folder</span></button>
+      </div>
+      <div id="no-matches" class="no-matches" hidden>No matches.<button id="reset-filter" class="text-button">Clear filter</button></div>
+      <section id="review" class="review" hidden aria-label="Photo review">
+        <div class="image-stage" id="image-stage">
+          <div class="image-topline"><span id="format-badge" class="chip">RAW</span><span id="image-position" class="chip">1 / 1</span></div>
+          <div id="image-viewport" class="image-viewport" role="button" tabindex="0" aria-label="Click to zoom"><img id="review-image" alt="Selected photograph" draggable="false"></div>
+          <div id="image-loading" class="loading-badge">Loading preview…</div>
+          <div id="image-error" class="image-error" hidden></div>
+          <button id="retry-preview" class="button retry-preview" hidden>Retry preview</button>
+          <button id="previous" class="image-nav previous" aria-label="Previous image"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></button>
+          <button id="next" class="image-nav next" aria-label="Next image"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 6 6 6-6 6"/></svg></button>
+          <div class="image-bottomline"><span id="preview-source" class="chip">Embedded preview</span><div class="zoom-controls"><button id="zoom" class="chip" title="Fit image (Space toggles zoom)" aria-pressed="true">Fit</button><select id="zoom-percent" class="chip" aria-label="Zoom percentage" title="Zoom percentage"><option value="12.5">12.5%</option><option value="25">25%</option><option value="33.3">33.3%</option><option value="50">50%</option><option value="66.7">66.7%</option><option value="100" selected>100%</option><option value="200">200%</option><option value="300">300%</option><option value="400">400%</option><option value="800">800%</option><option value="1600">1600%</option></select><button id="fullscreen" class="chip" title="Fullscreen (F)" aria-label="Fullscreen" aria-pressed="false">⛶</button></div></div>
+          <div id="flag-overlay" class="flag-overlay" hidden></div>
+        </div>
+        <div id="review-dock" class="review-dock">
+        <div class="decision-bar">
+          <div class="photo-name"><strong id="photo-name"></strong><span id="photo-size" class="subtle small"></span></div>
+          <div id="rating" class="rating" aria-label="Star rating"></div>
+          <div class="flag-buttons"><button id="pick" class="button decision"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4m0 0c4-4 9 4 14 0v10c-5 4-10-4-14 0"/></svg><span>Pick</span><kbd>P</kbd></button><button id="reject" class="button decision"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg><span>Reject</span><kbd>X</kbd></button><button id="clear" class="clear-button" title="Clear flag (U)" aria-label="Clear flag"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10a8 8 0 1 1 1 8M4 4v6h6"/></svg></button></div>
+        </div>
+        <div id="filmstrip" class="filmstrip" aria-label="Nearby photos"></div>
+        </div>
+        <div id="filmstrip-hotspot" class="filmstrip-hotspot" aria-hidden="true"></div>
+      </section>
+      <section id="grid" class="grid-viewport" hidden aria-label="Photo grid"><div id="grid-content" class="grid-content"></div></section>
+      <footer class="statusbar"><span id="save-status"><span class="status-dot"></span> Ready</span><span id="preview-status"></span></footer>
+    </main>
+    <aside id="inspector" class="inspector">
+      <div class="sidebar-label">Details</div>
+      <div class="inspector-empty" id="inspector-empty"></div>
+      <div id="image-details" hidden>
+        <h2 id="detail-name"></h2><div id="detail-kind" class="subtle small"></div>
+        <div class="inspector-divider"></div>
+        <div class="sidebar-label">Capture</div>
+        <dl id="metadata"><dt>Camera</dt><dd>Loading…</dd></dl>
+        <div class="inspector-divider"></div>
+        <div class="sidebar-label">Color label</div>
+        <div id="color-labels" class="color-labels" aria-label="Color label"></div>
+        <div id="detail-decision" class="detail-decision">Unreviewed</div>
+
+      </div>
+
+    </aside>
+  </div>
+  <dialog id="help-dialog"><div class="dialog-header"><h2>Shortcuts</h2><button class="close-dialog" aria-label="Close">×</button></div><div class="shortcut-list"><span>Previous / next image</span><kbd>← / →</kbd><span>Pick</span><kbd>P</kbd><span>Reject</span><kbd>X</kbd><span>Clear flag</span><kbd>U</kbd><span>Star rating / clear rating</span><kbd>1–5 / 0</kbd><span>Fit / zoom</span><kbd>Space</kbd><span>Fullscreen / exit</span><kbd>F / Esc</kbd><span>Grid / review</span><kbd>G / E</kbd><span>Undo / redo decision</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Open folder</span><kbd>Ctrl O</kbd><span>Color label / clear</span><kbd>Alt 1–8 / Alt 0</kbd><span>Sources / details</span><kbd>B / I</kbd><span>Help</span><kbd>?</kbd></div></dialog>
+  <dialog id="export-dialog">
+    <div class="dialog-header"><h2>Copy picks</h2><button class="close-dialog" aria-label="Close">×</button></div>
+    <p id="copy-scope" class="subtle"></p>
+    <button id="copy-destination" class="destination-button"><span id="copy-destination-path">Choose folder…</span><span>↗</span></button>
+    <div class="field-row"><label for="copy-folder-mode">Folder</label><select id="copy-folder-mode"><option value="flat">No subfolder</option><option value="named">Named subfolder</option><option value="preserve">Keep source folders</option></select></div>
+    <div class="field-row" id="copy-folder-name-row" hidden><label for="copy-folder-name">Name</label><input id="copy-folder-name" maxlength="120" placeholder="Folder name"></div>
+    <div class="inline-options"><label><input type="checkbox" id="copy-jpeg"> JPEGs</label><label><input type="checkbox" id="copy-xmp"> XMP</label><label title="Writes metadata inside exported copies; sources stay unchanged"><input type="checkbox" id="copy-metadata"> Embed metadata</label></div>
+    <div class="field-row"><label for="copy-preset">Preset</label><select id="copy-preset"></select><button id="copy-settings" class="text-button" title="Edit export settings" aria-label="Edit export settings"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 4 .7-2h3.6l.7 2 2 .9 2.1-.3 1.8 3.1-1.3 1.7.2 2.2 1.2 1.7-1.8 3.1-2.1-.3-2 .9-.7 2h-3.6l-.7-2-2-.9-2.1.3-1.8-3.1L4.7 12l-.2-2.2-1.2-1.7 1.8-3.1 2.1.3Z"/><circle cx="12" cy="10.5" r="3"/></svg></button></div>
+    <details id="copy-naming"><summary>File naming</summary><div id="copy-naming-fields"></div></details>
+    <div id="copy-name-preview" class="name-preview"></div>
+    <div class="copy-actions"><button id="copy-start" class="button primary" disabled>Copy</button><button id="copy-cancel" class="button quiet" hidden>Cancel</button><button id="copy-reveal" class="button quiet" hidden>Open folder</button></div>
+    <progress id="copy-progress" max="1" value="0" hidden></progress>
+    <p id="copy-status" class="subtle small" role="status" aria-live="polite"></p>
+    <pre id="export-results" hidden></pre>
+  </dialog>
+  <dialog id="settings-dialog">
+    <div class="dialog-header"><h2>Settings</h2><button class="close-dialog" aria-label="Close">×</button></div>
+    <nav class="settings-tabs" aria-label="Settings"><button data-settings-tab="general" class="active">General</button><button data-settings-tab="metadata">Metadata</button><button data-settings-tab="colors">Colors</button><button data-settings-tab="naming">File naming</button></nav>
+    <section data-settings-page="general">
+      <label class="toggle-row"><input type="checkbox" id="auto-advance"> Auto advance</label>
+      <label class="toggle-row"><input type="checkbox" id="recursive"> Include subfolders</label>
+      <label class="toggle-row"><input type="checkbox" id="auto-open-cards"> Open camera cards automatically</label>
+      <div class="field-row"><label for="raw-rendering">RAW rendering</label><select id="raw-rendering"><option value="missing">Missing previews</option><option value="small">Missing or small previews</option><option value="off">Off</option></select></div>
+      <label class="toggle-row"><input type="checkbox" id="default-jpeg"> Copy companion JPEGs</label>
+      <label class="toggle-row"><input type="checkbox" id="default-xmp"> Include XMP</label>
+      <label class="toggle-row" title="Writes metadata inside exported copies"><input type="checkbox" id="default-metadata"> Embed metadata in copies</label>
+    </section>
+    <section data-settings-page="metadata" hidden>
+      <div class="field-row preset-row"><label for="metadata-preset">Preset</label><select id="metadata-preset"></select><button id="preset-delete" class="text-button" title="Delete preset" aria-label="Delete preset">−</button></div>
+      <div class="field-row"><input id="preset-name" type="text" maxlength="80" placeholder="Preset name" aria-label="Preset name"><button id="preset-save" class="button quiet">Save as</button></div>
+      <div class="inline-options"><label><input type="checkbox" id="write-ratings"> Ratings</label><label><input type="checkbox" id="write-labels"> Labels</label><label><input type="checkbox" id="reject-rating"> Reject = −1</label></div>
+      <div class="mapping-row"><label for="pick-color">Pick</label><select id="pick-color"></select><label for="reject-color">Reject</label><select id="reject-color"></select></div>
+      <div class="metadata-fields"><label>Creator<input id="meta-creator" maxlength="1024"></label><label>Copyright<input id="meta-copyright" maxlength="1024"></label><label>Title<input id="meta-title" maxlength="1024"></label><label>Caption<textarea id="meta-caption" rows="2" maxlength="8192"></textarea></label><label>Keywords<input id="meta-keywords" placeholder="Comma separated"></label></div>
+      <details id="metadata-export"><summary>Export metadata</summary><div class="copy-actions"><button id="export-xmp" class="button quiet" title="Write sidecars beside source photos">Write source XMP</button><button id="export-json" class="button quiet">Save JSON</button></div><pre id="metadata-results" hidden></pre></details>
+    </section>
+    <section data-settings-page="colors" hidden><div class="color-header"><span>Color</span><span>Name</span><span>XMP label</span></div><div id="color-settings"></div></section>
+    <section data-settings-page="naming" hidden><div class="field-row"><label for="settings-folder-mode">Folder</label><select id="settings-folder-mode"><option value="flat">No subfolder</option><option value="named">Named subfolder</option><option value="preserve">Keep source folders</option></select></div><div class="field-row" id="settings-folder-name-row" hidden><label for="settings-folder-name">Name</label><input id="settings-folder-name" maxlength="120" placeholder="Folder name"></div><div id="settings-naming-fields"></div><div id="settings-name-preview" class="name-preview"></div></section>
+    <p id="settings-status" class="subtle small" role="status"></p>
+    <div class="settings-footer"><button id="settings-folder" class="text-button">Open settings folder</button><button id="settings-cancel" class="button quiet">Cancel</button><button id="settings-save" class="button primary">Save</button></div>
+  </dialog>
+  <div id="toast" role="status" hidden></div>
+  <script src="naming.js"></script>
+  <script src="image-view.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
