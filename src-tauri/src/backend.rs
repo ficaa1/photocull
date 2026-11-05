@@ -44,7 +44,8 @@ impl Backend {
     pub fn spawn(app: &AppHandle) -> Result<Backend, String> {
         let (node, script) = locate(app)?;
         let mut command = Command::new(&node);
-        command.arg(&script).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
+        // Node rejects Windows verbatim (\\?\) paths for its entry script.
+        command.arg(dunce::simplified(&script)).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;

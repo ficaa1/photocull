@@ -2477,6 +2477,7 @@ dependencies = [
 name = "photocull"
 version = "0.7.0"
 dependencies = [
+ "dunce",
  "serde",
  "serde_json",
  "tauri",
