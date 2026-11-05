@@ -9,6 +9,8 @@ class CullingService {
   constructor(library,previews,settings) { this.library=library;this.previews=previews;this.settings=settings; }
   async record(session,id) {
     const item=this.library.item(session,id),original={...item,develop:null};
+    const stat=await fs.stat(item.path);
+    if(stat.size!==item.size || stat.mtimeMs!==item.mtimeMs)throw new Error('Photo changed on disk. Reopen the folder before focus analysis.');
     const metadata=await this.previews.metadata(original);
     const key=hash(`sharpness-v1:${this.previews.key(original,'preview')}:${JSON.stringify(metadata.focus)}`);
     const cache=path.join(this.previews.cacheDir,key+'.sharpness.json');

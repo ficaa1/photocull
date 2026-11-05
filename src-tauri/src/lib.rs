@@ -252,7 +252,8 @@ pub fn run() {
                 }
             };
             app.manage(backend);
-            let data_dir = handle.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir().join("PhotoCull"));
+            let data_dir = std::env::var_os("PHOTOCULL_DATA_DIR").map(PathBuf::from)
+                .unwrap_or_else(|| handle.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir().join("PhotoCull")));
             app.manage(std::sync::Arc::new(develop::Engine::new(data_dir)));
             #[cfg(target_os = "macos")]
             {
