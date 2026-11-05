@@ -1,3 +1,4 @@
+const { dehancerPreset, normalizeEditors } = require('./editors.cjs');
 const COLORS = [
   ['Red', '#df6262'], ['Yellow', '#dec45e'], ['Green', '#83bb72'], ['Blue', '#6f9cdb'],
   ['Purple', '#aa81d2'], ['Orange', '#dc9959'], ['Cyan', '#64b9be'], ['Gray', '#949b9a'],
@@ -10,9 +11,7 @@ const exportLogic = require('./renderer/export.js');
 const EXPORT_PRESETS = exportLogic.PRESETS.map(p => ({ ...p, options: exportLogic.options(p.options), naming: NAMING, subfolder: '', conflict: 'unique' }));
 const DEFAULTS = { version: 1, zoomPercent: 100, zoomClickCenter: false, rawRendering: 'missing', previewCacheGB: 2, autoAdvance: true, recursive: false, autoOpenCards: true, deleteMode: 'trash',
   copyJpeg: false, copyXmp: false, copyMetadata: false, folders: FOLDERS,
-  // Develop and export: the Dehancer plugin executable ('' = its default location), the recipe new photos start
-  // from, and the last export settings (Lightcraft ExportOptions, camelCase; checked by the shell).
-  dehancerExe: '', dehancerFolder: '', defaultRecipe: 'neutral', exportOptions: { format: 'jpeg', quality: 90, colorSpace: 'srgb' }, exportSubfolder: '', exportConflict: 'unique', exportPresets: EXPORT_PRESETS, activePreset: 'standard', naming: NAMING, metadata: METADATA, colors: COLORS };
+  editors: [dehancerPreset()], defaultEditor: 'dehancer', handoffFolder: '', handoffSubfolder: '_develop', handoffAlways: false, deleteHandoffsAfterExport: false, defaultRecipe: 'neutral', exportOptions: { format: 'jpeg', quality: 90, colorSpace: 'srgb' }, exportSubfolder: '', exportConflict: 'unique', exportPresets: EXPORT_PRESETS, activePreset: 'standard', naming: NAMING, metadata: METADATA, colors: COLORS };
 const BUILTINS = [
   { id: 'standard', name: 'Standard', metadata: METADATA, naming: NAMING, folders: FOLDERS, colors: COLORS },
   { id: 'ratings', name: 'Ratings only', metadata: { ...METADATA, writeLabels: false }, naming: NAMING, folders: FOLDERS, colors: COLORS },
@@ -47,15 +46,25 @@ function normalizeSettings(value = {}, base = DEFAULTS) {
     result.deleteMode = value.deleteMode;
   }
   if ('activePreset' in value) result.activePreset = text(value.activePreset, 80);
-  if ('dehancerExe' in value) {
-    result.dehancerExe = text(value.dehancerExe, 1024);
-    if (result.dehancerExe && !/.exe$/i.test(result.dehancerExe) && process.platform === 'win32') throw new Error('Choose DehancerLightroom.exe.');
-  }
-  if ('dehancerFolder' in value) {
-    result.dehancerFolder = text(value.dehancerFolder, 1024);
+  if ('editors' in value) result.editors = normalizeEditors(value.editors);
+  else if ('dehancerExe' in value) result.editors = normalizeEditors(result.editors.map(e => e.id === 'dehancer' ? { ...e, path: text(value.dehancerExe, 4096) || dehancerPreset().path } : e));
+  if ('defaultEditor' in value) result.defaultEditor = text(value.defaultEditor, 80);
+  if (!result.editors.some(e => e.id === result.defaultEditor)) throw new Error('Choose a configured default editor.');
+  if ('handoffFolder' in value || 'dehancerFolder' in value) {
+    result.handoffFolder = text(value.handoffFolder ?? value.dehancerFolder, 4096);
     const path = require('node:path');
-    if (result.dehancerFolder && ((!path.isAbsolute(result.dehancerFolder) && !path.win32.isAbsolute(result.dehancerFolder)) || /[\r\n]/.test(result.dehancerFolder))) throw new Error('Choose an absolute Dehancer folder.');
+    if (result.handoffFolder && ((!path.isAbsolute(result.handoffFolder) && !path.win32.isAbsolute(result.handoffFolder)) || /[\r\n]/.test(result.handoffFolder))) throw new Error('Choose an absolute hand-off folder.');
   }
+  if ('handoffSubfolder' in value) {
+    const name = text(value.handoffSubfolder, 120);
+    if (!name || /[\x00-\x1f<>:"/\\|?*]/.test(name) || /[. ]$/.test(name) || name === '.' || name === '..' || /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i.test(name)) throw new Error('Invalid hand-off subfolder name.');
+    result.handoffSubfolder = name;
+  }
+  for (const key of ['handoffAlways', 'deleteHandoffsAfterExport']) if (key in value) {
+    if (typeof value[key] !== 'boolean') throw new Error('Invalid setting: ' + key);
+    result[key] = value[key];
+  }
+  delete result.dehancerExe; delete result.dehancerFolder;
   if ('defaultRecipe' in value) result.defaultRecipe = text(value.defaultRecipe, 80) || 'neutral';
   if ('exportOptions' in value) {
     if (!value.exportOptions || typeof value.exportOptions !== 'object' || Array.isArray(value.exportOptions) || JSON.stringify(value.exportOptions).length > 16384) throw new Error('Invalid export settings.');

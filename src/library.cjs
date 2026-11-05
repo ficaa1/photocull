@@ -47,7 +47,7 @@ function groupFiles(files) {
   return records.sort((a, b) => filenameOrder.compare(a.name, b.name) || a.path.localeCompare(b.path));
 }
 
-const developSummary = develop => ({ developed: !!develop?.tiff, dehancer: !!develop?.edited, tiff: develop?.tiff ?? null, developRevision: develop?.revision ?? 0, recipe: develop?.recipe ?? null, adjusted: !!develop?.settings });
+const developSummary = develop => ({ developed: !!develop?.tiff, externalEdit: !!develop?.editedBy, editedBy: develop?.editedBy ?? null, tiff: develop?.tiff ?? null, developRevision: develop?.revision ?? 0, recipe: develop?.recipe ?? null, adjusted: !!develop?.settings });
 
 class Library {
   constructor(dataDir, { settings = () => DEFAULTS } = {}) {
@@ -144,7 +144,7 @@ class Library {
   // Develop state (see develop.cjs). Not part of undo: it is edited in the develop view, not by culling keys.
   developGet(sessionId, imageId) {
     const item = this.item(sessionId, imageId);
-    return { id: item.id, name: item.name, raw: item.raw, ...(item.develop || { recipe: null, settings: null, tiff: null, edited: false }) };
+    return { id: item.id, name: item.name, raw: item.raw, ...(item.develop || { recipe: null, settings: null, tiff: null, editedBy: null }), edited: !!item.develop?.editedBy };
   }
 
   async developSet(sessionId, ids, { recipe = null, settings = null } = {}) {
@@ -153,18 +153,31 @@ class Library {
     if (recipe !== null && (typeof recipe !== 'string' || recipe.length > 80)) throw new Error('Unknown recipe.');
     settings = settings === null ? null : checkSettings(settings);
     const items = [...new Set(ids)].map(id => this.item(sessionId, id));
-    for (const item of items) item.develop = developState({ ...item.develop, recipe, settings, tiff: item.develop?.tiff ?? null, edited: item.develop?.edited ?? false });
+    for (const item of items) item.develop = developState({ ...item.develop, recipe, settings, tiff: item.develop?.tiff ?? null, editedBy: item.develop?.editedBy ?? null });
     await this.save(s);
     return { items: items.map(item => ({ id: item.id, ...developSummary(item.develop) })) };
   }
 
-  // Called by the shell after it writes a TIFF or Dehancer saves one.
-  async developMark(sessionId, imageId, { tiff, edited } = {}) {
+  // Called only by the shell after it writes a hand-off or detects an external save.
+  async developMark(sessionId, imageId, { tiff, edited, editedBy, exported, exportedStamp: confirmedStamp } = {}) {
     const s = this.get(sessionId), item = this.item(sessionId, imageId);
     const next = { ...(item.develop || {}) };
-    if (typeof tiff === 'string') { next.tiff = tiff; next.edited = false; }
-    if (edited === true) next.edited = true;
-    next.revision = (item.develop?.revision || 0) + 1;
+    if (typeof tiff === 'string') { next.tiff = tiff; next.editedBy = null; next.exported = false; }
+    if (editedBy) { next.editedBy = editedBy; next.exported = false; }
+    else if (edited === true) { next.editedBy = 'dehancer'; next.exported = false; }
+    if (exported === true) next.exported = true;
+    next.revision = (item.develop?.revision || 0) + (exported === true ? 0 : 1);
+    next.handoffs = [...(next.handoffs || [])];
+    if (next.tiff) {
+      const previous = next.handoffs.find(r => r.path === next.tiff);
+      const realPath = typeof tiff !== 'string' && previous ? previous.realPath : await fs.realpath(next.tiff).catch(() => next.tiff);
+      const stat = typeof tiff === 'string' || exported === true ? await fs.stat(next.tiff).catch(()=>null) : null;
+      const stamp = stat ? {bytes:stat.size,mtime:stat.mtimeMs} : null;
+      const exportedStamp = next.exported ? (confirmedStamp || stamp || previous?.exportedStamp || null) : null;
+      const writtenStamp = typeof tiff === 'string' ? stamp : previous?.writtenStamp || null;
+      const record = { path: next.tiff, realPath, editedBy: next.editedBy || null, exported: !!next.exported, exportedStamp, writtenStamp };
+      next.handoffs = [...next.handoffs.filter(r => r.path !== next.tiff), record];
+    }
     item.develop = developState(next);
     await this.save(s);
     return { id: item.id, ...developSummary(item.develop) };

@@ -139,17 +139,21 @@ function parseRecipeFile(data) {
 }
 
 // Per-photo develop state as stored in the session: the recipe it started from, its own settings (null = the
-// recipe's), the developed TIFF and whether Dehancer saved an edit into it.
+// recipe's), the developed TIFF and which external editor saved an edit into it.
+const fileStamp = input => isObject(input) && Number.isFinite(input.bytes) && Number.isFinite(input.mtime) ? { bytes:input.bytes, mtime:input.mtime } : null;
 function developState(input) {
   if (!isObject(input)) return null;
   const state = {
     recipe: typeof input.recipe === 'string' && input.recipe.length <= 80 ? input.recipe : null,
     settings: isObject(input.settings) ? input.settings : null,
     tiff: typeof input.tiff === 'string' && path.isAbsolute(input.tiff) ? input.tiff : null,
-    edited: input.edited === true,
+    editedBy: Object.hasOwn(input, 'editedBy') ? (typeof input.editedBy === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(input.editedBy) ? input.editedBy : null) : input.edited === true ? 'dehancer' : null,
+    exported: input.exported === true,
+    handoffs: Array.isArray(input.handoffs) ? input.handoffs.filter(r => isObject(r) && typeof r.path === 'string' && path.isAbsolute(r.path)).map(r => ({ path: r.path, realPath: typeof r.realPath === 'string' ? r.realPath : r.path, editedBy: typeof r.editedBy === 'string' ? r.editedBy : null, exported: r.exported === true, exportedStamp: fileStamp(r.exportedStamp), writtenStamp: fileStamp(r.writtenStamp) })) : [],
     revision: Number.isSafeInteger(input.revision) && input.revision >= 0 ? input.revision : 0,
   };
-  return state.recipe || state.settings || state.tiff ? state : null;
+  if (state.tiff && !state.handoffs.some(r => r.path === state.tiff)) state.handoffs.push({ path: state.tiff, realPath: state.tiff, editedBy: state.editedBy, exported: state.exported, exportedStamp: null, writtenStamp: null });
+  return state.recipe || state.settings || state.tiff || state.handoffs.length ? state : null;
 }
 
 // Destination paths for an export: the naming template, an extension, an optional subfolder, and unique names

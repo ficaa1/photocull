@@ -1,3 +1,5 @@
+const { inventory: handoffInventory, cleanup: cleanupHandoffs } = require('./handoffs.cjs');
+const { testEditor, dehancerPreset } = require('./editors.cjs');
 // PhotoCull backend. The Tauri shell runs this file under a bundled Node
 // runtime and owns the window, dialogs and file deletion; everything that
 // touches photos lives here.
@@ -78,6 +80,7 @@ async function start() {
   let deleting = false;
   const recipes = new RecipeStore(settings.folder);
   await recipes.init();
+  previews.editorName = id => settings.value.editors.find(e=>e.id===id)?.name;
   const methods = {
     // Develop (rendering is in the shell, src-tauri/src/develop.rs).
     'recipes': () => ({ recipes: recipes.list(), defaultRecipe: settings.value.defaultRecipe, warning: recipes.warning }),
@@ -88,21 +91,21 @@ async function start() {
     'export-recipes': (file, id) => recipes.exportFile(file, id),
     'develop-get': async (session, id) => {
       const state = library.developGet(session, id);
-      if (state.tiff && !await fs.stat(state.tiff).then(s => s.isFile(), () => false)) { state.tiff = null; state.edited = false; }
+      if (state.tiff && !await fs.stat(state.tiff).then(s => s.isFile(), () => false)) { state.tiff = null; state.edited = false; state.editedBy = null; }
       const recipe = recipes.get(state.recipe) || recipes.get(settings.value.defaultRecipe) || recipes.get('neutral');
       return { ...state, recipe: recipe.id, recipeSettings: recipe.settings, settings: state.settings ?? recipe.settings };
     },
     'develop-set': (session, ids, value) => library.developSet(session, ids, value || {}),
     'develop-folder': async session => {
       const s = library.get(session);
-      const folder = settings.value.dehancerFolder;
+      const folder = settings.value.handoffFolder;
       const valid = folder && await writableFolder(folder);
-      return { folder: s.removable ? (valid ? folder : null) : path.join(s.folder, '_develop'), removable: s.removable };
+      return { folder: s.removable || settings.value.handoffAlways ? (valid ? folder : null) : path.join(s.folder, settings.value.handoffSubfolder), removable: s.removable };
     },
     'develop-folder-check': async folder => { if (!await writableFolder(folder)) throw new Error('Choose an existing writable TIFF folder.'); return folder; },
-    'develop-plan': async (session, ids, folder) => {
+    'develop-plan': async (session, ids, folder, extension = 'tif') => {
       if (!Array.isArray(ids) || !ids.length || ids.length > 100_000) throw new Error('Choose RAW photos to send.');
-      return planTiffs([...new Set(ids)].map(id => library.item(session, id)), folder, library.get(session).items);
+      return planTiffs([...new Set(ids)].map(id => library.item(session, id)), folder, library.get(session).items, extension);
     },
     'make-folder': async folder => {
       if (typeof folder !== 'string' || !path.isAbsolute(folder)) throw new Error('Invalid folder.');
@@ -114,7 +117,7 @@ async function start() {
       if (!Array.isArray(ids) || !ids.length || ids.length > 100_000) throw new Error('Choose photos to export.');
       const items = [...new Set(ids)].map(id => library.item(session, id));
       if (items.some(item => item.trashed)) throw new Error('Photos in Trash cannot be exported.');
-      return planExport(items, { ...(options || {}), protectedPaths: s.items.flatMap(i => [i.path, i.companion, i.develop?.tiff]).filter(Boolean), captureDate: item => previews.metadata(item).then(data => data.captured) });
+      return planExport(items, { ...(options || {}), protectedPaths: s.items.flatMap(i => [i.path, i.companion, i.develop?.tiff, ...(i.develop?.handoffs || []).map(r=>r.path)]).filter(Boolean), captureDate: item => previews.metadata(item).then(data => data.captured) });
     },
     // Shell-only: Lightcraft's AVIF muxer carries EXIF but omits XMP. The file is still staged.
     'export-embed-xmp': async (file, xmp) => {
@@ -127,9 +130,37 @@ async function start() {
       try { await handle.sync(); } finally { await handle.close(); }
     },
     // Only the shell calls these two.
-    'develop-context': (session, id) => {
+    'develop-context': async (session, id) => {
       const item = library.item(session, id);
-      return { file: item.path, name: item.name, raw: item.raw, tiff: item.develop?.tiff ?? null, dehancerExe: settings.value.dehancerExe };
+      const stat=item.develop?.tiff ? await fs.stat(item.develop.tiff).catch(()=>null) : null;
+      return { file: item.path, name: item.name, raw: item.raw, tiff: item.develop?.tiff ?? null, editedBy: item.develop?.editedBy ?? null, handoffStamp: stat ? {bytes:stat.size,mtime:stat.mtimeMs} : null };
+    },
+    'editor-context': id => { const editor = settings.value.editors.find(e => e.id === id); if (!editor) throw new Error('Choose a saved editor.'); return editor; },
+    'editor-preset': () => dehancerPreset(),
+    'editor-test': editor => testEditor(editor),
+    'handoff-usage': session => handoffInventory(library.get(session)),
+    'handoff-prepare': (session, ids) => previews.suspendHandoffs(ids.map(id=>library.item(session,id))),
+    'handoff-release': (session, ids) => previews.resumeHandoffs(ids.map(id=>library.item(session,id))),
+    'handoff-clean': async (session, token, allowUnexported) => {
+      const items=library.get(session).items;
+      await previews.suspendHandoffs(items);
+      try { return await cleanupHandoffs(library, session, token, allowUnexported); }
+      finally { previews.resumeHandoffs(items); }
+    },
+    'handoff-exported': async (session, records) => {
+      const ids=[];
+      for (const record of records) {
+        const item=library.item(session,record.id),file=item.develop?.tiff;
+        if (!file || file!==record.path) continue;
+        const stat=await fs.stat(file).catch(()=>null);
+        if (!stat || record.stamp?.bytes!==stat.size || record.stamp?.mtime!==stat.mtimeMs) continue;
+        await library.developMark(session,record.id,{exported:true,exportedStamp:record.stamp});ids.push(record.id);
+      }
+      if (!settings.value.deleteHandoffsAfterExport) return null;
+      const items=ids.map(id=>library.item(session,id));
+      await previews.suspendHandoffs(items);
+      try { const usage = await handoffInventory(library.get(session)); return await cleanupHandoffs(library, session, usage.token, false, ids); }
+      finally { previews.resumeHandoffs(items); }
     },
     'develop-mark': async (session, id, mark) => { const result=await library.developMark(session, id, mark || {}); previews.invalidatePhoto(library.item(session,id)); return result; },
     'scan': async (folder, recursive) => {

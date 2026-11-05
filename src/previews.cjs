@@ -34,7 +34,7 @@ class PreviewService {
     this.memory = new Map(); this.memoryBytes = 0;
     this.queue = new PriorityQueue(3); this.sources = new PriorityQueue(2);
     this.exif = exif || new ExifTool({ maxProcs: 2, taskTimeoutMillis: 15000 });
-    this.sourceInfo = new Map(); this.infoByKind = new Map(); this.states = new Map(); this.metadataJobs = new Map();
+    this.suspendedHandoffs = new Set(); this.editorName = null; this.sourceInfo = new Map(); this.infoByKind = new Map(); this.states = new Map(); this.metadataJobs = new Map();
     this.inventories = new Map(); this.extracting = new Map(); this.sizes = new Map();
     this.policy = POLICIES.includes(rendering) ? rendering : 'missing';
     this.revision = 0; this.itemRevisions = new Map(); this.focusIds = new Set(); this.visibleIds = new Set();
@@ -46,10 +46,10 @@ class PreviewService {
   }
   // Keep the photo id for scheduling, but cache finished pixels under the TIFF's own file stamp.
   async displayItem(item) {
-    if (!item.develop?.edited || !item.develop.tiff) return item;
+    if (this.suspendedHandoffs.has(item.id) || !(item.develop?.editedBy || item.develop?.edited) || !item.develop.tiff) return item;
     const file = item.develop.tiff, stat = await fs.stat(file);
-    if (!stat.isFile()) throw new Error('The Dehancer TIFF is unavailable.');
-    return { ...item, path: file, fingerprint: `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`, raw: false, companion: null, develop: null, dehancerSource: true };
+    if (!stat.isFile()) throw new Error('The External edit is unavailable.');
+    return { ...item, path: file, fingerprint: `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`, raw: false, companion: null, develop: null, externalSource: item.develop.editedBy || 'dehancer' };
   }
   invalidatePhoto(item) {
     this.itemRevisions.set(item.id, (this.itemRevisions.get(item.id) || 0) + 1);
@@ -58,6 +58,13 @@ class PreviewService {
     for (const kind of Object.keys(SIZES)) this.infoByKind.delete(`${item.id}:${kind}`);
     this.emit(item, { state: 'invalidated' });
   }
+  async suspendHandoffs(items) {
+    for (const item of items) { this.suspendedHandoffs.add(item.id); this.invalidatePhoto(item); }
+    await this.queue.idle();
+    // libvips can retain open inputs in its operation cache; release Windows deletion/replacement locks.
+    sharp.cache(false); sharp.cache({ memory: 48, files: 24, items: 64 });
+  }
+  resumeHandoffs(items) { for (const item of items) { this.suspendedHandoffs.delete(item.id); this.invalidatePhoto(item); } }
   baseKey(item) { return hash(`sources-v2:${item.path}:${item.fingerprint}`); }
   key(item, kind) { return hash(`representation-v4-srgb:${this.baseKey(item)}:${kind}:${this.policy}:${this.itemRevisions.get(item.id) || 0}`); }
   emit(item, status) { this.states.set(item.id, status); this.onState({ id: item.id, ...status }); }
@@ -304,7 +311,7 @@ class PreviewService {
       const rejected = new Set(); let regeneratedRender = false;
       for (let attempt = 0; attempt < TAGS.length + 3; attempt++) {
         const selected = item.raw ? await this.rawSource(item, kind, priority, rejected, policy) : { file: item.path,
-          info: { source: item.dehancerSource ? `Dehancer edit · ${path.basename(item.path)}` : 'Original image', type: item.dehancerSource ? 'dehancer' : 'original' } };
+          info: { source: item.externalSource ? `Edited in ${item.externalSource === 'dehancer' ? 'Dehancer' : this.editorName?.(item.externalSource) || 'external editor'} · ${path.basename(item.path)}` : 'Original image', type: item.externalSource ? 'external' : 'original' } };
         let image = sharp(selected.file, { failOn: 'error', limitInputPixels: 160_000_000 });
         image = selected.info.orientation ? orient(image, selected.info.orientation) : image.autoOrient();
         if (SIZES[kind]) image = image.resize(SIZES[kind], SIZES[kind], { fit: 'inside', withoutEnlargement: true, fastShrinkOnLoad: true });

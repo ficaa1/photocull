@@ -13,6 +13,7 @@
     <div id="breadcrumb" class="breadcrumb"></div>
     <button id="open-folder" class="button quiet"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg><span>Open folder</span></button>
     <button id="export" class="button primary" disabled><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg><span>Copy picks</span></button>
+    <button id="edit-external" class="button quiet" title="Edit in default editor (Ctrl/Cmd+E)" disabled>Edit in…</button><select id="external-editor-menu" aria-label="Choose external editor" title="Edit in another app"><option value="">▾</option></select>
     <button id="image-export" class="button quiet" title="Export finished images (Ctrl/Cmd+Shift+E)" disabled>Export…</button>
   </header>
   <div class="workspace">
@@ -30,11 +31,12 @@
         <button class="filter" data-filter="pick"><span><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4m0 0c4-4 9 4 14 0v10c-5 4-10-4-14 0"/></svg>Picks</span><b id="count-pick">0</b></button>
         <button class="filter" data-filter="reject"><span><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>Rejects</span><b id="count-reject">0</b></button>
         <button class="filter" data-filter="rated"><span><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9Z"/></svg>Rated</span><b id="count-rated">0</b></button>
-        <button class="filter" data-filter="dehancer"><span>Dehancer edits</span><b id="count-dehancer">0</b></button>
+        <button class="filter" data-filter="external"><span>External edits</span><b id="count-external">0</b></button>
         <button class="filter" data-filter="trash"><span><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>Trash</span><b id="count-trash">0</b></button>
       </nav>
       <div class="progress-label"><span>Reviewed</span><strong id="progress-text">0 of 0</strong></div>
       <div class="progress-track"><div id="progress-fill"></div></div>
+      <div class="handoff-storage"><p id="handoff-usage" class="subtle small"></p><button id="handoff-cleanup" class="text-button" disabled>Clean up hand-off files…</button></div>
       <div class="sidebar-bottom">
         <button id="settings-open" class="text-button"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 4 .7-2h3.6l.7 2 2 .9 2.1-.3 1.8 3.1-1.3 1.7.2 2.2 1.2 1.7-1.8 3.1-2.1-.3-2 .9-.7 2h-3.6l-.7-2-2-.9-2.1.3-1.8-3.1L4.7 12l-.2-2.2-1.2-1.7 1.8-3.1 2.1.3Z"/><circle cx="12" cy="10.5" r="3"/></svg><span>Settings</span></button>
         <button id="shortcuts" class="text-button" title="Keyboard shortcuts" aria-label="Keyboard shortcuts">?</button>
@@ -96,7 +98,7 @@
       <div id="image-details" hidden>
         <h2 id="detail-name"></h2><div id="detail-kind" class="subtle small"></div>
         <div class="inspector-divider"></div>
-        <div id="detail-result" hidden><div class="sidebar-label">Dehancer edit</div><p id="detail-result-path" class="subtle small"></p><div class="develop-actions"><button id="detail-result-reveal" type="button" class="button quiet">Show in folder</button><button id="detail-result-edit" type="button" class="button quiet">Edit in Dehancer again</button></div></div>
+        <div id="detail-result" hidden><div class="sidebar-label">External edit</div><p id="detail-result-path" class="subtle small"></p><div class="develop-actions"><button id="detail-result-reveal" type="button" class="button quiet">Show in folder</button><button id="detail-result-edit" type="button" class="button quiet">Edit again</button></div></div>
         <div class="sidebar-label">Capture</div>
         <dl id="metadata"><dt>Camera</dt><dd>Loading…</dd></dl>
         <div class="inspector-divider"></div>
@@ -108,7 +110,7 @@
 
     </aside>
   </div>
-  <dialog id="help-dialog"><div class="dialog-header"><h2>Shortcuts</h2><button class="close-dialog" aria-label="Close">×</button></div><div class="shortcut-list"><span>Previous / next image</span><kbd>← / →</kbd><span>Select several</span><kbd>Shift+click / drag</kbd><span>Extend selection</span><kbd>Shift+arrows</kbd><span>Add / remove from selection</span><kbd>Ctrl+click</kbd><span>Select all in view</span><kbd>Ctrl+A</kbd><span>Clear selection</span><kbd>Esc</kbd><span>Pick</span><kbd>P</kbd><span>Reject</span><kbd>X</kbd><span>Clear flag</span><kbd>U</kbd><span>Star rating / clear rating</span><kbd>1–5 / 0</kbd><span>Fit / zoom (Review, around the pointer)</span><kbd>Click / Z / Space</kbd><span>Pan when zoomed</span><kbd>Drag / hold Space</kbd><span>Zoom in / out</span><kbd>Ctrl + / Ctrl − / Ctrl+wheel</kbd><span>Fit</span><kbd>Ctrl 0</kbd><span>Fullscreen / exit</span><kbd>F / F11 / Esc</kbd><span>Grid / review / develop</span><kbd>G / E / D</kbd><span>Original / edit · before / after (Develop)</span><kbd>\</kbd><span>Clipping overlay (Develop)</span><kbd>J</kbd><span>Copy / paste settings (Develop)</span><kbd>Ctrl Shift C / V</kbd><span>Export finished images</span><kbd>Ctrl Shift E</kbd><span>Switch grid / review</span><kbd>Ctrl Tab</kbd><span>Undo / redo decision</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Open folder</span><kbd>Ctrl O</kbd><span>Settings</span><kbd>Ctrl ,</kbd><span>Color label / clear</span><kbd>Alt 1–8 / Alt 0</kbd><span>Sources / details</span><kbd>B / I</kbd><span>Move to Trash</span><kbd>Del / ⌫</kbd><span>Delete permanently</span><kbd>Shift Del</kbd><span>Restore (Trash view)</span><kbd>R</kbd><span>Help</span><kbd>?</kbd></div></dialog>
+  <dialog id="help-dialog"><div class="dialog-header"><h2>Shortcuts</h2><button class="close-dialog" aria-label="Close">×</button></div><div class="shortcut-list"><span>Previous / next image</span><kbd>← / →</kbd><span>Select several</span><kbd>Shift+click / drag</kbd><span>Extend selection</span><kbd>Shift+arrows</kbd><span>Add / remove from selection</span><kbd>Ctrl+click</kbd><span>Select all in view</span><kbd>Ctrl+A</kbd><span>Clear selection</span><kbd>Esc</kbd><span>Pick</span><kbd>P</kbd><span>Reject</span><kbd>X</kbd><span>Clear flag</span><kbd>U</kbd><span>Star rating / clear rating</span><kbd>1–5 / 0</kbd><span>Fit / zoom (Review, around the pointer)</span><kbd>Click / Z / Space</kbd><span>Pan when zoomed</span><kbd>Drag / hold Space</kbd><span>Zoom in / out</span><kbd>Ctrl + / Ctrl − / Ctrl+wheel</kbd><span>Fit</span><kbd>Ctrl 0</kbd><span>Fullscreen / exit</span><kbd>F / F11 / Esc</kbd><span>Grid / review / develop</span><kbd>G / E / D</kbd><span>Original / edit · before / after (Develop)</span><kbd>\</kbd><span>Clipping overlay (Develop)</span><kbd>J</kbd><span>Copy / paste settings (Develop)</span><kbd>Ctrl Shift C / V</kbd><span>Edit in default editor</span><kbd>Ctrl E</kbd><span>Export finished images</span><kbd>Ctrl Shift E</kbd><span>Switch grid / review</span><kbd>Ctrl Tab</kbd><span>Undo / redo decision</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Open folder</span><kbd>Ctrl O</kbd><span>Settings</span><kbd>Ctrl ,</kbd><span>Color label / clear</span><kbd>Alt 1–8 / Alt 0</kbd><span>Sources / details</span><kbd>B / I</kbd><span>Move to Trash</span><kbd>Del / ⌫</kbd><span>Delete permanently</span><kbd>Shift Del</kbd><span>Restore (Trash view)</span><kbd>R</kbd><span>Help</span><kbd>?</kbd></div></dialog>
   <dialog id="export-dialog">
     <div class="dialog-header"><h2>Copy picks</h2><button class="close-dialog" aria-label="Close">×</button></div>
     <p id="copy-scope" class="subtle"></p>
@@ -132,7 +134,7 @@
     <div class="image-export-scroll">
       <section><h3>Source</h3>
         <div class="field-row"><label for="image-export-scope">Export</label><select id="image-export-scope"><option value="picks">All picks</option><option value="selection">Current selection</option></select></div>
-        <select id="image-export-source" aria-label="Export source"><option value="edited">Use Dehancer edit when available</option><option value="raw">Always develop from RAW</option></select>
+        <select id="image-export-source" aria-label="Export source"><option value="edited">Use external edit when available</option><option value="raw">Always develop from RAW</option></select>
         <p id="image-export-counts" class="subtle small"></p><p id="image-export-source-note" class="subtle small"></p>
       </section>
       <section><h3>File settings</h3>
@@ -160,11 +162,18 @@
   <!-- End finished-image Export dialog. -->
   <dialog id="settings-dialog">
     <div class="dialog-header"><h2>Settings</h2><button class="close-dialog" aria-label="Close">×</button></div>
-    <nav class="settings-tabs" aria-label="Settings"><button data-settings-tab="general" class="active">General</button><button data-settings-tab="metadata">Metadata</button><button data-settings-tab="colors">Colors</button><button data-settings-tab="naming">File naming</button></nav>
+    <nav class="settings-tabs" aria-label="Settings"><button data-settings-tab="general" class="active">General</button><button data-settings-tab="editors">External editors</button><button data-settings-tab="metadata">Metadata</button><button data-settings-tab="colors">Colors</button><button data-settings-tab="naming">File naming</button></nav>
+    <section data-settings-page="editors" hidden>
+      <div id="external-editors"></div>
+      <div class="copy-actions"><button id="editor-add" class="button quiet" type="button">Add editor</button></div>
+      <div class="field-row"><label for="handoff-subfolder">Hand-off subfolder</label><input id="handoff-subfolder" value="_develop" maxlength="120"></div>
+      <div class="field-row"><label for="handoff-folder">Remembered hand-off folder</label><input id="handoff-folder" placeholder="Choose a local folder for camera cards"><button id="handoff-folder-choose" class="button quiet" type="button">Browse…</button></div>
+      <label class="toggle-row"><input type="checkbox" id="handoff-always"> Always use this folder (all sessions)</label>
+      <label class="toggle-row"><input type="checkbox" id="handoff-delete-export"> Delete hand-off files after successful export</label>
+      <p class="subtle small">Only hand-off files recorded by this session are cleaned up. External edits that have not been exported require an extra confirmation.</p>
+    </section>
     <section data-settings-page="general">
       <!-- Develop preferences. -->
-      <div class="field-row"><label for="dehancer-folder">Camera-card TIFF folder</label><input id="dehancer-folder" type="text" placeholder="Choose a local folder for Dehancer"><button id="dehancer-folder-choose" type="button" class="button quiet">Change…</button></div>
-      <div class="field-row"><label for="dehancer-exe">Dehancer location</label><input id="dehancer-exe" type="text" placeholder="C:\Program Files\Dehancer Lightroom Plugin\DehancerLightroom.exe"></div>
       <div class="field-row"><label for="default-recipe">Default recipe</label><select id="default-recipe"><option value="neutral">Neutral</option></select></div>
       <!-- End Develop preferences. -->
       <label class="toggle-row"><input type="checkbox" id="auto-advance"> Auto advance</label>

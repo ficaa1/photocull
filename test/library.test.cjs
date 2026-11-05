@@ -243,7 +243,7 @@ test('Dehancer edit paths and preview revisions survive reopen and RAW adjustmen
   await library.developMark(session.id,id,{tiff});await library.developMark(session.id,id,{edited:true});
   let saved=library.developGet(session.id,id);assert.equal(saved.edited,true);assert.equal(saved.revision,2);
   await library.developSet(session.id,[id],{settings:{light:{exposure:1}}});saved=library.developGet(session.id,id);assert.equal(saved.edited,true);assert.equal(saved.tiff,tiff);assert.equal(saved.revision,2);
-  const reopened=new Library(state),again=await reopened.scan(photos);assert.equal(again.items[0].dehancer,true);assert.equal(again.items[0].tiff,tiff);assert.equal(again.items[0].developRevision,2);
+  const reopened=new Library(state),again=await reopened.scan(photos);assert.equal(again.items[0].externalEdit,true);assert.equal(again.items[0].tiff,tiff);assert.equal(again.items[0].developRevision,2);
   await reopened.developMark(again.id,id,{edited:true});assert.equal(reopened.developGet(again.id,id).revision,3);
   await reopened.developMark(again.id,id,{tiff});assert.equal(reopened.developGet(again.id,id).edited,false);
 });

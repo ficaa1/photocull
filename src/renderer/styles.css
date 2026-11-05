@@ -403,3 +403,12 @@ dialog::backdrop { background: #0a1015b0; }
 .develop-topline { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .develop-topline button { pointer-events: auto; }
 #detail-result-path { overflow-wrap: anywhere; }
+
+.editor-settings { border: 1px solid var(--border, #454545); border-radius: 6px; margin: 12px 0; padding: 12px; display: grid; gap: 10px; }
+.editor-settings > label:not(.toggle-row) { display: grid; grid-template-columns: 145px minmax(0, 1fr); align-items: center; gap: 10px; }
+.editor-settings input, .editor-settings select { min-width: 0; }
+#external-editor-menu { width: 38px; }
+.handoff-storage { margin: 18px 5px 0; }
+.handoff-storage p { margin: 0; }
+.handoff-storage button { text-align: left; }
+#develop-choice-dialog p { white-space: pre-wrap; max-height: 50vh; overflow: auto; }

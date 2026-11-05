@@ -1,5 +1,5 @@
 //! RAW development with Lightcraft's engine (https://github.com/storytold/lightcraft, MIT OR Apache-2.0):
-//! live previews with histograms, 16-bit TIFFs for an external editor (Dehancer), and exports.
+//! live previews with histograms, hand-off files for external editors, and exports.
 //!
 //! The renderer never names a photo's file: photos are addressed by session and id, and the Node backend
 //! (`develop-context`) says which file that is, the same way deletion works.
@@ -27,7 +27,6 @@ const DRAFT_EDGE: usize = 1600;
 const SETTLED_EDGE: usize = 2560;
 /// Photos whose decoded preview sources stay in memory (about 50–100 MB each).
 const KEEP_OPEN: usize = 3;
-const DEFAULT_DEHANCER: &str = r"C:\Program Files\Dehancer Lightroom Plugin\DehancerLightroom.exe";
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
@@ -70,7 +69,8 @@ struct Context {
     name: String,
     raw: bool,
     tiff: Option<String>,
-    dehancer_exe: Option<String>,
+    edited_by: Option<String>,
+    handoff_stamp: Option<Value>,
 }
 
 fn stamp(path: &Path) -> Result<(u64, Option<SystemTime>), String> {
@@ -317,11 +317,11 @@ pub async fn develop_render(
     .await
 }
 
-fn known_tiff(tiff: Option<&str>) -> Result<PathBuf, String> {
-    let path = PathBuf::from(tiff.ok_or("Develop this photo for Dehancer first.")?);
+fn known_handoff(tiff: Option<&str>) -> Result<PathBuf, String> {
+    let path = PathBuf::from(tiff.ok_or("Develop a hand-off file for this photo first.")?);
     let meta = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
-    if !path.is_absolute() || !meta.is_file() || meta.file_type().is_symlink() || !path.extension().is_some_and(|s| s.eq_ignore_ascii_case("tif") || s.eq_ignore_ascii_case("tiff")) {
-        return Err("This photo has no regular developed TIFF.".into());
+    if !path.is_absolute() || !meta.is_file() || meta.file_type().is_symlink() || !path.extension().is_some_and(|s| s.eq_ignore_ascii_case("tif") || s.eq_ignore_ascii_case("tiff") || s.eq_ignore_ascii_case("png") || s.eq_ignore_ascii_case("jpg") || s.eq_ignore_ascii_case("jpeg")) {
+        return Err("This photo has no regular hand-off image.".into());
     }
     Ok(path)
 }
@@ -339,7 +339,7 @@ fn finished_preview(bytes: &[u8], edge: usize) -> Result<Rgba8, String> {
 pub async fn develop_result(backend: State<'_, Backend>, session: String, id: String) -> Result<Response, String> {
     let ctx = Engine::context(&backend, &session, &id).await?;
     blocking(move || {
-        let path = known_tiff(ctx.tiff.as_deref())?;
+        let path = known_handoff(ctx.tiff.as_deref())?;
         let t = Instant::now();
         let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
         let img = finished_preview(&bytes, SETTLED_EDGE)?;
@@ -352,7 +352,7 @@ pub async fn develop_result(backend: State<'_, Backend>, session: String, id: St
 pub async fn reveal_develop(app: AppHandle, backend: State<'_, Backend>, session: String, id: String) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     let ctx = Engine::context(&backend, &session, &id).await?;
-    let path = known_tiff(ctx.tiff.as_deref())?;
+    let path = known_handoff(ctx.tiff.as_deref())?;
     app.opener().reveal_item_in_dir(path).map_err(|e| e.to_string())
 }
 
@@ -365,9 +365,12 @@ pub struct TiffItem {
 #[derive(Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
 pub struct TiffOptions {
+    format: Option<String>,
+    compression: Option<String>,
+    jpeg_quality: Option<u8>,
     color_space: String,
     bit_depth: Option<u8>,
-    /// Explicit consent to replace only this photo's own TIFF (including its Dehancer edit).
+    /// Explicit consent to replace only this photo's own TIFF (including its external edit).
     replace: bool,
 }
 
@@ -410,7 +413,7 @@ fn photo_metadata(photo: &Photo) -> lightcraft_meta::Metadata {
 }
 
 /// Develops photos to TIFFs in `folder` (named after the RAW) for an external editor. Existing TIFFs are kept
-/// unless `replace`: they may already hold Dehancer's edits. Unrelated TIFFs always get unique names.
+/// unless `replace`: they may already hold external edits. Unrelated TIFFs always get unique names.
 #[tauri::command]
 pub async fn develop_tiffs(
     app: AppHandle,
@@ -421,22 +424,35 @@ pub async fn develop_tiffs(
     items: Vec<TiffItem>,
     options: TiffOptions,
 ) -> Result<Value, String> {
+    let format = match options.format.as_deref().unwrap_or("tiff") {
+        "tiff" => ExportFormat::Tiff, "png" => ExportFormat::Png, "jpeg" => ExportFormat::Jpeg,
+        _ => return Err("Invalid hand-off format.".into()),
+    };
+    let depth = options.bit_depth.unwrap_or(16);
+    if ![8, 16].contains(&depth) || format == ExportFormat::Jpeg && depth != 8 || options.jpeg_quality.is_some_and(|q| !(1..=100).contains(&q)) { return Err("Invalid hand-off depth or quality.".into()); }
+    let compression = match options.compression.as_deref().unwrap_or("none") {
+        "none" => lightcraft_codecs::TiffCompression::None, "lzw" => lightcraft_codecs::TiffCompression::Lzw, "deflate" => lightcraft_codecs::TiffCompression::Deflate,
+        _ => return Err("Invalid hand-off compression.".into()),
+    };
     let folder = PathBuf::from(folder);
     if !folder.is_dir() {
         return Err("That folder does not exist.".into());
     }
-    let plan = backend.call("develop-plan", json!([session, items.iter().map(|i| &i.id).collect::<Vec<_>>(), folder.to_string_lossy()])).await?;
+    let plan = backend.call("develop-plan", json!([session, items.iter().map(|i| &i.id).collect::<Vec<_>>(), folder.to_string_lossy(), format.extension()])).await?;
     let mut jobs = Vec::new();
     for item in items {
         let ctx = Engine::context(&backend, &session, &item.id).await?;
         let row = plan.as_array().and_then(|rows| rows.iter().find(|r| r["id"].as_str() == Some(item.id.as_str()))).cloned().ok_or("Missing TIFF destination.")?;
         jobs.push((item, ctx, row));
     }
+    let busy_engine = engine.inner().clone();
+    let _busy = Busy::take(&busy_engine.busy)?;
+    let ids: Vec<_> = jobs.iter().map(|(item, _, _)| item.id.clone()).collect();
+    backend.call("handoff-prepare", json!([session, ids])).await?;
     let engine_ref = engine.inner().clone();
     let total = jobs.len();
     let results = blocking(move || {
         let engine = engine_ref;
-        let _busy = Busy::take(&engine.busy)?;
         engine.cancel.store(false, Ordering::SeqCst);
         let space = output_space(&options.color_space);
         let depth = options.bit_depth.unwrap_or(16);
@@ -463,14 +479,15 @@ pub async fn develop_tiffs(
                 let photo = engine.photo(Path::new(&ctx.file))?;
                 let r = render_full(&photo, &item.settings, space, if depth == 16 { OutputDepth::U16 } else { OutputDepth::U8 }, None)?;
                 let o = ExportOptions {
-                    format: ExportFormat::Tiff,
+                    format,
+                    quality: options.jpeg_quality.unwrap_or(90),
                     bit_depth: Some(depth),
                     color_space: space,
-                    tiff_compression: lightcraft_codecs::TiffCompression::None,
+                    tiff_compression: compression,
                     ..Default::default()
                 };
                 let bytes = encode_rendered(&r, &o, Some(&photo_metadata(&photo)))?;
-                let partial = out.with_extension("tif.partial");
+                let partial = out.with_extension(format!("{}.partial", format.extension()));
                 use std::io::Write;
                 let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&partial).map_err(|e| format!("{}: {e}", partial.display()))?;
                 let write = file.write_all(&bytes).and_then(|_| file.sync_all());
@@ -488,14 +505,18 @@ pub async fn develop_tiffs(
         emit_progress(&app, "develop-progress", json!({ "done": total, "total": total }));
         Ok(results)
     })
-    .await?;
+    .await;
+    let released = backend.call("handoff-release", json!([session, ids])).await;
+    let results = results?;
+    released?;
     for r in &results {
         if let (Some(id), Some(tiff)) = (r["id"].as_str(), r["tiff"].as_str()) {
-            // Keeping the same TIFF must retain its saved Dehancer flag. Replacing it clears it.
-            let kept = r["status"].as_str() == Some("exists");
-            let previous = if kept { backend.call("develop-get", json!([session, id])).await? } else { Value::Null };
-            let edited = kept && previous["tiff"].as_str() == Some(tiff) && previous["edited"].as_bool() == Some(true);
-            backend.call("develop-mark", json!([session, id, { "tiff": tiff, "edited": edited }])).await?;
+            // Reopening a recorded file does not change its edit/export status or canonical cleanup path.
+            if r["status"] == "exists" {
+                let previous = backend.call("develop-get", json!([session, id])).await?;
+                if previous["tiff"].as_str() == Some(tiff) { continue; }
+            }
+            backend.call("develop-mark", json!([session, id, { "tiff": tiff }])).await?;
         }
     }
     Ok(json!({ "results": results }))
@@ -506,39 +527,41 @@ pub fn develop_cancel(engine: State<'_, Arc<Engine>>) {
     engine.cancel.store(true, Ordering::SeqCst);
 }
 
-/// Opens a photo's developed TIFF in Dehancer and waits until Dehancer closes. Reports whether it saved.
+/// Serialize cleanup with rendering, export and external-edit jobs.
 #[tauri::command]
-pub async fn dehancer_edit(engine: State<'_, Arc<Engine>>, backend: State<'_, Backend>, session: String, id: String) -> Result<Value, String> {
-    let ctx = Engine::context(&backend, &session, &id).await?;
-    let tiff = known_tiff(ctx.tiff.as_deref())?;
-    let exe = PathBuf::from(ctx.dehancer_exe.filter(|s| !s.is_empty()).unwrap_or_else(|| DEFAULT_DEHANCER.into()));
-    if !exe.is_file() {
-        return Err(format!("Dehancer was not found at {}. Set its location in Settings.", exe.display()));
-    }
+pub async fn clean_handoffs(engine: State<'_, Arc<Engine>>, backend: State<'_, Backend>, session: String, token: String, allow_unexported: bool) -> Result<Value, String> {
+    let _busy = Busy::take(&engine.busy)?;
+    backend.call("handoff-clean", json!([session, token, allow_unexported])).await
+}
+
+/// Launch only a saved editor, and mark each hand-off when its change is detected.
+#[tauri::command]
+pub async fn edit_external(engine: State<'_, Arc<Engine>>, backend: State<'_, Backend>, session: String, ids: Vec<String>, editor_id: String) -> Result<Value, String> {
+    let editor: crate::external::Editor = serde_json::from_value(backend.call("editor-context", json!([editor_id])).await?).map_err(|e| e.to_string())?;
+    if ids.is_empty() || ids.len() > 100_000 { return Err("Choose photos to edit.".into()); }
+    let mut files = Vec::new();
+    for id in &ids { files.push(known_handoff(Engine::context(&backend, &session, id).await?.tiff.as_deref())?); }
     let engine = engine.inner().clone();
-    let before = stamp(&tiff)?;
-    let edited = blocking(move || {
-        let _busy = Busy::take(&engine.busy)?;
-        let cancel = engine.cancel.clone();
-        cancel.store(false, Ordering::SeqCst);
-        let mut child = std::process::Command::new(&exe).arg(&tiff).spawn().map_err(|e| format!("Could not start Dehancer: {e}"))?;
-        loop {
-            if child.try_wait().map_err(|e| e.to_string())?.is_some() { break; }
-            if cancel.load(Ordering::SeqCst) {
-                // Only the process this request launched is stopped; other editor instances stay open.
-                child.kill().map_err(|e| format!("Could not stop Dehancer: {e}"))?;
-                child.wait().map_err(|e| e.to_string())?;
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(75));
+    let _busy = Busy::take(&engine.busy)?;
+    engine.cancel.store(false, Ordering::SeqCst);
+    let cancel = engine.cancel.clone();
+    backend.call("handoff-prepare", json!([session, ids])).await?;
+    let editor_id = editor.id.clone();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let task = tauri::async_runtime::spawn_blocking(move || crate::external::run(&editor, &files, &cancel, |index| { let _ = tx.send(index); }));
+    let mut edited = Vec::new();
+    let mut error = None;
+    while let Some(index) = rx.recv().await {
+        let id = &ids[index];
+        match backend.call("develop-mark", json!([session, id, { "editedBy": editor_id }])).await {
+            Ok(_) => edited.push(id.clone()), Err(e) => error = Some(e),
         }
-        Ok(stamp(&tiff)? != before)
-    })
-    .await?;
-    if edited {
-        backend.call("develop-mark", json!([session, id, { "edited": true }])).await?;
     }
-    Ok(json!({ "edited": edited }))
+    let result = task.await.map_err(|e| e.to_string());
+    backend.call("handoff-release", json!([session, ids])).await?;
+    result??;
+    if let Some(e) = error { return Err(e); }
+    Ok(json!({ "edited": !edited.is_empty(), "ids": edited }))
 }
 
 #[derive(Deserialize)]
@@ -546,7 +569,7 @@ pub struct ExportItem {
     id: String,
     settings: Value,
     dest: String,
-    /// Export the Dehancer-edited TIFF instead of developing the RAW.
+    /// Export the externally edited image instead of developing the RAW.
     #[serde(default)]
     edited: bool,
 }
@@ -704,8 +727,10 @@ pub async fn export_photos(
     }
     let mut jobs = Vec::new();
     let mut protected = Vec::new();
+    let mut edited_exports = Vec::new();
     for item in items {
         let ctx = Engine::context(&backend, &session, &item.id).await?;
+        if item.edited || ctx.edited_by.is_none() { edited_exports.push(json!({"id": item.id, "path": ctx.tiff, "stamp": ctx.handoff_stamp})); }
         for file in std::iter::once(&ctx.file).chain(ctx.tiff.iter()) {
             if let Ok(path) = std::fs::canonicalize(file) { protected.push(path); }
         }
@@ -755,7 +780,7 @@ pub async fn export_photos(
                 let meta = lightcraft_meta::extract(&source);
                 let bytes = if item.edited || !ctx.raw {
                     let data = if item.edited {
-                        let tiff = ctx.tiff.as_deref().ok_or("This photo has no Dehancer edit.")?;
+                        let tiff = ctx.tiff.as_deref().ok_or("This photo has no external edit.")?;
                         std::fs::read(tiff).map_err(|e| format!("{tiff}: {e}"))?
                     } else { source };
                     let header = lightcraft_codecs::read_header(&data).map_err(|e| e.to_string())?;
@@ -816,7 +841,9 @@ pub async fn export_photos(
     })
     .await?;
     emit_progress(&app, "export-progress", json!({ "done": total, "total": total }));
-    Ok(json!({ "results": results }))
+    let exported: Vec<_> = edited_exports.iter().filter(|e| results.iter().any(|r| r["status"] == "exported" && r["id"] == e["id"])).collect();
+    let cleanup = backend.call("handoff-exported", json!([session, exported])).await;
+    Ok(json!({ "results": results, "cleanup": cleanup.as_ref().ok(), "cleanupWarning": cleanup.err() }))
 }
 
 // A 33 MP float source alone is ~400 MB, with multiple render/codec buffers in flight.
@@ -998,20 +1025,20 @@ mod result_tests {
     }
 
     #[test]
-    fn known_tiff_requires_a_recorded_absolute_regular_tiff() {
+    fn known_handoff_requires_a_recorded_absolute_regular_image() {
         let unique = SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
         let dir = std::env::temp_dir().join(format!("photocull-result-{}-{unique}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let tiff = dir.join("photo.tif"); std::fs::write(&tiff, b"pixels").unwrap();
-        assert_eq!(known_tiff(tiff.to_str()).unwrap(), tiff);
-        assert!(known_tiff(None).is_err());
-        assert!(known_tiff(Some("relative.tif")).is_err());
-        assert!(known_tiff(dir.to_str()).is_err());
-        let other = dir.join("photo.jpg"); std::fs::write(&other, b"pixels").unwrap();
-        assert!(known_tiff(other.to_str()).is_err());
+        assert_eq!(known_handoff(tiff.to_str()).unwrap(), tiff);
+        assert!(known_handoff(None).is_err());
+        assert!(known_handoff(Some("relative.tif")).is_err());
+        assert!(known_handoff(dir.to_str()).is_err());
+        let other = dir.join("photo.txt"); std::fs::write(&other, b"pixels").unwrap();
+        assert!(known_handoff(other.to_str()).is_err());
         #[cfg(unix)] {
             let link = dir.join("link.tif"); std::os::unix::fs::symlink(&tiff, &link).unwrap();
-            assert!(known_tiff(link.to_str()).is_err());
+            assert!(known_handoff(link.to_str()).is_err());
         }
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -1019,7 +1046,7 @@ mod result_tests {
     #[test]
     fn finished_preview_reads_optional_dehancer_fixture() {
         let Ok(file) = std::env::var("PHOTOCULL_DEHANCER_TIFF") else { return; };
-        let bytes = std::fs::read(known_tiff(Some(&file)).unwrap()).unwrap();
+        let bytes = std::fs::read(known_handoff(Some(&file)).unwrap()).unwrap();
         let preview = finished_preview(&bytes, SETTLED_EDGE).unwrap();
         assert_eq!(preview.width.max(preview.height), SETTLED_EDGE);
         let jpeg = encode_frame(&preview).unwrap();

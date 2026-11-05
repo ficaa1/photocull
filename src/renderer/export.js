@@ -59,7 +59,7 @@
     return result;
   }
 
-  function init({ api, state, selection, buildNaming, readNaming, toast }) {
+  function init({ api, state, selection, buildNaming, readNaming, toast, updateItems }) {
     const $ = id => document.getElementById('image-export-' + id), dialog = $('dialog');
     let destination = '', running = false, cancelRequested = false, lastUsed, previewGeneration = 0, snapshot = [], session;
     const opt = (value, label) => { const node = document.createElement('option'); node.value = value; node.textContent = label; return node; };
@@ -155,10 +155,10 @@
       $('size-row').hidden = resize === 'none'; $('height-field').hidden = !['widthHeight', 'dimensions'].includes(resize);
       $('size-unit').textContent = resize === 'percent' ? '%' : resize === 'megapixels' ? 'MP' : 'px';
       $('amount').disabled = $('sharpen').value === 'none' || running;
-      const items = scoped(), edits = $('source').value === 'edited' ? items.filter(i => i.dehancer).length : 0;
-      const raw = items.filter(i => i.raw && !($('source').value === 'edited' && i.dehancer)).length;
-      $('counts').textContent = `${items.length} photos · ${edits} Dehancer edits · ${raw} developed from RAW · ${items.length - edits - raw} image originals`;
-      $('source-note').textContent = edits ? 'Dehancer saves 8-bit sRGB TIFFs. Wider spaces and greater bit depths add no source color or detail.' : 'RAWs use each photo’s current develop settings. Other images are re-encoded from the original.';
+      const items = scoped(), edits = $('source').value === 'edited' ? items.filter(i => i.externalEdit).length : 0;
+      const raw = items.filter(i => i.raw && !($('source').value === 'edited' && i.externalEdit)).length;
+      $('counts').textContent = `${items.length} photos · ${edits} External edits · ${raw} developed from RAW · ${items.length - edits - raw} image originals`;
+      $('source-note').textContent = edits ? 'Exports use saved external edits. Output bit depth and color space cannot recover detail absent from the hand-off.' : 'RAWs use each photo’s current develop settings. Other images are re-encoded from the original.';
       $('metadata-note').textContent = `Preset: ${state.settings.presets?.find(p => p.id === state.settings.activePreset)?.name || 'Current'} · nonempty creator, copyright, title, caption and keywords apply within the selected policy.`;
       $('destination-path').textContent = destination || 'Choose folder…';
       if (document.activeElement !== $('folder')) $('folder').value = destination;
@@ -170,8 +170,8 @@
       if (running || state.busy || state.copy.running || state.deleting || !state.session) return;
       try {
         state.settings = await api.settings(); lastUsed = state.settings.exportOptions;
-        await Promise.all(state.session.items.filter(i => i.dehancer).map(async item => {
-          const develop = await api.developGet(state.session.id, item.id); item.dehancer = !!(develop.edited && develop.tiff);
+        await Promise.all(state.session.items.filter(i => i.externalEdit).map(async item => {
+          const develop = await api.developGet(state.session.id, item.id); item.externalEdit = !!(develop.edited && develop.tiff);
         }));
         $('subfolder').value = state.settings.exportSubfolder || ''; $('conflict').value = state.settings.exportConflict || 'unique';
         $('scope').value = 'picks'; $('source').value = 'edited'; presetChoices('last');
@@ -215,6 +215,9 @@
         state.settings = await api.settings({ exportOptions: o, exportSubfolder: $('subfolder').value, exportConflict: $('conflict').value, naming: readNaming('image-export') });
         lastUsed = o; $('progress').hidden = false; $('progress').value = 0; $('progress').max = Math.max(1, items.length);
         const result = items.length ? await api.exportPhotos(session, items, o, $('conflict').value === 'overwrite', state.settings.metadata) : { results: [] };
+        if (result.cleanup?.items && state.session?.id === session) updateItems(session,result.cleanup.items);
+        if (result.cleanupWarning) toast(result.cleanupWarning);
+        else if (result.cleanup?.failures?.length) toast('Export succeeded; some hand-off files could not be removed. Use Clean up hand-off files to retry.');
         const completed = new Map(result.results.map(r => [r.id, r]));
         const rows = plan.map(p => p.skip ? { ...p, status: 'exists', error: p.reason } : completed.get(p.id)).filter(Boolean);
         const count = status => rows.filter(r => status.includes(r.status)).length;

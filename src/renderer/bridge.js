@@ -23,6 +23,7 @@
     // Develop and export run in the Rust shell (src-tauri/src/develop.rs), so they need the desktop app.
     shell = (command, args) => tauri.core.invoke(command, args);
     host = {
+      pickEditor: () => tauri.core.invoke('pick_editor'),
       pickFolder: title => tauri.core.invoke('pick_folder', { title }),
       pickSaveFile: (defaultName, filterName, extension) => tauri.core.invoke('pick_save_file', { defaultName, filterName, extension }),
       openFolder: folder => tauri.core.invoke('open_folder', { path: folder }),
@@ -46,6 +47,7 @@
     // Browser mode stands in for native dialogs with a path prompt.
     const askPath = message => { const value = prompt(message); return value?.trim() || null; };
     host = {
+      pickEditor: async () => askPath('Editor executable or .app bundle (full path)'),
       pickFolder: async title => askPath(`${title} (full path)`),
       pickSaveFile: async defaultName => askPath(`Save ${defaultName} to (full path)`),
       openFolder: async () => { throw new Error('Opening folders needs the desktop app.'); },
@@ -93,16 +95,21 @@
     developFolderCheck: folder => backend('develop-folder-check', folder),
     revealDevelop: (session, id) => shell('reveal_develop', { session, id }),
     developResult: async (session, id) => unpackFrame(await shell('develop_result', { session, id })),
-    developPlan: (session, ids, folder) => backend('develop-plan', session, ids, folder),
+    developPlan: (session, ids, folder, extension) => backend('develop-plan', session, ids, folder, extension),
     makeFolder: folder => backend('make-folder', folder),
     pickFolder: title => host.pickFolder(title),
+    pickEditor: () => host.pickEditor(),
     exportPlan: (session, ids, options) => backend('export-plan', session, ids, options),
     // Rendering (Rust shell). settings are partial Lightcraft develop settings.
     developInfo: (session, id) => shell('develop_info', { session, id }),
     developRender: async (session, id, settings, settled) => unpackFrame(await shell('develop_render', { session, id, settings, settled: !!settled })),
     developTiffs: (session, folder, items, options = {}) => shell('develop_tiffs', { session, folder, items, options }),
     developCancel: () => shell('develop_cancel', {}),
-    dehancerEdit: (session, id) => shell('dehancer_edit', { session, id }),
+    editExternal: (session, ids, editorId) => shell('edit_external', { session, ids, editorId }),
+    editorPreset: () => backend('editor-preset'),
+    editorTest: editor => backend('editor-test', editor),
+    handoffUsage: session => backend('handoff-usage', session),
+    handoffClean: (session, token, allowUnexported) => tauri ? shell('clean_handoffs', { session, token, allowUnexported }) : backend('handoff-clean', session, token, allowUnexported),
     exportPhotos: (session, items, options, overwrite = false, metadataOverrides = null) => shell('export_photos', { session, items, options, overwrite, metadataOverrides }),
     lensDatabase: () => shell('lens_database', {}),
     downloadLensDatabase: () => shell('download_lens_database', {}),

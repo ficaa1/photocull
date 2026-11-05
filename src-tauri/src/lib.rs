@@ -5,6 +5,7 @@
 mod backend;
 mod develop;
 pub mod export_encode;
+mod external;
 
 use backend::Backend;
 use serde::Serialize;
@@ -22,7 +23,7 @@ const RENDERER_METHODS: &[&str] = &[
     "scan", "devices", "open-device", "test-destination", "copy-picks", "naming-preview", "cancel-copy", "decide", "decide-many",
     "history", "metadata", "preview-status", "settings", "save-preset", "delete-preset", "settings-folder",
     "preview-settings", "preview-cache", "clear-preview-cache", "retry-preview", "focus", "visible", "export-xmp", "session-folder", "stats",
-    "recipes", "save-recipe", "delete-recipe", "duplicate-recipe", "import-recipes", "export-recipes", "develop-get", "develop-set", "develop-folder", "develop-folder-check", "develop-plan", "make-folder", "export-plan",
+    "recipes", "save-recipe", "delete-recipe", "duplicate-recipe", "import-recipes", "export-recipes", "develop-get", "develop-set", "develop-folder", "develop-folder-check", "editor-preset", "editor-test", "handoff-usage", "develop-plan", "make-folder", "export-plan",
 ];
 
 #[tauri::command]
@@ -35,6 +36,12 @@ async fn backend(state: State<'_, Backend>, method: String, params: Vec<Value>) 
 async fn pick_folder(window: WebviewWindow, title: String) -> Option<String> {
     window.dialog().file().set_parent(&window).set_title(title).blocking_pick_folder()
         .and_then(|path| path.into_path().ok()).map(|path| path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+async fn pick_editor(window: WebviewWindow) -> Option<String> {
+    window.dialog().file().set_parent(&window).set_title("Choose an editor executable or application (.app)").blocking_pick_file()
+        .and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -210,8 +217,8 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![backend, pick_folder, pick_save_file, pick_recipe_file, open_folder, set_fullscreen, display_color_status, delete_photos, save_manifest,
-            develop::develop_result, develop::reveal_develop, develop::develop_info, develop::develop_render, develop::develop_tiffs, develop::develop_cancel, develop::dehancer_edit,
+        .invoke_handler(tauri::generate_handler![backend, pick_folder, pick_editor, pick_save_file, pick_recipe_file, open_folder, set_fullscreen, display_color_status, delete_photos, save_manifest,
+            develop::develop_result, develop::reveal_develop, develop::develop_info, develop::develop_render, develop::develop_tiffs, develop::develop_cancel, develop::edit_external, develop::clean_handoffs,
             develop::export_photos, develop::lens_database, develop::download_lens_database])
         .setup(|app| {
             let handle = app.handle().clone();

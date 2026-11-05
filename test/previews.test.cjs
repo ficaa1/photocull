@@ -238,3 +238,17 @@ test('Dehancer TIFF pixels serve all cached sizes and zoom; originals stay avail
   const blue=await pixel(await service.get(item,'thumb'));assert.ok(blue[2]>240 && blue[0]<10);
   assert.deepEqual(await fs.readFile(source),originalBytes);
 });
+
+
+test('hand-off suspension releases cached Windows inputs and restores edited pixels afterward', async t => {
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'photocull-handoff-release-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+  const source=path.join(dir,'source.jpg'),tiff=path.join(dir,'edit.tif');
+  await sharp({create:{width:80,height:60,channels:3,background:'#0000ff'}}).jpeg().toFile(source);
+  await sharp({create:{width:80,height:60,channels:3,background:'#ff0000'}}).tiff().toFile(tiff);
+  const service=new PreviewService(path.join(dir,'cache'));t.after(()=>service.close());
+  const item={id:'release',path:source,fingerprint:'source',raw:false,develop:{tiff,editedBy:'custom'}};
+  const edited=await service.get(item,'thumb');await service.suspendHandoffs([item]);
+  const moved=tiff+'.moved';await fs.rename(tiff,moved);await fs.rename(moved,tiff);
+  const original=await service.get(item,'thumb');assert.notDeepEqual(original,edited);
+  service.resumeHandoffs([item]);assert.deepEqual(await service.get(item,'thumb'),edited);
+});
