@@ -10,9 +10,9 @@ class CullingService {
   async record(session,id) {
     const item=this.library.item(session,id),original={...item,develop:null};
     const stat=await fs.stat(item.path);
-    if(stat.size!==item.size || stat.mtimeMs!==item.mtimeMs)throw new Error('Photo changed on disk. Reopen the folder before focus analysis.');
+    if(stat.size!==item.size || stat.mtimeMs!==item.mtimeMs || `${stat.dev}:${stat.ino}`!==item.fileId)throw new Error('Photo changed on disk. Reopen the folder before focus analysis.');
     const metadata=await this.previews.metadata(original);
-    const key=hash(`sharpness-v1:${this.previews.key(original,'preview')}:${JSON.stringify(metadata.focus)}`);
+    const key=hash(`sharpness-v1:${item.fileId}:${this.previews.key(original,'preview')}:${JSON.stringify(metadata.focus)}`);
     const cache=path.join(this.previews.cacheDir,key+'.sharpness.json');
     let score=null;
     try { const value=JSON.parse(await fs.readFile(cache,'utf8'));if(value.key===key && Number.isFinite(value.score) && value.score>=0)score=value.score; } catch {}

@@ -463,7 +463,7 @@ $('grid').addEventListener('lostpointercapture', event => { if (event.pointerId 
 function select(id, event = {}) {
   const wasMulti = state.marked.size > 1;
   if (event.shiftKey) {
-    const items = filtered(), anchor = items.findIndex(i => i.id === state.anchor), index = items.findIndex(i => i.id === id);
+    const items = state.mode==='grid' ? stackItems(filtered()) : filtered(), anchor = items.findIndex(i => i.id === state.anchor), index = items.findIndex(i => i.id === id);
     const start = anchor < 0 ? index : anchor;
     state.marked = new Set(items.slice(Math.min(start, index), Math.max(start, index) + 1).map(i => i.id));
     state.selected = id;
@@ -502,6 +502,7 @@ async function decide(patch) {
   const sessionId = state.session.id;
   const items = filtered(), ids = new Set(targets.map(i => i.id)), nextId = nextSurvivor(items, ids)?.id;
   for (const item of targets) Object.assign(item, patch, { edited: true });
+  if('trashed' in patch)regroupBursts();
   if ('trashed' in patch || targets.length === 1 && patch.flag && state.settings.autoAdvance && nextId) {
     state.selected = nextId ?? null; resetSelection();
   }
@@ -525,6 +526,7 @@ async function history(direction) {
     if (!result) return toast(direction === 'redo' ? 'Nothing to redo' : 'Nothing to undo');
     const items = result.items || [result], byId = new Map(state.session.items.map(i => [i.id, i]));
     for (const item of items) Object.assign(byId.get(item.id), item);
+    regroupBursts();
     state.selected = items[0].id; state.anchor = state.selected; state.marked = new Set(items.map(i => i.id));
     render(); setStatus('Saved');
   } catch (e) { toast(e.message); }
@@ -757,6 +759,7 @@ function removeFromSession(ids) {
     state.selected = nextSurvivor(before, gone)?.id ?? null; resetSelection();
   }
   state.session.items = state.session.items.filter(i => !gone.has(i.id));
+  regroupBursts();
   for (const id of gone) { gridNodes.get(id)?.remove(); gridNodes.delete(id); filmNodes.delete(id); }
   filmSignature = ''; $('review-image').dataset.itemId = ''; $('review-image').dataset.stamp = '';
   $('folder-detail').textContent = `${state.session.items.length} photos`;
@@ -1287,7 +1290,7 @@ async function zoomFocus() {
   else {if(state.mode!=='review')setMode('review');loupe.view.set({mode:'ratio',percent:100},{centerOn:focus,animate:true});}
 }
 function regroupBursts() {
-  culling.bursts=PhotoCullCulling.groupBursts((state.session?.items || []).map(item=>({id:item.id,...culling.metadata.get(item.id)})),state.settings.burstGap || 1);
+  culling.bursts=PhotoCullCulling.groupBursts((state.session?.items || []).filter(item=>!item.trashed).map(item=>({id:item.id,...culling.metadata.get(item.id)})),state.settings.burstGap || 1);
   culling.byId.clear();for(const burst of culling.bursts)for(const id of burst.ids)culling.byId.set(id,burst);
 }
 function stackItems(items) {

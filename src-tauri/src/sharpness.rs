@@ -97,5 +97,6 @@ mod tests {
         let epoch=EPOCH.load(Ordering::Relaxed);
         assert!(measure(w,h,&pixels,Some((0.5,0.5,0.2,0.2)),epoch).unwrap()>measure(w,h,&pixels,None,epoch).unwrap()*2.0);
         assert!(measure(1,1,&[],None,epoch).is_err());
+        assert!(measure(w,h,&pixels,None,epoch.wrapping_add(1)).is_err());
     }
 }
