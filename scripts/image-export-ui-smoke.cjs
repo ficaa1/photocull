@@ -23,7 +23,7 @@ PhotoCullExport.init = context => {
       window.exportCalls.push(args); if (window.stringError) throw 'Native export failed.'; progress({ done: 0, total: args[1].length, name: 'a.jpg' });
       if (window.waitForCancel) return new Promise(resolve => { finish = () => resolve({ results: args[1].map(i => ({ id: i.id, status: 'cancelled' })) }); });
       await new Promise(resolve => setTimeout(resolve, 150));
-      return { results: args[1].map((i, n) => ({ id: i.id, status: window.failSecond && n === 1 ? 'failed' : 'exported', error: window.failSecond && n === 1 ? 'Test codec failure' : undefined })) };
+      return { cleanup: {items:context.state.session.items.map(i=>({id:i.id,externalEdit:false,developed:false,tiff:null,editedBy:null,developRevision:1})),failures:[]}, results: args[1].map((i, n) => ({ id: i.id, status: window.failSecond && n === 1 ? 'failed' : 'exported', error: window.failSecond && n === 1 ? 'Test codec failure' : undefined })) };
     },
     developCancel: async () => { finish?.(); }, revealDestination: async () => { window.revealed = true; },
   } });
@@ -49,6 +49,7 @@ PhotoCullExport.init = context => {
     await page.screenshot({ path: path.join(reports, 'dialog-jxl.png') });
     await page.locator('#image-export-start').click();
     await page.waitForFunction(() => document.querySelector('#image-export-status').textContent === '2 exported · 0 skipped · 0 failed');
+    await page.waitForFunction(()=>!state.busy);assert.equal(await page.locator('#handoff-cleanup').isDisabled(),false);
     const calls = await page.evaluate(() => window.exportCalls);
     assert.equal(calls[0][1].length, 2); assert.equal(calls[0][2].jxlLossless, true); assert.equal(calls[0][2].bitDepth, 16);
     assert.deepEqual(calls[0][2].resize, { mode: 'widthHeight', value: 1200, height: 800, dontEnlarge: true });

@@ -311,7 +311,7 @@ class PreviewService {
       const rejected = new Set(); let regeneratedRender = false;
       for (let attempt = 0; attempt < TAGS.length + 3; attempt++) {
         const selected = item.raw ? await this.rawSource(item, kind, priority, rejected, policy) : { file: item.path,
-          info: { source: item.externalSource ? `Edited in ${item.externalSource === 'dehancer' ? 'Dehancer' : this.editorName?.(item.externalSource) || 'external editor'} · ${path.basename(item.path)}` : 'Original image', type: item.externalSource ? 'external' : 'original' } };
+          info: { source: item.externalSource ? `Edited in ${this.editorName?.(item.externalSource) || (item.externalSource === 'dehancer' ? 'Dehancer' : 'external editor')} · ${path.basename(item.path)}` : 'Original image', type: item.externalSource ? 'external' : 'original' } };
         let image = sharp(selected.file, { failOn: 'error', limitInputPixels: 160_000_000 });
         image = selected.info.orientation ? orient(image, selected.info.orientation) : image.autoOrient();
         if (SIZES[kind]) image = image.resize(SIZES[kind], SIZES[kind], { fit: 'inside', withoutEnlargement: true, fastShrinkOnLoad: true });

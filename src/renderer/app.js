@@ -1064,10 +1064,12 @@ $('handoff-cleanup').onclick=async()=>{
     if(!usage.count)return toast(usage.failures.length ? usage.failures.map(f=>f.error).join(' · ') : 'No hand-off files to clean up.');
     if(await developView.ask(`Delete ${usage.count} hand-off file(s), ${fileSize(usage.bytes)}?\n${usage.entries.map(r=>r.path).join('\n')}`, [['delete','Delete hand-off files'],['cancel','Cancel']])!=='delete')return;
     if(usage.unexported && await developView.ask(`${usage.unexported} external edit(s) have not been exported. Deleting these hand-off files permanently loses those edits.`,[['delete','Delete unexported edits'],['cancel','Keep files']])!=='delete')return;
+    developView.host.setBusy(true);
     const result=await api.handoffClean(session,usage.token,!!usage.unexported);
     developView.host.updateItems(session,result.items);handoffUsageKey='';render();
     toast(`${result.deleted.length} hand-off file(s) deleted${result.failures.length ? ' · '+result.failures.map(f=>f.error).join(' · ') : ''}`);
   } catch(e){toast(e.message);}
+  finally { developView.host.setBusy(false); }
 };
 function readEditorRow(row) {
   const input=k=>row.querySelector(`[data-editor-field="${k}"]`), previous=settingsDraft.editors.find(e=>e.id===row.dataset.editorId);

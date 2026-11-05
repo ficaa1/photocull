@@ -197,6 +197,7 @@
     $('reveal').onclick = () => { void api.revealDestination(destination).catch(e => { $('status').textContent = (e.message || String(e)); }); };
     $('start').onclick = async () => {
       if (running || $('start').disabled || state.busy) return;
+      let cleanupItems=null;
       let o; try { o = read(); } catch (e) { $('status').textContent = (e.message || String(e)); return; }
       snapshot = scoped().map(i => ({ ...i })); session = state.session.id; running = true; cancelRequested = false; state.busy = true;
       $('results').hidden = true; $('reveal').hidden = true; $('status').textContent = 'Checking names and destinations…'; $('cancel').disabled = false;
@@ -215,7 +216,7 @@
         state.settings = await api.settings({ exportOptions: o, exportSubfolder: $('subfolder').value, exportConflict: $('conflict').value, naming: readNaming('image-export') });
         lastUsed = o; $('progress').hidden = false; $('progress').value = 0; $('progress').max = Math.max(1, items.length);
         const result = items.length ? await api.exportPhotos(session, items, o, $('conflict').value === 'overwrite', state.settings.metadata) : { results: [] };
-        if (result.cleanup?.items && state.session?.id === session) updateItems(session,result.cleanup.items);
+        if (result.cleanup?.items && state.session?.id === session) cleanupItems=result.cleanup.items;
         if (result.cleanupWarning) toast(result.cleanupWarning);
         else if (result.cleanup?.failures?.length) toast('Export succeeded; some hand-off files could not be removed. Use Clean up hand-off files to retry.');
         const completed = new Map(result.results.map(r => [r.id, r]));
@@ -227,6 +228,7 @@
       } catch (e) { $('status').textContent = (e.message || String(e)); }
       finally {
         running = false; state.busy = false;
+        if (cleanupItems) updateItems(session,cleanupItems);
         dialog.querySelectorAll('input,select,button').forEach(el => { el.disabled = false; }); presetChoices(); refresh();
       }
     };
