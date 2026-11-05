@@ -299,7 +299,7 @@ async function loadMetadata(item) {
     if(state.session?.id===sessionId)culling.metadata.set(imageId,metadata);
     if (state.selected !== imageId || state.session.id !== sessionId || state.generation !== generation) return;
     const rows = [['Camera', metadata.camera], ['Lens', metadata.lens], ['Exposure', [metadata.shutter ? `${metadata.shutter} s` : '', metadata.aperture, metadata.iso ? `ISO ${metadata.iso}` : ''].filter(Boolean).join(' · ')],
-      ['Captured', formatCaptureDate(metadata.captured)], ['Preview', metadata.width && metadata.height ? `${metadata.width} × ${metadata.height}` : ''], ['Source', metadata.source], ['Develop', item.externalEdit ? `Edited in ${editorName(item.editedBy)} · open Develop to view` : item.developed ? 'Developed hand-off' : item.adjusted ? 'RAW adjustments' : '']];
+      ['Captured', formatCaptureDate(metadata.captured)], ['Autofocus', metadata.focus?.source], ['Sharpness', Number.isFinite(culling.scores.get(imageId)) ? culling.scores.get(imageId).toFixed(1) + ' · preview detail' : api.canAnalyze ? 'Pending analysis' : 'Desktop app required'], ['Preview', metadata.width && metadata.height ? `${metadata.width} × ${metadata.height}` : ''], ['Source', metadata.source], ['Develop', item.externalEdit ? `Edited in ${editorName(item.editedBy)} · open Develop to view` : item.developed ? 'Developed hand-off' : item.adjusted ? 'RAW adjustments' : '']];
     $('metadata').replaceChildren(...rows.flatMap(([name, value]) => {
       const dt = document.createElement('dt'), dd = document.createElement('dd');
       dt.textContent = name; dd.textContent = value || '—'; return [dt, dd];
