@@ -36,7 +36,7 @@ Run `npm run build` from the repository root on the target OS for installers. It
 
 Tests use synthetic fixtures, temporary app data and loopback services; they must not need external network access. Dependency installation, the first Cargo fetch and packaging dependency installation may use the network. Optional real-photo tests require disposable fixture copies: see [validation](docs/validation.md) for filenames and UI smoke arguments. Never use production app data or modify source photos.
 
-For the Windows inspection scripts, pass a copied fixture directory as the first argument or set `PHOTOCULL_FIXTURES` (there is no personal-folder default). Reports default to `artifacts/`. `image-export-windows.cjs` requires `PHOTOCULL_DATA_DIR` matching the separate test app; its optional second argument selects a new output folder. `display-color-windows.cjs TEMP_ROOT PROCESS_ID [PORT]` requires the isolated temporary root described in its header.
+For the Windows inspection scripts, pass a copied fixture directory as the first argument or set `PHOTOCULL_FIXTURES` (there is no personal-folder default). Reports default to `artifacts/`. `image-export-windows.cjs` requires `PHOTOCULL_DATA_DIR` matching the separate test app; it copies the source fixtures and writes outputs in a fresh system-temp directory. `display-color-windows.cjs TEMP_ROOT PROCESS_ID [PORT]` requires the isolated temporary root described in its header.
 
 ## Style and tests
 
