@@ -20,7 +20,7 @@ Reproduce offline with `node scripts/notices.cjs`. Inventory covers all lockfile
 
 ### Redistribution conditions
 
-The LGPL libvips shared library is replaceable in `backend/node_modules/@img/sharp-libvips-*/lib/`. PhotoCull imposes no restriction on reverse engineering for debugging modifications to that library. Replace it with an ABI-compatible build for the same platform and restart the app; its addon remains a separate module. Do not statically link it or add integrity enforcement that prevents replacement. LGPL-3.0 and its GPL-3.0 companion text are included in third-party/.
+The LGPL libvips shared library is replaceable in `backend/node_modules/@img/sharp-libvips-*/lib/` (macOS/Linux) or `backend/node_modules/@img/sharp-win32-*/lib/` (Windows). PhotoCull imposes no restriction on reverse engineering for debugging modifications to that library. Replace it with an ABI-compatible build for the same platform and restart the app; its addon remains a separate module. Do not statically link it or add integrity enforcement that prevents replacement. The optional sharp-wasm32 package statically includes libvips: redistribution of that fallback needs corresponding source and relinkable build material. Supported desktop builds use the native shared libraries. LGPL-3.0 and its GPL-3.0 companion text are included in third-party/.
 
 The prebuilt libvips shared library contains other libraries statically. Shipping notices and a dynamic boundary alone does not discharge its source obligations. Binary redistributors must provide the complete corresponding source and build scripts for that exact platform build (including LGPL/MPL internals), or a valid compliant source offer. Upstream build provenance: https://github.com/lovell/sharp-libvips/tree/v1.3.4 ; versions.json in each platform package records native dependency versions. **Release prerequisite: archive and distribute the exact native corresponding-source set; this repository currently supplies provenance and notices, not that complete set or a source offer.** Do not infer source compliance from an upstream URL alone.
 
@@ -24126,6 +24126,129 @@ backcompat = [ ]
 | zlib-ng | 2.3.3 |
 
 ### @img/sharp-libvips-linuxmusl-x64 1.3.4
+
+| Component | Version |
+| --- | --- |
+| aom | 3.15.1 |
+| archive | 3.8.9 |
+| cairo | 1.18.6 |
+| cgif | 0.5.4 |
+| exif | 0.6.26 |
+| expat | 2.8.5 |
+| ffi | 3.8.0 |
+| fontconfig | 2.18.3 |
+| freetype | 2.14.3 |
+| fribidi | 1.0.17 |
+| glib | 2.90.0 |
+| harfbuzz | 14.5.0 |
+| heif | 1.23.5 |
+| highway | 1.4.0 |
+| imagequant | 2.4.1 |
+| lcms | 2.19.1 |
+| mozjpeg | 0826579 |
+| pango | 1.58.2 |
+| pixman | 0.46.4 |
+| png | 1.6.58 |
+| proxy-libintl | 0.5 |
+| rsvg | 2.63.2 |
+| tiff | 4.7.2 |
+| uhdr | 2.0.2 |
+| vips | 8.18.7 |
+| webp | 1.6.0 |
+| xml2 | 2.15.4 |
+| zlib-ng | 2.3.3 |
+
+### @img/sharp-wasm32 0.35.5
+
+| Component | Version |
+| --- | --- |
+| aom | 3.15.1 |
+| cgif | 0.5.4 |
+| emscripten | 6.0.10 |
+| exif | 0.6.26 |
+| expat | 2.8.5 |
+| ffi | 3.8.0 |
+| glib | 2.90.0 |
+| heif | 1.23.5 |
+| highway | 1.4.0 |
+| imagequant | 2.4.1 |
+| lcms | 2.19.1 |
+| mozjpeg | 0826579 |
+| png | 1.6.58 |
+| resvg | 0.48.1 |
+| tiff | 4.7.2 |
+| uhdr | 2.0.2 |
+| vips | 8.18.7 |
+| webp | 1.6.0 |
+| zlib-ng | 2.3.3 |
+
+### @img/sharp-win32-arm64 0.35.5
+
+| Component | Version |
+| --- | --- |
+| aom | 3.15.1 |
+| archive | 3.8.9 |
+| cairo | 1.18.6 |
+| cgif | 0.5.4 |
+| exif | 0.6.26 |
+| expat | 2.8.5 |
+| ffi | 3.8.0 |
+| fontconfig | 2.18.3 |
+| freetype | 2.14.3 |
+| fribidi | 1.0.17 |
+| glib | 2.90.0 |
+| harfbuzz | 14.5.0 |
+| heif | 1.23.5 |
+| highway | 1.4.0 |
+| imagequant | 2.4.1 |
+| lcms | 2.19.1 |
+| mozjpeg | 0826579 |
+| pango | 1.58.2 |
+| pixman | 0.46.4 |
+| png | 1.6.58 |
+| proxy-libintl | 0.5 |
+| rsvg | 2.63.2 |
+| tiff | 4.7.2 |
+| uhdr | 2.0.2 |
+| vips | 8.18.7 |
+| webp | 1.6.0 |
+| xml2 | 2.15.4 |
+| zlib-ng | 2.3.3 |
+
+### @img/sharp-win32-ia32 0.35.5
+
+| Component | Version |
+| --- | --- |
+| aom | 3.15.1 |
+| archive | 3.8.9 |
+| cairo | 1.18.6 |
+| cgif | 0.5.4 |
+| exif | 0.6.26 |
+| expat | 2.8.5 |
+| ffi | 3.8.0 |
+| fontconfig | 2.18.3 |
+| freetype | 2.14.3 |
+| fribidi | 1.0.17 |
+| glib | 2.90.0 |
+| harfbuzz | 14.5.0 |
+| heif | 1.23.5 |
+| highway | 1.4.0 |
+| imagequant | 2.4.1 |
+| lcms | 2.19.1 |
+| mozjpeg | 0826579 |
+| pango | 1.58.2 |
+| pixman | 0.46.4 |
+| png | 1.6.58 |
+| proxy-libintl | 0.5 |
+| rsvg | 2.63.2 |
+| tiff | 4.7.2 |
+| uhdr | 2.0.2 |
+| vips | 8.18.7 |
+| webp | 1.6.0 |
+| xml2 | 2.15.4 |
+| zlib-ng | 2.3.3 |
+
+### @img/sharp-win32-x64 0.35.5
 
 | Component | Version |
 | --- | --- |

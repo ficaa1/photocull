@@ -78,7 +78,7 @@ const native = json('third-party/native-versions.json');
 output += '## Native build versions by platform\n\n';
 for (const [name, versions] of Object.entries(native)) {
   const entry = npm.find(p => p.name === name);
-  if (!entry || entry.version !== '1.3.4') throw new Error(`Refresh native build inventory for ${name}`);
+  if (!entry || entry.version !== (name.startsWith('@img/sharp-libvips-') ? '1.3.4' : '0.35.5')) throw new Error(`Refresh native build inventory for ${name}`);
   output += `### ${name} ${entry.version}\n\n| Component | Version |\n| --- | --- |\n` + rows(Object.entries(versions), [p=>p[0],p=>p[1]]) + '\n\n';
 }
 output += '## Native libvips dependencies\n\n' + read('third-party/sharp-libvips-NOTICES.md') + '\n';

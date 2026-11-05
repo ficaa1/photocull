@@ -8,7 +8,7 @@ PhotoCull-owned code uses MIT. Third-party components retain the license choices
 
 After changing Rust dependencies, cache their sources with `cargo fetch --locked`, then run `node scripts/notices.cjs --refresh`. This uses `cargo metadata --locked --offline --format-version 1` to collect all target crates and license files. Review upstream workspace license files for crates that omit them from their package and update `third-party/rust-license-supplements.json`; each supplement identifies its source URL/revision. `--metadata FILE` accepts the same Cargo JSON from another build machine without retaining machine paths. Refresh the exact unmodified `.crate` source archives for MPL dependencies in `third-party/sources/` from Cargo's registry cache.
 
-Native libvips versions for every locked platform are recorded in `third-party/native-versions.json`, extracted from each official npm tarball's `versions.json`. Update them and the upstream sharp-libvips notices when changing that dependency. The generated inventory includes build/test and optional target dependencies conservatively; it is not a claim that every lockfile crate is linked into every installer.
+Native libvips versions for all 14 locked native/WASM build manifests are recorded in `third-party/native-versions.json`, extracted from each official native/WASM npm tarball's `versions.json`. Update them and the upstream sharp-libvips notices when changing that dependency. The generated inventory includes build/test and optional target dependencies conservatively; it is not a claim that every lockfile crate is linked into every installer.
 
 ## Packaging
 
