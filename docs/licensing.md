@@ -1,6 +1,6 @@
 # Third-party licensing
 
-PhotoCull-owned code uses MIT, with the copyright line style used in the owner's public repositories. Those repositories' GPL/AGPL choices do not apply here. The reference LICENSE contains standard GPL text; its README identifies the holder as `Copyright (C) 2026 Filip Biljic`.
+PhotoCull-owned code uses MIT. Third-party components retain the license choices, attribution and source requirements recorded in the inventory.
 
 ## Reproduce the inventory
 
