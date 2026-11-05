@@ -2,11 +2,58 @@ name: Build
 on:
   workflow_dispatch:
   push:
+    branches: [main]
+    tags: ['v*']
     paths: ['src/**', 'src-tauri/**', 'test/**', 'scripts/**', 'package*.json', '.github/workflows/build.yml']
   pull_request:
     paths: ['src/**', 'src-tauri/**', 'test/**', 'scripts/**', 'package*.json', '.github/workflows/build.yml']
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-15, macos-15-intel, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:ui
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: UI-smoke-${{ matrix.os }}
+          path: |
+            artifacts/*.png
+            artifacts/ui-smoke.json
+          if-no-files-found: ignore
+
+  rust:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      # The base config uses the checked-in renderer and has no bundled sidecar.
+      - run: cargo check --manifest-path src-tauri/Cargo.toml --all-targets
+
   build:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    needs: [test, rust]
     strategy:
       fail-fast: false
       matrix:
