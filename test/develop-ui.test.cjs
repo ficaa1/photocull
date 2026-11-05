@@ -50,11 +50,26 @@ test('obsolete render errors are suppressed and latest job continues', async () 
   const q=new RenderQueue(v=>new Promise((a,b)=>{if(v===1)reject=b;else resolve=a;}),f=>frames.push(f),e=>errors.push(e),{setTimer:()=>0,clearTimer:()=>{}});
   q.request(1);q.request(2);reject(new Error('stale'));await tick();resolve('latest');await tick();assert.deepEqual(errors,[]);assert.deepEqual(frames,['latest']);
 });
-test('TIFF handoff preflight keeps existing files and refuses collisions and symlinks', async t => {
+test('TIFF handoff reserves unrelated files, repeated camera names and source images; reuses only owned TIFFs', async t => {
   const fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
   const {planTiffs}=require('../src/develop-plan.cjs');const dir=await fs.mkdtemp(path.join(os.tmpdir(),'photocull-tiff-plan-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));
-  const items=[{id:'a',name:'IMG.ARW',raw:true},{id:'b',name:'NEW.ARW',raw:true}];await fs.writeFile(path.join(dir,'IMG.tif'),'keep edits');
-  let result=await planTiffs(items,dir);assert.equal(result[0].exists,true);assert.equal(result[1].exists,false);assert.equal(await fs.readFile(path.join(dir,'IMG.tif'),'utf8'),'keep edits');
-  result=await planTiffs([...items,{id:'c',name:'img.NEF',raw:true}],dir);assert.ok(result[0].error);assert.ok(result[2].error);assert.equal(result[1].exists,false);
-  await fs.symlink(path.join(dir,'IMG.tif'),path.join(dir,'NEW.tif'));result=await planTiffs(items,dir);assert.match(result[1].error,/regular file/);
+  const existing=path.join(dir,'IMG.tif');await fs.writeFile(existing,'keep edits');
+  const items=[{id:'a',name:'IMG.ARW',raw:true},{id:'b',name:'img.NEF',raw:true},{id:'c',name:'NEW.ARW',raw:true}];
+  let result=await planTiffs(items,dir);assert.equal(result[0].tiff,path.join(dir,'IMG-2.tif'));assert.equal(result[1].tiff,path.join(dir,'img-3.tif'));assert.equal(result[0].exists,false);
+  assert.equal(await fs.readFile(existing,'utf8'),'keep edits');
+  items[0].develop={tiff:existing,edited:true};result=await planTiffs(items,dir);assert.equal(result[0].tiff,existing);assert.equal(result[0].exists,true);assert.equal(result[0].edited,true);assert.equal(result[0].own,true);
+  await fs.symlink(existing,path.join(dir,'NEW.tif'));result=await planTiffs(items,dir);assert.equal(result[2].tiff,path.join(dir,'NEW-2.tif'));
+  items[2].develop={tiff:path.join(dir,'NEW.tif')};result=await planTiffs(items,dir);assert.match(result[2].error,/regular/);
+  result=await planTiffs(items.slice(0,1),dir,[...items,{id:'source',path:existing}]);assert.match(result[0].error,/unshared/);
+  result=await planTiffs(items.slice(0,1),dir,[...items,{id:'other',develop:{tiff:existing}}]);assert.equal(result[0].tiff,path.join(dir,'IMG-2.tif'));
+  await assert.rejects(planTiffs(items,'relative'),/folder/);
+});
+
+test('saved TIFF folder must still exist and accept writes, and probing leaves it empty', async t => {
+  const fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
+  const {writableFolder}=require('../src/develop-plan.cjs');const dir=await fs.mkdtemp(path.join(os.tmpdir(),'photocull-folder-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+  assert.equal(await writableFolder(dir),true);assert.deepEqual(await fs.readdir(dir),[]);
+  assert.equal(await writableFolder(path.join(dir,'missing')),false);assert.equal(await writableFolder('relative'),false);
+  const file=path.join(dir,'file');await fs.writeFile(file,'keep');assert.equal(await writableFolder(file),false);assert.equal(await fs.readFile(file,'utf8'),'keep');
+  if(process.platform!=='win32' && process.getuid?.()!==0){await fs.chmod(dir,0o500);try{assert.equal(await writableFolder(dir),false);}finally{await fs.chmod(dir,0o700);}}
 });

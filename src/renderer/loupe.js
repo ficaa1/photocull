@@ -165,8 +165,8 @@
         this.abandon(item.id);
         this.item = item; this.shown = null; target.dataset.itemId = item.id;
         this.badge(null);
-        this.requestDims(ctx, item);
       }
+      this.requestDims(ctx, item);
       this.updateSource();
       const want = this.want(), stamp = `${ctx.session.id}:${item.id}:${want}:${ctx.revision}`;
       if (target.dataset.stamp === stamp && (target.dataset.complete || Number(target.dataset.generation) === this.generation)) { this.renderControls(); this.renderNavigator(); return; }
@@ -195,6 +195,7 @@
     load(item, kind, extra = '', probe = false) {
       const key = `${item.id}:${kind}${probe ? ':probe' : ''}`;
       for (const job of this.inflight) if (job.key === key) return;
+      const revision=this.context().revision, session=this.context().session?.id;
       const image = this.createImage(), job = { key, id: item.id, image };
       const url = this.imageUrl(item, kind, extra);
       this.inflight.add(job);
@@ -202,6 +203,7 @@
         this.inflight.delete(job);
         // Decode before swapping so a large image never flashes blank.
         if (!probe && this.item?.id === item.id && image.decode) { try { await image.decode(); } catch { /* Shown undecoded. */ } }
+        if(this.context().revision!==revision || this.context().session?.id!==session)return;
         this.store(item.id, { kind, url, width: image.naturalWidth, height: image.naturalHeight });
         this.offer(item);
       };
@@ -260,10 +262,10 @@
     // Reuses the backend's description of a representation for the source
     // chip, the inspector and the "Camera preview" badge.
     async status(item, kind, failed = false, describe = true) {
-      const session = this.context().session?.id;
+      const ctx = this.context(), session = ctx.session?.id, revision = ctx.revision;
       try {
-        const status = await this.api.previewStatus(session, item.id, kind);
-        if (this.item?.id !== item.id) return;
+        const status = await this.api.previewStatus(session, item.id, kind, !!ctx.original);
+        if (this.item?.id !== item.id || this.context().revision !== revision) return;
         if (failed) {
           if (this.shown) this.el.previewStatus.textContent = status.error ? `Larger preview unavailable · ${status.error}` : 'Larger preview unavailable';
           else this.el.error.textContent = status.error || 'Preview unavailable';
@@ -294,9 +296,9 @@
       for (const id of [item.id, this.ahead[0]]) {
         if (!id || this.dims.has(id) || this.dimRequests.has(id)) continue;
         this.dimRequests.add(id);
-        this.api.previewStatus(session, id, 'preview').then(status => {
+        this.api.previewStatus(session, id, 'preview', !!ctx.original).then(status => {
           this.dimRequests.delete(id);
-          if (this.context().session?.id !== session) return;
+          if (this.context().session?.id !== session || this.context().revision !== ctx.revision) return;
           this.dims.set(id, status?.size?.width && status.size.height ? status.size : null);
           if (this.item?.id === id) this.refresh();
         }, () => this.dimRequests.delete(id));
@@ -476,7 +478,7 @@
     }
     // Previews were regenerated (retry, RAW rendering change): reload, keeping
     // the current pixels on screen until replacements arrive.
-    invalidate() { this.prefetcher.set([]); this.reps.clear(); this.shown = null; this.el.image.dataset.stamp = ''; }
+    invalidate() { this.abandon(null); this.generation++; clearTimeout(this.timer); this.prefetcher.set([]); this.dims.clear(); this.dimRequests.clear(); this.reps.clear(); this.shown = null; this.el.image.dataset.stamp = ''; }
     clear() { this.generation++; this.el.image.dataset.stamp = ''; this.renderNavigator(); }
   }
 

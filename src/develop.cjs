@@ -83,6 +83,7 @@ function developState(input) {
     settings: isObject(input.settings) ? input.settings : null,
     tiff: typeof input.tiff === 'string' && path.isAbsolute(input.tiff) ? input.tiff : null,
     edited: input.edited === true,
+    revision: Number.isSafeInteger(input.revision) && input.revision >= 0 ? input.revision : 0,
   };
   return state.recipe || state.settings || state.tiff ? state : null;
 }

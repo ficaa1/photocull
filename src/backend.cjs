@@ -21,7 +21,7 @@ const readline = require('node:readline');
 const { randomBytes } = require('node:crypto');
 const { Library } = require('./library.cjs');
 const { RecipeStore, planExport } = require('./develop.cjs');
-const { planTiffs } = require('./develop-plan.cjs');
+const { planTiffs, writableFolder } = require('./develop-plan.cjs');
 const { PreviewService } = require('./previews.cjs');
 const { TransferService } = require('./transfer.cjs');
 const { DeviceMonitor } = require('./devices.cjs');
@@ -90,13 +90,16 @@ async function start() {
       return { ...state, recipe: recipe.id, recipeSettings: recipe.settings, settings: state.settings ?? recipe.settings };
     },
     'develop-set': (session, ids, value) => library.developSet(session, ids, value || {}),
-    'develop-folder': session => {
+    'develop-folder': async session => {
       const s = library.get(session);
-      return { folder: path.join(s.folder, '_develop'), removable: s.removable };
+      const folder = settings.value.dehancerFolder;
+      const valid = folder && await writableFolder(folder);
+      return { folder: s.removable ? (valid ? folder : null) : path.join(s.folder, '_develop'), removable: s.removable };
     },
+    'develop-folder-check': async folder => { if (!await writableFolder(folder)) throw new Error('Choose an existing writable TIFF folder.'); return folder; },
     'develop-plan': async (session, ids, folder) => {
       if (!Array.isArray(ids) || !ids.length || ids.length > 100_000) throw new Error('Choose RAW photos to send.');
-      return planTiffs([...new Set(ids)].map(id => library.item(session, id)), folder);
+      return planTiffs([...new Set(ids)].map(id => library.item(session, id)), folder, library.get(session).items);
     },
     'make-folder': async folder => {
       if (typeof folder !== 'string' || !path.isAbsolute(folder)) throw new Error('Invalid folder.');
@@ -125,7 +128,7 @@ async function start() {
       const item = library.item(session, id);
       return { file: item.path, name: item.name, raw: item.raw, tiff: item.develop?.tiff ?? null, dehancerExe: settings.value.dehancerExe };
     },
-    'develop-mark': (session, id, mark) => library.developMark(session, id, mark || {}),
+    'develop-mark': async (session, id, mark) => { const result=await library.developMark(session, id, mark || {}); previews.invalidatePhoto(library.item(session,id)); return result; },
     'scan': async (folder, recursive) => {
       if (typeof folder !== 'string' || !folder) throw new Error('Choose a photo folder.');
       return library.scan(folder, !!recursive, { removable: await onCard(folder) });
@@ -156,8 +159,8 @@ async function start() {
     'history': (session, direction) => library.history(session, direction),
     'metadata': (session, id, kind = 'preview') => previews.metadata(library.item(session, id), kind),
     // size: the photo's real oriented pixel size (or null), for loupe zoom percentages.
-    'preview-status': async (session, id, kind = 'preview') => {
-      const item = library.item(session, id);
+    'preview-status': async (session, id, kind = 'preview', original = false) => {
+      const photo = library.item(session, id), item = original ? { ...photo, develop: null } : photo;
       return { ...previews.status(item, kind), size: await previews.dimensions(item) };
     },
     'settings': async patch => {
@@ -238,7 +241,7 @@ async function start() {
     try {
       if (route === 'image' && authorized) {
         const [session, id, kind] = rest;
-        const item = library.item(session, id);
+        const photo = library.item(session, id), item = url.searchParams.get('original') === '1' ? { ...photo, develop: null } : photo;
         // cached=1 only returns already generated images (404 otherwise);
         // prefetch=N ranks look-ahead work below anything on screen.
         const rank = Number(url.searchParams.get('prefetch')) || 0;

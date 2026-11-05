@@ -236,3 +236,14 @@ test('forgetting deleted photos drops them from the session, history and saved d
   const saved = JSON.parse(await fs.readFile(library.get(s.id).store, 'utf8'));
   assert.deepEqual(Object.keys(saved.decisions), [b.id]);
 });
+
+test('Dehancer edit paths and preview revisions survive reopen and RAW adjustments preserve the edit', async t => {
+  const root=await temp(t),photos=path.join(root,'photos'),state=path.join(root,'state');await fs.mkdir(photos);await fs.writeFile(path.join(photos,'photo.ARW'),'original');
+  const library=new Library(state),session=await library.scan(photos),id=session.items[0].id,tiff=path.join(root,'photo.tif');
+  await library.developMark(session.id,id,{tiff});await library.developMark(session.id,id,{edited:true});
+  let saved=library.developGet(session.id,id);assert.equal(saved.edited,true);assert.equal(saved.revision,2);
+  await library.developSet(session.id,[id],{settings:{light:{exposure:1}}});saved=library.developGet(session.id,id);assert.equal(saved.edited,true);assert.equal(saved.tiff,tiff);assert.equal(saved.revision,2);
+  const reopened=new Library(state),again=await reopened.scan(photos);assert.equal(again.items[0].dehancer,true);assert.equal(again.items[0].tiff,tiff);assert.equal(again.items[0].developRevision,2);
+  await reopened.developMark(again.id,id,{edited:true});assert.equal(reopened.developGet(again.id,id).revision,3);
+  await reopened.developMark(again.id,id,{tiff});assert.equal(reopened.developGet(again.id,id).edited,false);
+});

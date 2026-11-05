@@ -92,3 +92,11 @@ test('preview cache size defaults to 2 GB and only accepts the offered sizes', (
   assert.equal(normalizeSettings({ previewCacheGB: 10 }).previewCacheGB, 10);
   for (const value of [0, 3, '5', -1]) assert.throws(() => normalizeSettings({ previewCacheGB: value }), /Invalid preview cache size/);
 });
+
+test('Dehancer camera-card folder defaults empty, requires an absolute path, and persists', async t => {
+  const dir=await temporary(t), store=new SettingsStore(dir); await store.init();
+  assert.equal(store.value.dehancerFolder,'');
+  for(const value of ['relative/path','../Dehancer',123,'/tmp/bad\nfolder']) assert.throws(()=>normalizeSettings({dehancerFolder:value}));
+  for(const value of ['/tmp/Dehancer','C:\\Users\\alex\\Pictures\\Dehancer','\\\\server\\photos']) assert.equal(normalizeSettings({dehancerFolder:value}).dehancerFolder,value);
+  await store.update({dehancerFolder:dir});const reopened=new SettingsStore(dir);await reopened.init();assert.equal(reopened.value.dehancerFolder,dir);
+});

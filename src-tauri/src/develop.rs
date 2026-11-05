@@ -311,6 +311,45 @@ pub async fn develop_render(
     .await
 }
 
+fn known_tiff(tiff: Option<&str>) -> Result<PathBuf, String> {
+    let path = PathBuf::from(tiff.ok_or("Develop this photo for Dehancer first.")?);
+    let meta = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+    if !path.is_absolute() || !meta.is_file() || meta.file_type().is_symlink() || !path.extension().is_some_and(|s| s.eq_ignore_ascii_case("tif") || s.eq_ignore_ascii_case("tiff")) {
+        return Err("This photo has no regular developed TIFF.".into());
+    }
+    Ok(path)
+}
+
+fn finished_preview(bytes: &[u8], edge: usize) -> Result<Rgba8, String> {
+    let decoded = lightcraft_codecs::decode(bytes, Default::default()).map_err(|e| e.to_string())?;
+    let orientation = lightcraft_geom::Orientation::from_exif(decoded.orientation);
+    let img = decoded.to_srgb8().into_oriented(orientation);
+    let scale = (edge as f64 / img.width.max(img.height) as f64).min(1.0);
+    Ok(resize_rgba(&img, (img.width as f64 * scale).round().max(1.0) as usize, (img.height as f64 * scale).round().max(1.0) as usize))
+}
+
+/// Finished TIFF pixels, without applying the RAW develop settings a second time.
+#[tauri::command]
+pub async fn develop_result(backend: State<'_, Backend>, session: String, id: String) -> Result<Response, String> {
+    let ctx = Engine::context(&backend, &session, &id).await?;
+    blocking(move || {
+        let path = known_tiff(ctx.tiff.as_deref())?;
+        let t = Instant::now();
+        let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+        let img = finished_preview(&bytes, SETTLED_EDGE)?;
+        let header = json!({"width": img.width, "height": img.height, "loadMs": ms(t), "renderMs": 0, "histogram": null});
+        Ok(Response::new(pack(&header, encode_frame(&img)?)))
+    }).await
+}
+
+#[tauri::command]
+pub async fn reveal_develop(app: AppHandle, backend: State<'_, Backend>, session: String, id: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let ctx = Engine::context(&backend, &session, &id).await?;
+    let path = known_tiff(ctx.tiff.as_deref())?;
+    app.opener().reveal_item_in_dir(path).map_err(|e| e.to_string())
+}
+
 #[derive(Deserialize)]
 pub struct TiffItem {
     id: String,
@@ -322,7 +361,7 @@ pub struct TiffItem {
 pub struct TiffOptions {
     color_space: String,
     bit_depth: Option<u8>,
-    /// Replace TIFFs that already exist (they may hold Dehancer edits).
+    /// Explicit consent to replace only this photo's own TIFF (including its Dehancer edit).
     replace: bool,
 }
 
@@ -365,7 +404,7 @@ fn photo_metadata(photo: &Photo) -> lightcraft_meta::Metadata {
 }
 
 /// Develops photos to TIFFs in `folder` (named after the RAW) for an external editor. Existing TIFFs are kept
-/// unless `replace`: they may already hold Dehancer's edits.
+/// unless `replace`: they may already hold Dehancer's edits. Unrelated TIFFs always get unique names.
 #[tauri::command]
 pub async fn develop_tiffs(
     app: AppHandle,
@@ -380,16 +419,12 @@ pub async fn develop_tiffs(
     if !folder.is_dir() {
         return Err("That folder does not exist.".into());
     }
-    let mut names = HashMap::<String, usize>::new();
-    for item in &items {
-        let ctx = Engine::context(&backend, &session, &item.id).await?;
-        let stem = Path::new(&ctx.name).file_stem().unwrap_or_default().to_string_lossy().to_lowercase();
-        *names.entry(stem).or_default() += 1;
-    }
+    let plan = backend.call("develop-plan", json!([session, items.iter().map(|i| &i.id).collect::<Vec<_>>(), folder.to_string_lossy()])).await?;
     let mut jobs = Vec::new();
     for item in items {
         let ctx = Engine::context(&backend, &session, &item.id).await?;
-        jobs.push((item, ctx));
+        let row = plan.as_array().and_then(|rows| rows.iter().find(|r| r["id"].as_str() == Some(item.id.as_str()))).cloned().ok_or("Missing TIFF destination.")?;
+        jobs.push((item, ctx, row));
     }
     let engine_ref = engine.inner().clone();
     let total = jobs.len();
@@ -400,23 +435,22 @@ pub async fn develop_tiffs(
         let space = output_space(&options.color_space);
         let depth = options.bit_depth.unwrap_or(16);
         let mut results = Vec::new();
-        for (i, (item, ctx)) in jobs.into_iter().enumerate() {
+        for (i, (item, ctx, row)) in jobs.into_iter().enumerate() {
             if engine.cancel.load(Ordering::SeqCst) {
                 results.push(json!({ "id": item.id, "status": "cancelled" }));
                 continue;
             }
             emit_progress(&app, "develop-progress", json!({ "done": i, "total": total, "name": ctx.name }));
-            let stem = Path::new(&ctx.name).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| item.id.clone());
-            let out = folder.join(format!("{stem}.tif"));
+            let out = PathBuf::from(row["tiff"].as_str().unwrap_or_default());
             let t = Instant::now();
             let result = (|| -> Result<&'static str, String> {
                 if !ctx.raw {
                     return Err("Only RAW files can be developed.".into());
                 }
-                if names.get(&stem.to_lowercase()).copied().unwrap_or(0) > 1 {
-                    return Err("Two photos would have the same TIFF name. Send them to separate folders.".into());
-                }
+                if let Some(error) = row["error"].as_str() { return Err(error.into()); }
+                let own = row["own"].as_bool() == Some(true);
                 if let Ok(existing) = std::fs::symlink_metadata(&out) {
+                    if !own { return Err("A TIFF appeared at this destination. Send again to choose a unique name.".into()); }
                     if !existing.is_file() || existing.file_type().is_symlink() { return Err("Destination is not a regular file.".into()); }
                     if !options.replace { return Ok("exists"); }
                 }
@@ -431,8 +465,13 @@ pub async fn develop_tiffs(
                 };
                 let bytes = encode_rendered(&r, &o, Some(&photo_metadata(&photo)))?;
                 let partial = out.with_extension("tif.partial");
-                std::fs::write(&partial, &bytes).map_err(|e| format!("{}: {e}", partial.display()))?;
-                std::fs::rename(&partial, &out).map_err(|e| format!("{}: {e}", out.display()))?;
+                use std::io::Write;
+                let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&partial).map_err(|e| format!("{}: {e}", partial.display()))?;
+                let write = file.write_all(&bytes).and_then(|_| file.sync_all());
+                drop(file);
+                let published = write.map_err(|e| e.to_string()).and_then(|_| publish_export(&partial, &out, own && options.replace));
+                if published.is_err() { let _ = std::fs::remove_file(&partial); }
+                published?;
                 Ok("developed")
             })();
             results.push(match result {
@@ -465,7 +504,7 @@ pub fn develop_cancel(engine: State<'_, Arc<Engine>>) {
 #[tauri::command]
 pub async fn dehancer_edit(engine: State<'_, Arc<Engine>>, backend: State<'_, Backend>, session: String, id: String) -> Result<Value, String> {
     let ctx = Engine::context(&backend, &session, &id).await?;
-    let tiff = PathBuf::from(ctx.tiff.ok_or("Develop this photo for Dehancer first.")?);
+    let tiff = known_tiff(ctx.tiff.as_deref())?;
     let exe = PathBuf::from(ctx.dehancer_exe.filter(|s| !s.is_empty()).unwrap_or_else(|| DEFAULT_DEHANCER.into()));
     if !exe.is_file() {
         return Err(format!("Dehancer was not found at {}. Set its location in Settings.", exe.display()));
@@ -873,4 +912,48 @@ pub async fn download_lens_database(app: AppHandle, engine: State<'_, Arc<Engine
     engine.lens_downloading.store(false, Ordering::SeqCst);
     result?;
     Ok(json!({ "installed": engine.lens_db().0.is_some() }))
+}
+
+#[cfg(test)]
+mod result_tests {
+    use super::*;
+
+    #[test]
+    fn known_tiff_requires_a_recorded_absolute_regular_tiff() {
+        let unique = SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let dir = std::env::temp_dir().join(format!("photocull-result-{}-{unique}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let tiff = dir.join("photo.tif"); std::fs::write(&tiff, b"pixels").unwrap();
+        assert_eq!(known_tiff(tiff.to_str()).unwrap(), tiff);
+        assert!(known_tiff(None).is_err());
+        assert!(known_tiff(Some("relative.tif")).is_err());
+        assert!(known_tiff(dir.to_str()).is_err());
+        let other = dir.join("photo.jpg"); std::fs::write(&other, b"pixels").unwrap();
+        assert!(known_tiff(other.to_str()).is_err());
+        #[cfg(unix)] {
+            let link = dir.join("link.tif"); std::os::unix::fs::symlink(&tiff, &link).unwrap();
+            assert!(known_tiff(link.to_str()).is_err());
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn finished_preview_reads_optional_dehancer_fixture() {
+        let Ok(file) = std::env::var("PHOTOCULL_DEHANCER_TIFF") else { return; };
+        let bytes = std::fs::read(known_tiff(Some(&file)).unwrap()).unwrap();
+        let preview = finished_preview(&bytes, SETTLED_EDGE).unwrap();
+        assert_eq!(preview.width.max(preview.height), SETTLED_EDGE);
+        let jpeg = encode_frame(&preview).unwrap();
+        assert!(jpeg.starts_with(&[0xff, 0xd8]));
+    }
+
+    #[test]
+    fn finished_tiff_preview_preserves_color_and_fits_without_enlarging() {
+        let mut image = Rgba8::new(12, 8); image.data.fill([200, 80, 30, 255]);
+        let bytes = encode_with_metadata(&image, &ExportOptions {format: ExportFormat::Tiff, bit_depth: Some(8), ..Default::default()}, None).unwrap();
+        let small = finished_preview(&bytes, 6).unwrap(); assert_eq!((small.width, small.height), (6, 4));
+        for (actual, expected) in small.data[0][..3].iter().zip([200i16, 80, 30]) { assert!((*actual as i16 - expected).abs() <= 1); }
+        let native = finished_preview(&bytes, 100).unwrap(); assert_eq!((native.width, native.height), (12, 8));
+        assert!(finished_preview(b"broken TIFF", 6).is_err());
+    }
 }

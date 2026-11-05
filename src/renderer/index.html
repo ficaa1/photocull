@@ -30,6 +30,7 @@
         <button class="filter" data-filter="pick"><span><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4m0 0c4-4 9 4 14 0v10c-5 4-10-4-14 0"/></svg>Picks</span><b id="count-pick">0</b></button>
         <button class="filter" data-filter="reject"><span><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg>Rejects</span><b id="count-reject">0</b></button>
         <button class="filter" data-filter="rated"><span><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-2.9-5.6 2.9 1.1-6.2L3 9.6l6.2-.9Z"/></svg>Rated</span><b id="count-rated">0</b></button>
+        <button class="filter" data-filter="dehancer"><span>Dehancer edits</span><b id="count-dehancer">0</b></button>
         <button class="filter" data-filter="trash"><span><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>Trash</span><b id="count-trash">0</b></button>
       </nav>
       <div class="progress-label"><span>Reviewed</span><strong id="progress-text">0 of 0</strong></div>
@@ -41,7 +42,7 @@
     </aside>
     <main class="main">
       <div class="toolbar">
-        <div class="view-heading"><h1 id="view-title">Photos</h1><span id="view-count" class="subtle small"></span></div>
+        <div class="view-heading"><h1 id="view-title">Photos</h1><button id="original-toggle" class="button quiet" type="button" hidden aria-pressed="false">Show originals (\)</button><span id="view-count" class="subtle small"></span></div>
         <div class="toolbar-right">
           <button id="delete-rejects" class="button danger-quiet" hidden><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg><span>Delete rejects</span></button>
           <button id="trash-restore" class="button" hidden title="Restore (R)"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg><span>Restore</span></button>
@@ -95,6 +96,7 @@
       <div id="image-details" hidden>
         <h2 id="detail-name"></h2><div id="detail-kind" class="subtle small"></div>
         <div class="inspector-divider"></div>
+        <div id="detail-result" hidden><div class="sidebar-label">Dehancer edit</div><p id="detail-result-path" class="subtle small"></p><div class="develop-actions"><button id="detail-result-reveal" type="button" class="button quiet">Show in folder</button><button id="detail-result-edit" type="button" class="button quiet">Edit in Dehancer again</button></div></div>
         <div class="sidebar-label">Capture</div>
         <dl id="metadata"><dt>Camera</dt><dd>Loading…</dd></dl>
         <div class="inspector-divider"></div>
@@ -106,7 +108,7 @@
 
     </aside>
   </div>
-  <dialog id="help-dialog"><div class="dialog-header"><h2>Shortcuts</h2><button class="close-dialog" aria-label="Close">×</button></div><div class="shortcut-list"><span>Previous / next image</span><kbd>← / →</kbd><span>Select several</span><kbd>Shift+click / drag</kbd><span>Extend selection</span><kbd>Shift+arrows</kbd><span>Add / remove from selection</span><kbd>Ctrl+click</kbd><span>Select all in view</span><kbd>Ctrl+A</kbd><span>Clear selection</span><kbd>Esc</kbd><span>Pick</span><kbd>P</kbd><span>Reject</span><kbd>X</kbd><span>Clear flag</span><kbd>U</kbd><span>Star rating / clear rating</span><kbd>1–5 / 0</kbd><span>Fit / zoom (Review, around the pointer)</span><kbd>Click / Z / Space</kbd><span>Pan when zoomed</span><kbd>Drag / hold Space</kbd><span>Zoom in / out</span><kbd>Ctrl + / Ctrl − / Ctrl+wheel</kbd><span>Fit</span><kbd>Ctrl 0</kbd><span>Fullscreen / exit</span><kbd>F / F11 / Esc</kbd><span>Grid / review / develop</span><kbd>G / E / D</kbd><span>Before / after (Develop)</span><kbd>\</kbd><span>Clipping overlay (Develop)</span><kbd>J</kbd><span>Copy / paste settings (Develop)</span><kbd>Ctrl Shift C / V</kbd><span>Export finished images</span><kbd>Ctrl Shift E</kbd><span>Switch grid / review</span><kbd>Ctrl Tab</kbd><span>Undo / redo decision</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Open folder</span><kbd>Ctrl O</kbd><span>Settings</span><kbd>Ctrl ,</kbd><span>Color label / clear</span><kbd>Alt 1–8 / Alt 0</kbd><span>Sources / details</span><kbd>B / I</kbd><span>Move to Trash</span><kbd>Del / ⌫</kbd><span>Delete permanently</span><kbd>Shift Del</kbd><span>Restore (Trash view)</span><kbd>R</kbd><span>Help</span><kbd>?</kbd></div></dialog>
+  <dialog id="help-dialog"><div class="dialog-header"><h2>Shortcuts</h2><button class="close-dialog" aria-label="Close">×</button></div><div class="shortcut-list"><span>Previous / next image</span><kbd>← / →</kbd><span>Select several</span><kbd>Shift+click / drag</kbd><span>Extend selection</span><kbd>Shift+arrows</kbd><span>Add / remove from selection</span><kbd>Ctrl+click</kbd><span>Select all in view</span><kbd>Ctrl+A</kbd><span>Clear selection</span><kbd>Esc</kbd><span>Pick</span><kbd>P</kbd><span>Reject</span><kbd>X</kbd><span>Clear flag</span><kbd>U</kbd><span>Star rating / clear rating</span><kbd>1–5 / 0</kbd><span>Fit / zoom (Review, around the pointer)</span><kbd>Click / Z / Space</kbd><span>Pan when zoomed</span><kbd>Drag / hold Space</kbd><span>Zoom in / out</span><kbd>Ctrl + / Ctrl − / Ctrl+wheel</kbd><span>Fit</span><kbd>Ctrl 0</kbd><span>Fullscreen / exit</span><kbd>F / F11 / Esc</kbd><span>Grid / review / develop</span><kbd>G / E / D</kbd><span>Original / edit · before / after (Develop)</span><kbd>\</kbd><span>Clipping overlay (Develop)</span><kbd>J</kbd><span>Copy / paste settings (Develop)</span><kbd>Ctrl Shift C / V</kbd><span>Export finished images</span><kbd>Ctrl Shift E</kbd><span>Switch grid / review</span><kbd>Ctrl Tab</kbd><span>Undo / redo decision</span><kbd>Ctrl Z / Ctrl Shift Z</kbd><span>Open folder</span><kbd>Ctrl O</kbd><span>Settings</span><kbd>Ctrl ,</kbd><span>Color label / clear</span><kbd>Alt 1–8 / Alt 0</kbd><span>Sources / details</span><kbd>B / I</kbd><span>Move to Trash</span><kbd>Del / ⌫</kbd><span>Delete permanently</span><kbd>Shift Del</kbd><span>Restore (Trash view)</span><kbd>R</kbd><span>Help</span><kbd>?</kbd></div></dialog>
   <dialog id="export-dialog">
     <div class="dialog-header"><h2>Copy picks</h2><button class="close-dialog" aria-label="Close">×</button></div>
     <p id="copy-scope" class="subtle"></p>
@@ -158,6 +160,7 @@
     <nav class="settings-tabs" aria-label="Settings"><button data-settings-tab="general" class="active">General</button><button data-settings-tab="metadata">Metadata</button><button data-settings-tab="colors">Colors</button><button data-settings-tab="naming">File naming</button></nav>
     <section data-settings-page="general">
       <!-- Develop preferences. -->
+      <div class="field-row"><label for="dehancer-folder">Camera-card TIFF folder</label><input id="dehancer-folder" type="text" placeholder="Choose a local folder for Dehancer"><button id="dehancer-folder-choose" type="button" class="button quiet">Change…</button></div>
       <div class="field-row"><label for="dehancer-exe">Dehancer location</label><input id="dehancer-exe" type="text" placeholder="C:\Program Files\Dehancer Lightroom Plugin\DehancerLightroom.exe"></div>
       <div class="field-row"><label for="default-recipe">Default recipe</label><select id="default-recipe"><option value="neutral">Neutral (for Dehancer)</option></select></div>
       <!-- End Develop preferences. -->

@@ -1,7 +1,7 @@
 const api = window.photocull;
 const $ = id => document.getElementById(id);
 const state = { deleting: false, session: null, selected: null, marked: new Set(), anchor: null, filter: 'all', query: '', mode: 'review', fullscreen: false,
-  generation: 0, previewRevision: 0, pendingSaves: 0, saveError: false, busy: false, settings: { autoAdvance: true, recursive: false, autoOpenCards: true, colors: [], naming: { template: '{filename}', text: '', start: 1 } }, settingsReady: false, colorFilter: '', devices: [], deviceError: '', autoOpened: new Set(), copy: { running: false, destination: null, copiedTo: null } };
+  generation: 0, previewRevision: 0, showOriginal: false, pendingSaves: 0, saveError: false, busy: false, settings: { autoAdvance: true, recursive: false, autoOpenCards: true, colors: [], naming: { template: '{filename}', text: '', start: 1 } }, settingsReady: false, colorFilter: '', devices: [], deviceError: '', autoOpened: new Set(), copy: { running: false, destination: null, copiedTo: null } };
 let toastTimer, metadataTimer, framePending = false;
 const gridNodes = new Map(), filmNodes = new Map();
 let filmSignature = '';
@@ -32,8 +32,8 @@ const loupe = PhotoCullLoupe.create({ api,
     previewSource: $('preview-source'), previewStatus: $('preview-status'), cameraBadge: $('camera-preview'), zoomFit: $('zoom'), zoomFill: $('zoom-fill'),
     zoomPercent: $('zoom-percent'), zoomLevel: $('zoom-level'), navigator: $('navigator'), navigatorImage: $('navigator-image'), navigatorView: $('navigator-view'),
     navigatorPanel: $('navigator-panel'), navigatorDock: $('navigator-dock'), navigatorOverlay: $('navigator-overlay'), navigatorZoom: $('navigator-zoom'), inspector: $('inspector') },
-  imageUrl: (item, kind, extra = '') => api.imageUrl(state.session.id, item.id, kind, `&v=${state.previewRevision}${extra}`),
-  context: () => ({ session: state.session, items: state.session ? filtered() : [], mode: state.mode, revision: state.previewRevision, fullscreen: state.fullscreen }),
+  imageUrl: (item, kind, extra = '') => api.imageUrl(state.session.id, item.id, kind, `&d=${item.developRevision || 0}&edit=${item.dehancer ? 1 : 0}&v=${state.previewRevision}${state.showOriginal ? '&original=1' : ''}${extra}`),
+  context: () => ({ session: state.session, items: state.session ? filtered() : [], mode: state.mode, revision: state.previewRevision, original: state.showOriginal, fullscreen: state.fullscreen }),
   settings: () => state.settings,
   onLoaded: item => { void loadMetadata(item); },
   onClickZoomChange: async percent => { try { state.settings = await api.settings({ zoomPercent: percent }); } catch (error) { toast(error.message); } } });
@@ -41,7 +41,13 @@ matchMedia('(max-width: 900px)').addEventListener('change', applyPaneLayout);
 applyPaneLayout();
 // Develop owns its controls and render queue; app hooks keep selection and badges shared.
 const developView = PhotoCullDevelop.init({ api, selection, toast, status: setStatus,
-  updateItems(session, items) { if (state.session?.id !== session) return; for (const patch of items) { const item = state.session.items.find(i => i.id === patch.id); if (item) Object.assign(item, patch); } render(); },
+  updateItems(session, items) {
+    if (state.session?.id !== session) return;
+    let changed=false;
+    for(const patch of items){const item=state.session.items.find(i=>i.id===patch.id);if(item){changed ||= 'dehancer' in patch && (item.dehancer!==patch.dehancer || item.developRevision!==patch.developRevision);Object.assign(item,patch);}}
+    if(changed)refreshPreviews();else render();
+  },
+  viewResult(session,id) { if(state.session?.id!==session)return; state.selected=id; resetSelection(); setMode('develop'); developView.key=''; render(); },
   async saveSettings(patch) { state.settings = await api.settings(patch); return state.settings; },
 });
 
@@ -65,12 +71,12 @@ function filtered() {
   return (state.session?.items ?? []).filter(item => {
     // Trashed photos only appear in the Trash view.
     const match = state.filter === 'trash' ? item.trashed : !item.trashed && (state.filter === 'all' || state.filter === 'unreviewed' && !reviewed(item) ||
-      state.filter === 'rated' && item.rating > 0 || item.flag === state.filter);
+      state.filter === 'dehancer' && item.dehancer || state.filter === 'rated' && item.rating > 0 || item.flag === state.filter);
     return match && (!state.colorFilter || colorOf(item) === state.colorFilter) && item.name.toLowerCase().includes(state.query);
   });
 }
 function imageUrl(item, kind = 'thumb', prefetch = false) {
-  return api.imageUrl(state.session.id, item.id, kind, `&v=${state.previewRevision}${prefetch ? '&prefetch=1' : ''}`);
+  return api.imageUrl(state.session.id, item.id, kind, `&d=${item.developRevision || 0}&edit=${item.dehancer ? 1 : 0}&v=${state.previewRevision}${state.showOriginal ? '&original=1' : ''}${prefetch ? '&prefetch=1' : ''}`);
 }
 function fileSize(bytes) { return bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`; }
 function setStatus(text, error = false) {
@@ -94,7 +100,7 @@ async function openFolder() {
 function loadSession(session) {
   state.session = session; state.selected = session.items[0]?.id ?? null;
   resetSelection();
-  state.filter = 'all'; state.colorFilter = ''; $('color-filter').value = ''; state.query = ''; state.saveError = false; loupe.reset();
+  state.showOriginal = false; state.filter = 'all'; state.colorFilter = ''; $('color-filter').value = ''; state.query = ''; state.saveError = false; loupe.reset();
   $('search').value = ''; $('grid').scrollTop = 0;
   const folderName = session.folder.split(/[\\/]/).filter(Boolean).pop();
   $('folder-name').textContent = folderName; $('folder-name').title = session.folder;
@@ -150,6 +156,7 @@ function renderCounts() {
   $('count-all').textContent = items.length;
   $('count-unreviewed').textContent = items.length - count;
   for (const flag of ['pick', 'reject']) $(`count-${flag}`).textContent = items.filter(i => i.flag === flag).length;
+  $('count-dehancer').textContent = items.filter(i => i.dehancer).length;
   $('count-rated').textContent = items.filter(i => i.rating > 0).length;
   $('progress-text').textContent = `${count} of ${items.length}`;
   $('progress-fill').style.width = `${items.length ? count / items.length * 100 : 0}%`;
@@ -159,6 +166,9 @@ function renderCounts() {
 function render(reset = false) {
   $('image-export').disabled = !state.session?.items.length || state.deleting || state.copy.running;
   renderCounts();
+  $('original-toggle').hidden = !state.session?.items.some(i=>i.dehancer) || state.mode==='develop';
+  $('original-toggle').textContent = state.showOriginal ? 'Show Dehancer edits (\\)' : 'Show originals (\\)';
+  $('original-toggle').setAttribute('aria-pressed',String(state.showOriginal));
   const items = filtered();
   if (!items.some(i => i.id === state.selected)) state.selected = items[0]?.id ?? null;
   const visible = new Set(items.map(i => i.id)), hadMarked = state.marked.size > 0;
@@ -176,7 +186,7 @@ function render(reset = false) {
   $('review-mode').classList.toggle('active', state.mode === 'review');
   $('grid-mode').classList.toggle('active', state.mode === 'grid');
   $('develop-mode').classList.toggle('active', state.mode === 'develop'); $('develop-mode').setAttribute('aria-pressed', String(state.mode === 'develop'));
-  const titles = { all: 'Photos', unreviewed: 'Unreviewed', pick: 'Picks', reject: 'Rejects', rated: 'Rated', trash: 'Trash' };
+  const titles = { all: 'Photos', unreviewed: 'Unreviewed', pick: 'Picks', reject: 'Rejects', rated: 'Rated', dehancer: 'Dehancer edits', trash: 'Trash' };
   $('view-title').textContent = loaded ? titles[state.filter] : 'Photos';
   $('view-count').textContent = loaded ? `${items.length}${state.marked.size > 1 ? ` · ${state.marked.size} selected` : ''}` : '';
   const rejects = scopeItems('reject').length, trashed = scopeItems('trash').length, locked = state.busy || state.copy.running || state.deleting;
@@ -199,12 +209,14 @@ function renderSelection() {
   const items = filtered(), index = items.findIndex(i => i.id === item.id);
   // Keeps the photo on screen and those prepared ahead in the direction of travel; cancels obsolete work.
   void api.focus(state.session.id, [item.id, ...loupe.select(items, index)]).catch(() => {});
-  $('photo-name').textContent = item.name;
+  $('photo-name').textContent = item.dehancer && !state.showOriginal ? `Dehancer edit · ${item.name}` : item.name;
   $('photo-size').textContent = `${fileSize(item.size)}${item.paired ? ' · RAW + JPEG pair' : ''}`;
   $('format-badge').textContent = item.raw ? item.paired ? 'RAW + JPEG' : 'RAW' : item.name.split('.').pop().toUpperCase();
   $('image-position').textContent = `${index + 1} / ${items.length}`;
   $('previous').disabled = index <= 0; $('next').disabled = index >= items.length - 1;
   $('detail-name').textContent = item.name;
+  $('detail-result').hidden = !item.dehancer; $('detail-result-path').textContent = item.tiff || '';
+  if(item.dehancer && !item.tiff)void api.developGet(state.session.id,item.id).then(saved=>{if(photo()?.id===item.id)$('detail-result-path').textContent=saved.tiff || '';}).catch(()=>{});
   $('detail-kind').textContent = `${item.raw ? 'Camera RAW' : 'Image'} · ${fileSize(item.size)}${item.paired ? ' · paired JPEG' : ''}`;
   renderDecision(item);
   renderColorLabels(item);
@@ -232,6 +244,7 @@ function renderDecision(item) {
 }
 
 api.onPreviewState(status => {
+  if(status.state==='invalidated' && state.session?.items.some(i=>i.id===status.id)){refreshPreviews();return;}
   if (status.id !== state.selected || state.mode !== 'review' || $('review-image').dataset.complete) return;
   if (status.state === 'queued' || status.state === 'rendering') {
     $('image-loading').hidden = false;
@@ -271,7 +284,7 @@ async function loadMetadata(item) {
     const metadata = await api.metadata(sessionId, imageId, loupe.kind());
     if (state.selected !== imageId || state.session.id !== sessionId || state.generation !== generation) return;
     const rows = [['Camera', metadata.camera], ['Lens', metadata.lens], ['Exposure', [metadata.shutter ? `${metadata.shutter} s` : '', metadata.aperture, metadata.iso ? `ISO ${metadata.iso}` : ''].filter(Boolean).join(' · ')],
-      ['Captured', formatCaptureDate(metadata.captured)], ['Preview', metadata.width && metadata.height ? `${metadata.width} × ${metadata.height}` : ''], ['Source', metadata.source]];
+      ['Captured', formatCaptureDate(metadata.captured)], ['Preview', metadata.width && metadata.height ? `${metadata.width} × ${metadata.height}` : ''], ['Source', metadata.source], ['Develop', item.dehancer ? 'Dehancer edit · open Develop to view the TIFF' : item.developed ? 'Developed TIFF' : item.adjusted ? 'RAW adjustments' : '']];
     $('metadata').replaceChildren(...rows.flatMap(([name, value]) => {
       const dt = document.createElement('dt'), dd = document.createElement('dd');
       dt.textContent = name; dd.textContent = value || '—'; return [dt, dd];
@@ -668,6 +681,7 @@ document.addEventListener('keydown', event => {
   if (event.key === 'F11') { event.preventDefault(); void setFullscreen(); return; }
   if (event.key === 'Tab' && event.ctrlKey) { event.preventDefault(); setMode(state.mode === 'review' ? 'grid' : 'review'); return; }
   if (typing) return;
+  if(event.key==='\\' && !event.ctrlKey && !event.metaKey && !event.altKey && state.mode!=='develop'){event.preventDefault();toggleOriginal();return;}
   if ([' ', 'Enter'].includes(event.key) && document.activeElement?.matches('button, summary')) return;
   if (event.key === 'Escape') { event.preventDefault(); if (state.marked.size > 1) { resetSelection(); render(); } else if (state.fullscreen) void setFullscreen(false); else if (state.mode === 'review' && loupe.zoomed) loupe.fit(); return; }
   if (event.key.toLowerCase() === 'f' && !event.ctrlKey && !event.metaKey && !event.altKey) { event.preventDefault(); void setFullscreen(); return; }
@@ -855,7 +869,7 @@ function option(value, label) { const node = document.createElement('option'); n
 function syncSettings(value) {
   state.settings = value; state.settingsReady = true;
   loupe.setClickPercent(value.zoomPercent);
-  $('dehancer-exe').value = value.dehancerExe || ''; $('default-recipe').value = value.defaultRecipe || 'neutral';
+  $('dehancer-folder').value = value.dehancerFolder || ''; $('dehancer-exe').value = value.dehancerExe || ''; $('default-recipe').value = value.defaultRecipe || 'neutral';
   $('auto-advance').checked = value.autoAdvance; $('recursive').checked = value.recursive; $('raw-rendering').value = value.rawRendering;
   $('copy-jpeg').checked = value.copyJpeg; $('copy-xmp').checked = value.copyXmp; $('copy-metadata').checked = value.copyMetadata; fillFolders('copy', value.folders);
   $('copy-preset').replaceChildren(...value.presets.map(p => option(p.id, p.name))); $('copy-preset').value = value.activePreset;
@@ -924,7 +938,7 @@ async function saveCopyDefaults() {
   catch (error) { $('copy-name-preview').textContent = error.message; }
 }
 function fillSettings(value) {
-  $('dehancer-exe').value = value.dehancerExe || ''; $('default-recipe').value = value.defaultRecipe || 'neutral';
+  $('dehancer-folder').value = value.dehancerFolder || ''; $('dehancer-exe').value = value.dehancerExe || ''; $('default-recipe').value = value.defaultRecipe || 'neutral';
   $('auto-advance').checked = value.autoAdvance; $('recursive').checked = value.recursive; $('auto-open-cards').checked = value.autoOpenCards; $('zoom-click-center').checked = value.zoomClickCenter;
   $('preview-cache-limit').value = String(value.previewCacheGB); void showCacheUsage();
   $('raw-rendering').value = value.rawRendering; $('default-jpeg').checked = value.copyJpeg; $('default-xmp').checked = value.copyXmp; $('default-metadata').checked = value.copyMetadata; fillFolders('settings', value.folders);
@@ -946,6 +960,7 @@ function fillSettings(value) {
 }
 function readSettings() {
   const value = clone(settingsDraft);
+  value.dehancerFolder = $('dehancer-folder').value.trim();
   value.dehancerExe = $('dehancer-exe').value.trim(); value.defaultRecipe = $('default-recipe').value;
   value.autoAdvance = $('auto-advance').checked; value.recursive = $('recursive').checked; value.autoOpenCards = $('auto-open-cards').checked; value.zoomClickCenter = $('zoom-click-center').checked;
   value.previewCacheGB = Number($('preview-cache-limit').value);
@@ -1015,3 +1030,11 @@ void api.settings().then(syncSettings).catch(error => toast(error.message));
 // Browser mode lets smoke tests open a folder without a native dialog.
 if (api.platform === 'web') window.loadTestFolder = async (folder, recursive) => loadSession(await api.openPath(folder, recursive));
 render();
+
+$('dehancer-folder-choose').onclick = async () => { try { const folder=await api.pickFolder('Choose a local TIFF folder for camera cards'); if(folder){await api.developFolderCheck(folder); $('dehancer-folder').value=folder;} } catch(e){toast(e.message);} };
+
+function toggleOriginal() { state.showOriginal=!state.showOriginal; refreshPreviews(); }
+$('original-toggle').onclick = toggleOriginal;
+
+$('detail-result-reveal').onclick = () => { if(photo())void api.revealDevelop(state.session.id,photo().id).catch(e=>toast(e.message)); };
+$('detail-result-edit').onclick = async () => { $('detail-result-edit').disabled=true;try{await developView.reedit();}catch(e){toast(e.message);}finally{$('detail-result-edit').disabled=false;} };

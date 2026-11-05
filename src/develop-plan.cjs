@@ -1,25 +1,37 @@
-// Read-only preflight for RAW-to-TIFF handoff. Matches Rust's stem + .tif naming.
+// Read-only preflight. Only a photo's recorded TIFF may be reused; every other name is reserved.
 const fs = require('node:fs/promises');
 const path = require('node:path');
-async function planTiffs(items, folder) {
+const key = file => path.resolve(file).toLowerCase();
+async function planTiffs(items, folder, protectedItems = items) {
   if (typeof folder !== 'string' || !path.isAbsolute(folder)) throw new Error('Choose a TIFF folder.');
-  const counts = new Map();
-  const rows = items.map(item => {
-    const tiff = path.join(folder, `${path.parse(item.name).name}.tif`), key = tiff.toLowerCase();
-    counts.set(key, (counts.get(key) || 0) + 1);
-    return { id: item.id, name: item.name, tiff, raw: item.raw, source: item.path, key };
-  });
-  return Promise.all(rows.map(async ({ raw, source, key, ...row }) => {
-    if (!raw) return { ...row, error: 'Only RAW photos can be developed.' };
-    if (counts.get(key) > 1) return { ...row, error: 'Two photos would have the same TIFF name. Send them to separate folders.' };
-    if (source && path.resolve(source).toLowerCase() === key) return { ...row, error: 'The TIFF cannot replace a source photo.' };
+  const reserved = new Set(), rows = [];
+  const diskNames = new Set((await fs.readdir(folder).catch(e=>{if(e.code!=='ENOENT')throw e;return [];})).map(n=>n.toLowerCase()));
+  const protectedPaths = new Set(protectedItems.flatMap(i => [i.path, i.companion]).filter(Boolean).map(key));
+  for (const item of items) {
+    const row = { id: item.id, name: item.name };
+    if (!item.raw) { rows.push({ ...row, error: 'Only RAW photos can be developed.' }); continue; }
+    const own = item.develop?.tiff;
+    const reuse = own && key(path.dirname(own)) === key(folder) && !protectedItems.some(i => i.id !== item.id && i.develop?.tiff && key(i.develop.tiff) === key(own));
+    let n = 1;
     try {
-      const stat = await fs.lstat(row.tiff);
-      return stat.isFile() && !stat.isSymbolicLink() ? { ...row, exists: true } : { ...row, error: 'The destination is not a regular file.' };
-    } catch (error) {
-      if (error.code !== 'ENOENT') return { ...row, error: error.message };
-      return { ...row, exists: false };
-    }
-  }));
+      for (;;) {
+        const tiff = reuse ? own : path.join(folder, `${path.parse(item.name).name}${n === 1 ? '' : `-${n}`}.tif`);
+        const k = key(tiff);
+        const stat = await fs.lstat(tiff).catch(e => { if (e.code !== 'ENOENT') throw e; return null; });
+        if (reuse) {
+          if (reserved.has(k) || protectedPaths.has(k) || stat && (!stat.isFile() || stat.isSymbolicLink())) throw new Error('The destination is not a regular, unshared TIFF.');
+        } else if (stat || diskNames.has(path.basename(tiff).toLowerCase()) || reserved.has(k) || protectedPaths.has(k)) { n++; continue; }
+        reserved.add(k);
+        rows.push({ ...row, tiff, exists: !!stat, edited: !!stat && !!item.develop?.edited, own: !!reuse });
+        break;
+      }
+    } catch (error) { rows.push({ ...row, error: error.message }); }
+  }
+  return rows;
 }
-module.exports = { planTiffs };
+async function writableFolder(folder) {
+  if (typeof folder !== 'string' || !path.isAbsolute(folder)) return false;
+  const probe = path.join(folder, `.photocull-write-${require('node:crypto').randomUUID()}`);
+  try { const file = await fs.open(probe, 'wx'); await file.close(); await fs.unlink(probe); return true; } catch { return false; }
+}
+module.exports = { planTiffs, writableFolder };

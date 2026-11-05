@@ -44,6 +44,20 @@ class PreviewService {
       onState: (item, status) => this.emit(item, status) });
     this.lastPrune = 0;
   }
+  // Keep the photo id for scheduling, but cache finished pixels under the TIFF's own file stamp.
+  async displayItem(item) {
+    if (!item.develop?.edited || !item.develop.tiff) return item;
+    const file = item.develop.tiff, stat = await fs.stat(file);
+    if (!stat.isFile()) throw new Error('The Dehancer TIFF is unavailable.');
+    return { ...item, path: file, fingerprint: `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`, raw: false, companion: null, develop: null, dehancerSource: true };
+  }
+  invalidatePhoto(item) {
+    this.itemRevisions.set(item.id, (this.itemRevisions.get(item.id) || 0) + 1);
+    this.queue.cancelWhere(job => job.key.split(':')[1] === item.id);
+    this.states.delete(item.id); this.sourceInfo.delete(item.id);
+    for (const kind of Object.keys(SIZES)) this.infoByKind.delete(`${item.id}:${kind}`);
+    this.emit(item, { state: 'invalidated' });
+  }
   baseKey(item) { return hash(`sources-v2:${item.path}:${item.fingerprint}`); }
   key(item, kind) { return hash(`representation-v3:${this.baseKey(item)}:${kind}:${this.policy}:${this.itemRevisions.get(item.id) || 0}`); }
   emit(item, status) { this.states.set(item.id, status); this.onState({ id: item.id, ...status }); }
@@ -221,6 +235,7 @@ class PreviewService {
   // The photo's real pixel size, oriented as displayed, so the loupe can place
   // zoom percentages before the full-size image has loaded. null if unknown.
   async dimensions(item) {
+    item = await this.displayItem(item);
     const key = this.baseKey(item);
     if (!this.sizes.has(key)) {
       const job = (async () => {
@@ -240,6 +255,7 @@ class PreviewService {
   // doing any work, or null. Lets the loupe show cached previews at once while
   // arrow keys are held.
   async peek(item, kind) {
+    item = await this.displayItem(item);
     if (this.closed || !(kind in SIZES)) return null;
     const key = this.key(item, kind), revision = this.revision, cached = this.memory.get(key);
     if (cached) {
@@ -266,9 +282,11 @@ class PreviewService {
     return metadata.format === 'jpeg' && (metadata.orientation || 1) === 1 && (!metadata.space || metadata.space === 'srgb') ? fs.readFile(selected.file) : null;
   }
   async get(item, kind = 'thumb', priority = 1) {
+    item = await this.displayItem(item);
     if (this.closed) throw new Error('Preview service is closing.');
     if (!(kind in SIZES)) throw new Error('Unknown preview size.');
-    const key = this.key(item, kind), policy = this.policy, revision = this.revision;
+    const key = this.key(item, kind), policy = this.policy, revision = this.revision, itemRevision = this.itemRevisions.get(item.id) || 0;
+    const current = () => revision === this.revision && itemRevision === (this.itemRevisions.get(item.id) || 0);
     const cached = this.memory.get(key);
     if (cached) {
       this.stats.memoryHits++; this.memory.delete(key); this.memory.set(key, cached);
@@ -281,12 +299,12 @@ class PreviewService {
         await sharp(data).metadata();
         // Pruning removes the oldest mtimes first; touching on use makes it least-recently-used.
         touch(file, infoFile);
-        this.remember(key, data, info); if (revision === this.revision) this.setInfo(item, kind, info); this.stats.diskHits++; return data;
+        this.remember(key, data, info); if (current()) this.setInfo(item, kind, info); this.stats.diskHits++; return data;
       } catch (e) { if (TRANSIENT.has(e.code) && e.code !== 'ENOENT') throw e; }
       const rejected = new Set(); let regeneratedRender = false;
       for (let attempt = 0; attempt < TAGS.length + 3; attempt++) {
         const selected = item.raw ? await this.rawSource(item, kind, priority, rejected, policy) : { file: item.path,
-          info: { source: 'Original image', type: 'original' } };
+          info: { source: item.dehancerSource ? `Dehancer edit · ${path.basename(item.path)}` : 'Original image', type: item.dehancerSource ? 'dehancer' : 'original' } };
         let image = sharp(selected.file, { failOn: 'error', limitInputPixels: 160_000_000 });
         image = selected.info.orientation ? orient(image, selected.info.orientation) : image.autoOrient();
         if (SIZES[kind]) image = image.resize(SIZES[kind], SIZES[kind], { fit: 'inside', withoutEnlargement: true, fastShrinkOnLoad: true });
@@ -308,10 +326,10 @@ class PreviewService {
         }
         const info = selected.info;
         await fs.mkdir(this.cacheDir, { recursive: true });
-        if (revision === this.revision) {
+        if (current()) {
           await atomicWrite(file, data); await atomicWrite(infoFile, JSON.stringify(info)); this.remember(key, data, info);
         }
-        if (revision === this.revision) this.setInfo(item, kind, info); this.stats.generated++;
+        if (current()) this.setInfo(item, kind, info); this.stats.generated++;
         void this.prune().catch(() => {}); return data;
       }
       throw new Error('All available previews failed to decode.');

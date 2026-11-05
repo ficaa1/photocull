@@ -394,3 +394,12 @@ dialog::backdrop { background: #0a1015b0; }
 .develop-topline { position: absolute; top: 11px; left: 12px; right: 12px; z-index: 1; pointer-events: none; }
 #develop-photo-name { color: #c3d1da; background: #192127cf; border-radius: 3px; padding: 4px 7px; font-size: 10px; }
 /* End Develop view. */
+
+#develop-result-path, .develop-result-row p, #develop-batch-folder { overflow-wrap: anywhere; }
+#develop-result-panel { padding: 10px 0; border-bottom: 1px solid var(--line); }
+#develop-edit-warning { color: #dec45e; }
+.develop-result-row { margin: 12px 0; }
+
+.develop-topline { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.develop-topline button { pointer-events: auto; }
+#detail-result-path { overflow-wrap: anywhere; }

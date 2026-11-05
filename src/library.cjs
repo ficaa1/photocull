@@ -47,7 +47,7 @@ function groupFiles(files) {
   return records.sort((a, b) => filenameOrder.compare(a.name, b.name) || a.path.localeCompare(b.path));
 }
 
-const developSummary = develop => ({ developed: !!develop?.tiff, dehancer: !!develop?.edited, recipe: develop?.recipe ?? null, adjusted: !!develop?.settings });
+const developSummary = develop => ({ developed: !!develop?.tiff, dehancer: !!develop?.edited, tiff: develop?.tiff ?? null, developRevision: develop?.revision ?? 0, recipe: develop?.recipe ?? null, adjusted: !!develop?.settings });
 
 class Library {
   constructor(dataDir, { settings = () => DEFAULTS } = {}) {
@@ -164,6 +164,7 @@ class Library {
     const next = { ...(item.develop || {}) };
     if (typeof tiff === 'string') { next.tiff = tiff; next.edited = false; }
     if (edited === true) next.edited = true;
+    next.revision = (item.develop?.revision || 0) + 1;
     item.develop = developState(next);
     await this.save(s);
     return { id: item.id, ...developSummary(item.develop) };

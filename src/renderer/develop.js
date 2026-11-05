@@ -29,7 +29,7 @@
       this.key = ''; this.token = 0; this.saves = Promise.resolve(); this.pendingSave = null; this.rows = new Map(); this.before = false; this.clipping = false;
       this.recipes = []; this.active = false; this.info = null; this.own = {}; this.recipeSettings = {}; this.base = {}; this.hist = null;
       this.build();
-      this.queue = new L.RenderQueue((v, settled) => this.api.developRender(v.session, v.id, v.settings, settled), (frame, job) => this.frame(frame,job), e => this.message(e.message));
+      this.queue = new L.RenderQueue((v, settled) => v.result ? (this.resultFrame ||= this.api.developResult(v.session,v.id).catch(e=>{this.resultFrame=null;throw e;})) : this.api.developRender(v.session, v.id, v.settings, settled), (frame, job) => this.frame(frame,job), e => this.message(e.message));
       this.api.onDevelopProgress(p => { if (this.batch?.phase === 'develop') { this.progress.max = p.total || 1; this.progress.value = p.done || 0; this.batchText.textContent = `Developing ${Math.min((p.done || 0) + 1, p.total)} of ${p.total}${p.name ? ` — ${p.name}` : ''}`; } });
       this.api.onLensDatabaseProgress(p => { this.lensDownload.textContent = `Downloading lens database: ${p.done} / ${p.total}`; });
       document.addEventListener('keydown', e => this.keydown(e), true);
@@ -44,13 +44,20 @@
       this.timing = node('span',{id:'develop-timing',class:'develop-timing'});
       this.beforeButton = button('Before / after (\\)', () => this.toggleBefore(), {id:'develop-before','aria-pressed':'false'});
       this.photoTitle=node('span',{id:'develop-photo-name'});
-      this.stage.append(node('div',{class:'develop-topline'},[this.photoTitle]),this.frameBox,this.notice,node('div',{class:'develop-image-bar'},[this.beforeButton,this.timing]));
+      this.resultToggle=button('Dehancer edit',()=>this.toggleResult(),{id:'develop-result-toggle',hidden:'','aria-pressed':'true'});
+      this.resultPanel=node('div',{id:'develop-result-panel',hidden:''});
+      this.resultPath=node('p',{id:'develop-result-path',class:'subtle small'});
+      this.editWarning=node('p',{id:'develop-edit-warning',class:'subtle small',text:'Re-developing replaces your Dehancer edit. RAW adjustments are saved separately until you choose to replace the TIFF.'});
+      this.editAgain=button('Edit in Dehancer again',()=>this.reedit(),{id:'develop-edit-again'});
+      this.resultPanel.append(this.resultPath,node('div',{class:'develop-actions'},[button('Show in folder',()=>this.api.revealDevelop(this.context.session.id,this.context.photo.id),{id:'develop-result-reveal'}),this.editAgain]),this.editWarning);
+      this.stage.append(node('div',{class:'develop-topline'},[this.photoTitle,this.resultToggle]),this.frameBox,this.notice,node('div',{class:'develop-image-bar'},[this.beforeButton,this.timing]));
       this.panel = node('aside',{class:'develop-panel','aria-label':'Develop controls'});
       this.plot = node('canvas',{id:'develop-histogram',width:560,height:220,'aria-label':'Histogram: drag tonal zones to adjust',tabindex:0});
       this.low = button('▲', () => this.toggleClipping(), {id:'develop-shadow-clip','aria-label':'Shadow clipping overlay','aria-pressed':'false'});
       this.high = button('▲', () => this.toggleClipping(), {id:'develop-highlight-clip','aria-label':'Highlight clipping overlay','aria-pressed':'false'});
       this.readout = node('div',{id:'develop-readout',class:'develop-readout'});
       this.panel.append(node('div',{class:'develop-histogram'},[this.plot,this.low,this.high]),this.readout);
+      this.panel.append(this.resultPanel);
       this.controls = node('fieldset',{class:'develop-controls',disabled:''}); this.panel.append(this.controls);
       const recipe = this.group('Recipe',true);
       this.recipeSelect = node('select',{id:'develop-recipe','aria-label':'Recipe'}); this.recipeSelect.onchange = () => this.chooseRecipe(this.recipeSelect.value);
@@ -124,9 +131,9 @@
     sync(context) {
       this.context=context; this.active=context.mode==='develop'; this.root.hidden=!this.active || !context.photo;
       document.body.classList.toggle('develop-active',this.active);
-      const key=this.active && context.photo ? `${context.session.id}:${context.photo.id}` : '';
+      const key=this.active && context.photo ? `${context.session.id}:${context.photo.id}:${!!context.photo.dehancer}` : '';
       if (key === this.key) return;
-      void this.flush(); this.key=key; const token=++this.token; this.queue.invalidate(); this.info=null; this.controls.disabled=true; this.before=false;
+      void this.flush(); this.key=key; const token=++this.token; this.queue.invalidate(); this.info=null; this.resultFrame=null; this.resultPanel.hidden=this.resultToggle.hidden=true; this.controls.disabled=true; this.before=false;
       this.beforeButton.setAttribute('aria-pressed','false'); this.beforeButton.disabled=true; this.releaseFrame(); this.hist=null; this.drawHistogram();
       if (!key) return;
       this.photoTitle.textContent=context.photo.name;
@@ -140,7 +147,7 @@
         await this.saves.catch(() => {}); if (token!==this.token) return;
         const [saved,info] = await Promise.all([this.api.developGet(context.session.id,context.photo.id),this.api.developInfo(context.session.id,context.photo.id)]);
         if (token!==this.token) return;
-        this.info=info; this.base=info.base; this.recipe=saved.recipe; this.recipeSettings=clone(saved.recipeSettings || {}); this.own=clone(saved.settings || {});
+        this.saved=saved; this.showResult=!!saved.edited; this.resultPanel.hidden=this.resultToggle.hidden=!saved.edited; this.resultPath.textContent=saved.tiff || ''; this.info=info; this.base=info.base; this.recipe=saved.recipe; this.recipeSettings=clone(saved.recipeSettings || {}); this.own=clone(saved.settings || {});
         await this.refreshRecipes(); if (token!==this.token) return;
         this.controls.disabled=false; this.beforeButton.disabled=false; this.updateControls(); this.render();
         void this.lensState(token);
@@ -157,8 +164,27 @@
       this.lensStatus.textContent=this.info.lensProfile || (this.info.lensDatabase ? 'No profile for this lens' : 'Lens database is not installed');
       this.userRecipeButtons();
     }
+    toggleResult() {
+      if (!this.saved?.edited) return;
+      this.queue.invalidate(); this.showResult=!this.showResult; this.before=false; this.beforeButton.setAttribute('aria-pressed','false'); this.render();
+    }
+    async reedit() {
+      const {session,photo}=this.context; this.editAgain.disabled=true;
+      try {
+        await this.flush(); await this.api.dehancerEdit(session.id,photo.id);
+        const saved=await this.api.developGet(session.id,photo.id);
+        this.host.updateItems(session.id,[{id:photo.id,developed:!!saved.tiff,dehancer:!!saved.edited,tiff:saved.tiff,developRevision:saved.revision}]);
+        if(this.context.session.id===session.id && this.context.photo.id===photo.id){this.key='';this.sync(this.context);}
+      } finally {this.editAgain.disabled=false;}
+    }
+    rawAdjustment() {
+      if (!this.saved?.edited) return;
+      this.host.toast('RAW adjustments saved separately. Re-sending and choosing Re-develop replaces your Dehancer edit.');
+      if(this.showResult || this.before) this.queue.invalidate(); this.showResult=false;
+    }
     change(path,value) {
       if (!this.info) return;
+      if (this.saved?.edited && this.showResult) this.rawAdjustment();
       if (path.startsWith('wb.') && path!=='wb.mode') {
         if (this.value('wb.mode')!=='custom') this.own.wb={...this.own.wb,...this.info.asShot,mode:'custom'};
       }
@@ -167,7 +193,12 @@
     }
     render() {
       if (!this.info || !this.active) return;
-      this.queue.request({session:this.context.session.id,id:this.context.photo.id,settings:clone(this.before ? this.recipeSettings : this.own),before:this.before});
+      const result=!!this.saved?.edited && this.showResult && !this.before;
+      this.photoTitle.textContent=result ? `Dehancer edit · ${(this.saved.tiff || '').split(/[\\/]/).pop()}` : this.context.photo.name;
+      this.image.alt=result ? 'Dehancer edited TIFF' : 'Developed RAW preview';
+      this.resultToggle.textContent=this.showResult ? 'RAW develop' : 'Dehancer edit';
+      this.resultToggle.setAttribute('aria-pressed',String(result));
+      this.queue.request({result,session:this.context.session.id,id:this.context.photo.id,settings:clone(this.before ? this.recipeSettings : this.own),before:this.before});
     }
     async frame(frame,job) {
       const url=URL.createObjectURL(frame.blob), loaded=new Image(); loaded.src=url;
@@ -175,12 +206,12 @@
       if (job.epoch!==this.queue.epoch || (job.settled && job.version!==this.queue.version)) { URL.revokeObjectURL(url); return; }
       const old=this.url; this.url=url; this.image.src=url; this.image.hidden=false;
       this.hist=frame.histogram; this.drawHistogram(); this.message('');
-      this.timing.textContent=`${job.value.before ? 'Before · recipe' : 'After'} · ${job.settled ? 'settled' : 'draft'} ${Math.round(frame.renderMs)} ms · load ${Math.round(frame.loadMs)} ms`;
+      this.timing.textContent=`${job.value.result ? 'Dehancer edit' : job.value.before ? 'Before · recipe' : 'After'} · ${job.settled ? 'settled' : 'draft'} ${Math.round(frame.renderMs)} ms · load ${Math.round(frame.loadMs)} ms`;
       this.root.dispatchEvent(new CustomEvent('develop-frame',{detail:{...frame,blob:undefined,settled:job.settled,before:job.value.before}}));
       this.maskImage=loaded; this.drawOverlay(); if (old) URL.revokeObjectURL(old);
     }
     releaseFrame() { this.image.hidden=true; this.image.removeAttribute('src'); this.overlay.hidden=true; this.maskImage=null; if (this.url) URL.revokeObjectURL(this.url); this.url=null; }
-    toggleBefore() { if (!this.info) return; this.queue.invalidate(); this.before=!this.before; this.beforeButton.setAttribute('aria-pressed',String(this.before)); this.render(); }
+    toggleBefore() { if (!this.info) return; if(this.saved?.edited){this.toggleResult();return;} this.queue.invalidate(); this.before=!this.before; this.beforeButton.setAttribute('aria-pressed',String(this.before)); this.render(); }
     toggleClipping() { this.clipping=!this.clipping; for (const b of [this.low,this.high]) b.setAttribute('aria-pressed',String(this.clipping)); this.drawOverlay(); }
     drawOverlay() {
       this.overlay.hidden=!this.clipping || !this.maskImage; if (this.overlay.hidden) return;
@@ -222,7 +253,7 @@
     }
     async chooseRecipe(id) {
       const recipe=this.recipes.find(r=>r.id===id);if(!recipe || !this.info)return;
-      this.queue.invalidate();this.recipe=id;this.recipeSettings=clone(recipe.settings);this.own=clone(recipe.settings);this.before=false;this.beforeButton.setAttribute('aria-pressed','false');this.updateControls();this.scheduleSave({recipe:id,settings:null});this.render();
+      this.rawAdjustment();this.queue.invalidate();this.recipe=id;this.recipeSettings=clone(recipe.settings);this.own=clone(recipe.settings);this.before=false;this.beforeButton.setAttribute('aria-pressed','false');this.updateControls();this.scheduleSave({recipe:id,settings:null});this.render();
     }
     async reset() { await this.chooseRecipe(this.recipe); }
     async saveRecipe(update) {
@@ -241,7 +272,7 @@
       this.host.updateItems(session, result.items);
       if (this.info && this.context.session.id === session && items.some(i => i.id === this.context.photo.id)) {
         const recipe = this.recipes.find(r => r.id === value.recipe);
-        this.queue.invalidate(); this.before = false; this.beforeButton.setAttribute('aria-pressed','false');
+        this.rawAdjustment(); this.queue.invalidate(); this.before = false; this.beforeButton.setAttribute('aria-pressed','false');
         this.recipe = recipe?.id || 'neutral'; this.recipeSettings = clone(recipe?.settings || {}); this.own = clone(value.settings);
         this.updateControls(); this.render();
       }
@@ -271,24 +302,38 @@
       this.batchText=node('p',{id:'develop-batch-status',role:'status','aria-live':'polite'});this.batchFolder=node('p',{id:'develop-batch-folder',class:'subtle small'});
       this.scope=node('select',{id:'develop-batch-scope','aria-label':'Photos to send'},[node('option',{value:'selected',text:'Selected RAW photos'}),node('option',{value:'picks',text:'All RAW picks'})]);
       this.scope.onchange=()=>this.batchScope();
-      this.chooseFolder=button('Choose TIFF folder…',async()=>{const folder=await this.api.pickFolder('Choose a TIFF folder for Dehancer');if(folder){this.destination=folder;this.batchFolder.textContent=folder;this.startBatch.disabled=false;}},{id:'develop-batch-choose'});
+      this.chooseFolder=button('Change…',()=>this.pickDestination(),{id:'develop-batch-choose'});
       this.startBatch=button('Develop and open',()=>this.runBatch(),{id:'develop-batch-start',class:'button primary'});
       this.skipBatch=button('Skip',()=>{this.batch.skip=true;this.batchText.textContent='Skipping — closing the current Dehancer process without saving…';void this.api.developCancel();},{id:'develop-batch-skip',hidden:'',title:'Close the current Dehancer process without saving and continue'});
       this.stopBatch=button('Cancel',()=>{if(this.batch){this.batch.stop=true;void this.api.developCancel();this.batchText.textContent='Stopping…';}else this.dialog.close();},{id:'develop-batch-stop'});
-      this.progress=node('progress',{id:'develop-batch-progress',max:1,value:0,hidden:''});this.results=node('pre',{id:'develop-batch-results'});
-      this.dialog.append(node('h2',{id:'develop-batch-title',text:'Send to Dehancer'}),this.scope,this.batchFolder,this.chooseFolder,this.batchText,this.progress,node('div',{class:'develop-actions'},[this.startBatch,this.skipBatch,this.stopBatch]),this.results);document.body.append(this.dialog);
+      this.progress=node('progress',{id:'develop-batch-progress',max:1,value:0,hidden:''});this.results=node('pre',{id:'develop-batch-results'});this.resultLinks=node('div',{id:'develop-batch-links'});
+      this.dialog.append(node('h2',{id:'develop-batch-title',text:'Send to Dehancer'}),this.scope,this.batchFolder,this.chooseFolder,this.batchText,this.progress,node('div',{class:'develop-actions'},[this.startBatch,this.skipBatch,this.stopBatch]),this.results,this.resultLinks);document.body.append(this.dialog);
       this.dialog.addEventListener('cancel',e=>{if(this.batch){e.preventDefault();this.batch.stop=true;void this.api.developCancel();}});
       this.askDialog=node('dialog',{id:'develop-choice-dialog'});document.body.append(this.askDialog);
     }
     ask(text,choices) { return new Promise(resolve=> {this.askDialog.replaceChildren(node('p',{text}));const done=value=>{this.askDialog.close();resolve(value);};this.askDialog.oncancel=()=>done('cancel');this.askDialog.append(node('div',{class:'develop-actions'},choices.map(([value,label])=>button(label,()=>done(value)))));this.askDialog.showModal();}); }
     batchItems() {return (this.scope.value==='picks'?this.batchContext.session.items.filter(i=>i.flag==='pick'&&!i.trashed):this.batchContext.selected).filter(i=>i.raw);}
     batchScope() {const n=this.batchItems().length;this.batchText.textContent=`${n} RAW photo(s) · sRGB, 16-bit TIFF · sharpening and NR follow each photo's settings`;this.startBatch.disabled=!n || !this.destination;}
+    async pickDestination() {
+      const folder=await this.api.pickFolder('Choose a local TIFF folder for Dehancer');
+      if(!folder)return;
+      await this.api.developFolderCheck(folder);
+      if(this.batchContext.session.removable) await this.host.saveSettings({dehancerFolder:folder});
+      this.destination=folder; this.batchFolder.textContent=folder; this.batchScope();
+    }
+    addResult(session,id,tiff) {
+      if(this.resultLinks.querySelector(`[data-result-id="${id}"]`))return;
+      const row=node('div',{'data-result-id':id,class:'develop-result-row'},[node('p',{text:tiff,class:'subtle small'}),node('div',{class:'develop-actions'},[
+        button('Show in folder',()=>this.api.revealDevelop(session,id)),
+        button('View result',()=>{this.dialog.close();this.host.viewResult(session,id);},{class:'button quiet develop-view-result',...(this.batch?{disabled:''}:{})}),
+      ])]); this.resultLinks.append(row);
+    }
     async openBatch() {
       if(!this.api.canDevelop || !this.context.session)return;
       await this.flush();this.batchContext={session:this.context.session,selected:[...this.host.selection()]};
-      const dest=await this.api.developFolder(this.context.session.id);this.destination=dest.removable?null:dest.folder;
-      this.batchFolder.textContent=this.destination || 'Choose a folder on your computer for this camera card.';this.results.textContent='';this.progress.hidden=true;this.scope.disabled=false;this.chooseFolder.disabled=false;this.scope.value=this.batchContext.selected.length?'selected':'picks';this.startBatch.hidden=false;this.skipBatch.hidden=true;this.stopBatch.textContent='Cancel';this.batchScope();this.dialog.showModal();
-      if(dest.removable){const folder=await this.api.pickFolder('Camera card: choose a local TIFF folder for Dehancer');if(folder){this.destination=folder;this.batchFolder.textContent=folder;this.batchScope();}}
+      const dest=await this.api.developFolder(this.context.session.id);this.destination=dest.folder;
+      this.batchFolder.textContent=this.destination || 'Choose a folder on your computer for this camera card.';this.results.textContent='';this.resultLinks.replaceChildren();this.progress.hidden=true;this.scope.disabled=false;this.chooseFolder.disabled=false;this.scope.value=this.batchContext.selected.length?'selected':'picks';this.startBatch.hidden=false;this.skipBatch.hidden=true;this.stopBatch.textContent='Cancel';this.batchScope();this.dialog.showModal();
+      if(dest.removable && !this.destination) await this.pickDestination();
     }
     async runBatch() {
       const session = this.batchContext.session.id, items = this.batchItems(), folder = this.destination;
@@ -307,8 +352,8 @@
         if (!valid.length) throw new Error('No TIFFs can be developed. See the file results below.');
         let replace = false;
         if (!this.batch.stop && valid.some(r => r.exists)) {
-          const choice = await this.ask('Existing TIFFs may contain Dehancer edits. How should they be handled?', [
-            ['keep', 'Keep existing (may contain Dehancer edits)'], ['replace', 'Replace existing TIFFs'], ['cancel', 'Cancel'],
+          const choice = await this.ask(valid.some(r=>r.edited) ? 'Re-developing replaces your Dehancer edit. Keep the existing TIFFs to edit them again, or re-develop with the current RAW settings?' : 'These photos already have TIFFs. Keep them to edit again, or re-develop with the current RAW settings?', [
+            ['keep', 'Edit existing TIFFs'], ['replace', 'Re-develop and replace TIFFs'], ['cancel', 'Cancel'],
           ]);
           if (choice === 'cancel') this.batch.stop = true;
           replace = choice === 'replace';
@@ -332,7 +377,7 @@
         this.results.textContent = lines.join('\n');
         for (const r of ready) {
           const saved = await this.api.developGet(session, r.id);
-          this.host.updateItems(session, [{ id: r.id, developed: true, dehancer: !!saved.edited }]);
+          this.host.updateItems(session, [{ id: r.id, developed: true, dehancer: !!saved.edited, tiff: saved.tiff, developRevision: saved.revision }]);
         }
         this.batch.phase = 'edit'; this.skipBatch.hidden = false;
         for (let i = 0; i < ready.length && !this.batch.stop; i++) {
@@ -342,7 +387,8 @@
           try {
             const edit = await this.api.dehancerEdit(session, r.id);
             const saved = await this.api.developGet(session, r.id);
-            this.host.updateItems(session, [{ id: r.id, developed: true, dehancer: !!saved.edited }]);
+            this.host.updateItems(session, [{ id: r.id, developed: true, dehancer: !!saved.edited, tiff: saved.tiff, developRevision: saved.revision }]);
+            if(saved.edited && saved.tiff) this.addResult(session,r.id,saved.tiff);
             lines.push(`${item.name}: ${this.batch.skip ? 'skipped' : edit.edited ? 'edited in Dehancer' : 'closed without changes'}`);
           } catch (e) {
             lines.push(`${item.name}: ${e.message}`);
@@ -354,10 +400,11 @@
           this.results.textContent = lines.join('\n');
         }
         this.progress.value = this.progress.max;
-        this.batchText.textContent = this.batch.stop ? 'Stopped. Completed TIFFs and edits were kept.' : `Finished · ${ready.length} TIFF(s) ready`;
+        this.batchText.textContent = this.batch.stop ? 'Stopped. Completed TIFFs and edits were kept.' : `Finished · ${ready.length} ${ready.length===1?'TIFF':'TIFFs'} ready`;
       } catch (e) { this.batchText.textContent = e.message; }
       finally {
-        this.batch = null; this.skipBatch.hidden = true; this.stopBatch.textContent = 'Close';
+        if(this.context.session?.id===session){this.key='';this.sync(this.context);}
+        this.batch = null; for(const b of this.resultLinks.querySelectorAll('.develop-view-result'))b.disabled=false; this.skipBatch.hidden = true; this.stopBatch.textContent = 'Close';
         this.scope.disabled = this.chooseFolder.disabled = false; this.startBatch.hidden = false;
       }
     }

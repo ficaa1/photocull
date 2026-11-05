@@ -10,7 +10,7 @@ const DEFAULTS = { version: 1, zoomPercent: 100, zoomClickCenter: false, rawRend
   copyJpeg: false, copyXmp: false, copyMetadata: false, folders: FOLDERS,
   // Develop and export: the Dehancer plugin executable ('' = its default location), the recipe new photos start
   // from, and the last export settings (Lightcraft ExportOptions, camelCase; checked by the shell).
-  dehancerExe: '', defaultRecipe: 'neutral', exportOptions: { format: 'jpeg', quality: 90, colorSpace: 'srgb' }, exportSubfolder: '', exportConflict: 'unique', activePreset: 'standard', naming: NAMING, metadata: METADATA, colors: COLORS };
+  dehancerExe: '', dehancerFolder: '', defaultRecipe: 'neutral', exportOptions: { format: 'jpeg', quality: 90, colorSpace: 'srgb' }, exportSubfolder: '', exportConflict: 'unique', activePreset: 'standard', naming: NAMING, metadata: METADATA, colors: COLORS };
 const BUILTINS = [
   { id: 'standard', name: 'Standard', metadata: METADATA, naming: NAMING, folders: FOLDERS, colors: COLORS },
   { id: 'ratings', name: 'Ratings only', metadata: { ...METADATA, writeLabels: false }, naming: NAMING, folders: FOLDERS, colors: COLORS },
@@ -48,6 +48,11 @@ function normalizeSettings(value = {}, base = DEFAULTS) {
   if ('dehancerExe' in value) {
     result.dehancerExe = text(value.dehancerExe, 1024);
     if (result.dehancerExe && !/.exe$/i.test(result.dehancerExe) && process.platform === 'win32') throw new Error('Choose DehancerLightroom.exe.');
+  }
+  if ('dehancerFolder' in value) {
+    result.dehancerFolder = text(value.dehancerFolder, 1024);
+    const path = require('node:path');
+    if (result.dehancerFolder && ((!path.isAbsolute(result.dehancerFolder) && !path.win32.isAbsolute(result.dehancerFolder)) || /[\r\n]/.test(result.dehancerFolder))) throw new Error('Choose an absolute Dehancer folder.');
   }
   if ('defaultRecipe' in value) result.defaultRecipe = text(value.defaultRecipe, 80) || 'neutral';
   if ('exportOptions' in value) {

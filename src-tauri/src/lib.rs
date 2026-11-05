@@ -21,7 +21,7 @@ const RENDERER_METHODS: &[&str] = &[
     "scan", "devices", "open-device", "test-destination", "copy-picks", "naming-preview", "cancel-copy", "decide", "decide-many",
     "history", "metadata", "preview-status", "settings", "save-preset", "delete-preset", "settings-folder",
     "preview-settings", "preview-cache", "clear-preview-cache", "retry-preview", "focus", "visible", "export-xmp", "session-folder", "stats",
-    "recipes", "save-recipe", "delete-recipe", "develop-get", "develop-set", "develop-folder", "develop-plan", "make-folder", "export-plan",
+    "recipes", "save-recipe", "delete-recipe", "develop-get", "develop-set", "develop-folder", "develop-folder-check", "develop-plan", "make-folder", "export-plan",
 ];
 
 #[tauri::command]
@@ -180,7 +180,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![backend, pick_folder, pick_save_file, open_folder, set_fullscreen, delete_photos, save_manifest,
-            develop::develop_info, develop::develop_render, develop::develop_tiffs, develop::develop_cancel, develop::dehancer_edit,
+            develop::develop_result, develop::reveal_develop, develop::develop_info, develop::develop_render, develop::develop_tiffs, develop::develop_cancel, develop::dehancer_edit,
             develop::export_photos, develop::lens_database, develop::download_lens_database])
         .setup(|app| {
             let handle = app.handle().clone();

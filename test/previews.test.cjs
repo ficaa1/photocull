@@ -171,3 +171,25 @@ test('a RAW full-size request passes the upright embedded JPEG through and repor
   const turned = await sharp(await portrait.get(item, 'full')).metadata();
   assert.deepEqual([turned.width, turned.height], [1000, 1600], 'RAW orientation is still applied');
 });
+
+test('Dehancer TIFF pixels serve all cached sizes and zoom; originals stay available and saves invalidate', async t => {
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'photocull-dehancer-preview-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+  const source=path.join(dir,'original.jpg'),tiff=path.join(dir,'edit.tif'),cache=path.join(dir,'cache');
+  const make=(file,color)=>sharp({create:{width:800,height:600,channels:3,background:color}})[file.endsWith('tif')?'tiff':'jpeg']().toFile(file);
+  await make(source,'#00ff00');await make(tiff,'#ff0000');
+  const originalBytes=await fs.readFile(source);
+  const item={id:'photo',path:source,fingerprint:'source',raw:true,develop:{tiff,edited:true}},events=[];
+  const service=new PreviewService(cache,{onState:s=>events.push(s),exif:{end:async()=>{}}});t.after(()=>service.close());
+  const pixel=async bytes=>[...(await sharp(bytes).resize(1,1).raw().toBuffer())].slice(0,3);
+  for(const kind of ['thumb','preview','full']) {
+    const bytes=await service.get(item,kind);const rgb=await pixel(bytes);assert.ok(rgb[0]>240 && rgb[1]<10);
+    assert.deepEqual(await service.peek(item,kind),bytes);assert.match(service.info(item,kind).source,/Dehancer/);
+  }
+  assert.equal(service.stats.generated,3);assert.deepEqual(await service.dimensions(item),{width:800,height:600});
+  await service.get(item,'thumb');assert.equal(service.stats.generated,3);
+  const reopened=new PreviewService(cache,{exif:{end:async()=>{}}});t.after(()=>reopened.close());await reopened.get(item,'thumb');assert.equal(reopened.stats.diskHits,1);
+  const original=await service.get({...item,raw:false,develop:null},'preview');const green=await pixel(original);assert.ok(green[1]>240 && green[0]<10);
+  await make(tiff,'#0000ff');service.invalidatePhoto(item);assert.equal(events.at(-1).state,'invalidated');assert.equal(await service.peek(item,'thumb'),null);
+  const blue=await pixel(await service.get(item,'thumb'));assert.ok(blue[2]>240 && blue[0]<10);
+  assert.deepEqual(await fs.readFile(source),originalBytes);
+});
