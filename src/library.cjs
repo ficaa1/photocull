@@ -4,6 +4,7 @@ const { createHash, randomUUID } = require('node:crypto');
 const { mapLimit } = require('./queue.cjs');
 const { DEFAULTS } = require('./preferences.cjs');
 const { readXmp, writeXmp, atomicWrite } = require('./xmp.cjs');
+const { developState, checkSettings } = require('./develop.cjs');
 
 const RAW = new Set(['.arw', '.cr2', '.cr3', '.nef', '.nrw', '.dng', '.raf', '.orf', '.rw2', '.pef', '.srw', '.3fr', '.fff', '.iiq', '.rwl']);
 const JPEG = new Set(['.jpg', '.jpeg']);
@@ -46,6 +47,8 @@ function groupFiles(files) {
   return records.sort((a, b) => filenameOrder.compare(a.name, b.name) || a.path.localeCompare(b.path));
 }
 
+const developSummary = develop => ({ developed: !!develop?.tiff, dehancer: !!develop?.edited, recipe: develop?.recipe ?? null, adjusted: !!develop?.settings });
+
 class Library {
   constructor(dataDir, { settings = () => DEFAULTS } = {}) {
     this.settings = settings;
@@ -87,7 +90,7 @@ class Library {
     catch (e) { if (e.code !== 'ENOENT') warnings.push('Saved session could not be read; existing XMP will be used.'); }
     await mapLimit(items, 8, async item => {
       const cached = saved[item.id];
-      if (cached?.fingerprint === item.fingerprint) Object.assign(item, decision(cached), { edited: cached.edited ?? (cached.flag !== 'none' || cached.rating > 0) });
+      if (cached?.fingerprint === item.fingerprint) Object.assign(item, decision(cached), { edited: cached.edited ?? (cached.flag !== 'none' || cached.rating > 0), develop: developState(cached.develop) });
       else {
         try {
           const stat = await fs.lstat(item.sidecar);
@@ -106,8 +109,8 @@ class Library {
   }
 
   publicSession(s) {
-    return { id: s.id, folder: s.folder, items: s.items.map(({ id, name, size, raw, companion, flag, rating, color, trashed, source, edited }) =>
-      ({ id, name, size, raw, paired: !!companion, flag, rating, color, trashed, source, edited })), warnings: s.warnings, recursive: s.recursive, removable: s.removable };
+    return { id: s.id, folder: s.folder, items: s.items.map(({ id, name, size, raw, companion, flag, rating, color, trashed, source, edited, develop }) =>
+      ({ id, name, size, raw, paired: !!companion, flag, rating, color, trashed, source, edited, ...developSummary(develop) })), warnings: s.warnings, recursive: s.recursive, removable: s.removable };
   }
 
   get(id) {
@@ -130,12 +133,40 @@ class Library {
     const write = this.writes.catch(() => {}).then(async () => {
       this.pendingSaves.delete(s.id);
       const data = JSON.stringify({ version: 1, folder: s.folder, decisions: Object.fromEntries(s.items.map(i =>
-        [i.id, { ...decision(i), fingerprint: i.fingerprint, edited: i.edited }])) });
+        [i.id, { ...decision(i), fingerprint: i.fingerprint, edited: i.edited, ...(i.develop ? { develop: i.develop } : {}) }])) });
       await fs.mkdir(path.dirname(s.store), { recursive: true });
       await atomicWrite(s.store, data); this.stats.sessionWrites++;
     });
     this.pendingSaves.set(s.id, write); this.writes = write;
     return write;
+  }
+
+  // Develop state (see develop.cjs). Not part of undo: it is edited in the develop view, not by culling keys.
+  developGet(sessionId, imageId) {
+    const item = this.item(sessionId, imageId);
+    return { id: item.id, name: item.name, raw: item.raw, ...(item.develop || { recipe: null, settings: null, tiff: null, edited: false }) };
+  }
+
+  async developSet(sessionId, ids, { recipe = null, settings = null } = {}) {
+    const s = this.get(sessionId);
+    if (!Array.isArray(ids) || !ids.length || ids.length > 100_000) throw new Error('Choose photos to develop.');
+    if (recipe !== null && (typeof recipe !== 'string' || recipe.length > 80)) throw new Error('Unknown recipe.');
+    settings = settings === null ? null : checkSettings(settings);
+    const items = [...new Set(ids)].map(id => this.item(sessionId, id));
+    for (const item of items) item.develop = developState({ ...item.develop, recipe, settings, tiff: item.develop?.tiff ?? null, edited: item.develop?.edited ?? false });
+    await this.save(s);
+    return { items: items.map(item => ({ id: item.id, ...developSummary(item.develop) })) };
+  }
+
+  // Called by the shell after it writes a TIFF or Dehancer saves one.
+  async developMark(sessionId, imageId, { tiff, edited } = {}) {
+    const s = this.get(sessionId), item = this.item(sessionId, imageId);
+    const next = { ...(item.develop || {}) };
+    if (typeof tiff === 'string') { next.tiff = tiff; next.edited = false; }
+    if (edited === true) next.edited = true;
+    item.develop = developState(next);
+    await this.save(s);
+    return { id: item.id, ...developSummary(item.develop) };
   }
 
   async decide(sessionId, imageId, patch) {

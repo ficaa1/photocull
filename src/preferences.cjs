@@ -6,8 +6,11 @@ const METADATA = { writeRatings: true, writeLabels: true, rejectRating: true, pi
   creator: '', copyright: '', title: '', caption: '', keywords: [] };
 const NAMING = { template: '{filename}', text: '', start: 1 };
 const FOLDERS = { mode: 'flat', name: '' };
-const DEFAULTS = { version: 1, zoomPercent: 100, rawRendering: 'missing', previewCacheGB: 2, autoAdvance: true, recursive: false, autoOpenCards: true, deleteMode: 'trash',
-  copyJpeg: false, copyXmp: false, copyMetadata: false, folders: FOLDERS, activePreset: 'standard', naming: NAMING, metadata: METADATA, colors: COLORS };
+const DEFAULTS = { version: 1, zoomPercent: 100, zoomClickCenter: false, rawRendering: 'missing', previewCacheGB: 2, autoAdvance: true, recursive: false, autoOpenCards: true, deleteMode: 'trash',
+  copyJpeg: false, copyXmp: false, copyMetadata: false, folders: FOLDERS,
+  // Develop and export: the Dehancer plugin executable ('' = its default location), the recipe new photos start
+  // from, and the last export settings (Lightcraft ExportOptions, camelCase; checked by the shell).
+  dehancerExe: '', defaultRecipe: 'neutral', exportOptions: { format: 'jpeg', quality: 90, colorSpace: 'srgb' }, exportSubfolder: '', exportConflict: 'unique', activePreset: 'standard', naming: NAMING, metadata: METADATA, colors: COLORS };
 const BUILTINS = [
   { id: 'standard', name: 'Standard', metadata: METADATA, naming: NAMING, folders: FOLDERS, colors: COLORS },
   { id: 'ratings', name: 'Ratings only', metadata: { ...METADATA, writeLabels: false }, naming: NAMING, folders: FOLDERS, colors: COLORS },
@@ -21,7 +24,7 @@ function text(value, limit) {
 function normalizeSettings(value = {}, base = DEFAULTS) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid settings.');
   const result = clone(base);
-  for (const key of ['autoAdvance', 'recursive', 'autoOpenCards', 'copyJpeg', 'copyXmp', 'copyMetadata']) if (key in value) {
+  for (const key of ['autoAdvance', 'recursive', 'autoOpenCards', 'zoomClickCenter', 'copyJpeg', 'copyXmp', 'copyMetadata']) if (key in value) {
     if (typeof value[key] !== 'boolean') throw new Error('Invalid setting: ' + key);
     result[key] = value[key];
   }
@@ -42,6 +45,20 @@ function normalizeSettings(value = {}, base = DEFAULTS) {
     result.deleteMode = value.deleteMode;
   }
   if ('activePreset' in value) result.activePreset = text(value.activePreset, 80);
+  if ('dehancerExe' in value) {
+    result.dehancerExe = text(value.dehancerExe, 1024);
+    if (result.dehancerExe && !/.exe$/i.test(result.dehancerExe) && process.platform === 'win32') throw new Error('Choose DehancerLightroom.exe.');
+  }
+  if ('defaultRecipe' in value) result.defaultRecipe = text(value.defaultRecipe, 80) || 'neutral';
+  if ('exportOptions' in value) {
+    if (!value.exportOptions || typeof value.exportOptions !== 'object' || Array.isArray(value.exportOptions) || JSON.stringify(value.exportOptions).length > 16384) throw new Error('Invalid export settings.');
+    result.exportOptions = require('./renderer/export.js').options(value.exportOptions);
+  }
+  if ('exportSubfolder' in value) result.exportSubfolder = text(value.exportSubfolder, 120);
+  if ('exportConflict' in value) {
+    if (!['unique', 'skip', 'overwrite'].includes(value.exportConflict)) throw new Error('Invalid conflict option.');
+    result.exportConflict = value.exportConflict;
+  }
   if ('metadata' in value) {
     if (!value.metadata || typeof value.metadata !== 'object' || Array.isArray(value.metadata)) throw new Error('Invalid metadata preset.');
     for (const key of ['writeRatings', 'writeLabels', 'rejectRating']) if (key in value.metadata) {

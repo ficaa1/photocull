@@ -20,6 +20,8 @@ const os = require('node:os');
 const readline = require('node:readline');
 const { randomBytes } = require('node:crypto');
 const { Library } = require('./library.cjs');
+const { RecipeStore, planExport } = require('./develop.cjs');
+const { planTiffs } = require('./develop-plan.cjs');
 const { PreviewService } = require('./previews.cjs');
 const { TransferService } = require('./transfer.cjs');
 const { DeviceMonitor } = require('./devices.cjs');
@@ -34,7 +36,8 @@ console.log = console.info = console.debug = console.error;
 
 const rendererDir = path.join(__dirname, 'renderer');
 const RENDERER_FILES = new Map([['index.html', 'text/html'], ['styles.css', 'text/css'], ['app.js', 'text/javascript'],
-  ['naming.js', 'text/javascript'], ['image-view.js', 'text/javascript'], ['bridge.js', 'text/javascript']]);
+  ['histogram.js', 'text/javascript'], ['develop.js', 'text/javascript'], ['export.js', 'text/javascript'],
+  ['naming.js', 'text/javascript'], ['image-view.js', 'text/javascript'], ['loupe.js', 'text/javascript'], ['bridge.js', 'text/javascript']]);
 const inside = (parent, child) => { const rel = path.relative(parent, child); return rel === '' || !!rel && !rel.startsWith('..') && !path.isAbsolute(rel); };
 
 function defaultDataDir() {
@@ -73,7 +76,56 @@ async function start() {
   // deletion is removing. The shell brackets each deletion with
   // deletion-plan (which takes the lock) and deletion-end.
   let deleting = false;
+  const recipes = new RecipeStore(settings.folder);
+  await recipes.init();
   const methods = {
+    // Develop (rendering is in the shell, src-tauri/src/develop.rs).
+    'recipes': () => ({ recipes: recipes.list(), defaultRecipe: settings.value.defaultRecipe, warning: recipes.warning }),
+    'save-recipe': recipe => recipes.save(recipe || {}),
+    'delete-recipe': id => recipes.remove(id),
+    'develop-get': async (session, id) => {
+      const state = library.developGet(session, id);
+      if (state.tiff && !await fs.stat(state.tiff).then(s => s.isFile(), () => false)) { state.tiff = null; state.edited = false; }
+      const recipe = recipes.get(state.recipe) || recipes.get(settings.value.defaultRecipe) || recipes.get('neutral');
+      return { ...state, recipe: recipe.id, recipeSettings: recipe.settings, settings: state.settings ?? recipe.settings };
+    },
+    'develop-set': (session, ids, value) => library.developSet(session, ids, value || {}),
+    'develop-folder': session => {
+      const s = library.get(session);
+      return { folder: path.join(s.folder, '_develop'), removable: s.removable };
+    },
+    'develop-plan': async (session, ids, folder) => {
+      if (!Array.isArray(ids) || !ids.length || ids.length > 100_000) throw new Error('Choose RAW photos to send.');
+      return planTiffs([...new Set(ids)].map(id => library.item(session, id)), folder);
+    },
+    'make-folder': async folder => {
+      if (typeof folder !== 'string' || !path.isAbsolute(folder)) throw new Error('Invalid folder.');
+      await fs.mkdir(folder, { recursive: true });
+      return folder;
+    },
+    'export-plan': async (session, ids, options) => {
+      const s = library.get(session);
+      if (!Array.isArray(ids) || !ids.length || ids.length > 100_000) throw new Error('Choose photos to export.');
+      const items = [...new Set(ids)].map(id => library.item(session, id));
+      if (items.some(item => item.trashed)) throw new Error('Photos in Trash cannot be exported.');
+      return planExport(items, { ...(options || {}), protectedPaths: s.items.flatMap(i => [i.path, i.companion, i.develop?.tiff]).filter(Boolean), captureDate: item => previews.metadata(item).then(data => data.captured) });
+    },
+    // Shell-only: Lightcraft's AVIF muxer carries EXIF but omits XMP. The file is still staged.
+    'export-embed-xmp': async (file, xmp) => {
+      if (typeof file !== 'string' || !path.isAbsolute(file) || !file.endsWith('.avif.partial') || typeof xmp !== 'string' || xmp.length > 1024 * 1024) throw new Error('Invalid staged export metadata.');
+      const stat = await fs.lstat(file);
+      if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Staged export is not a regular file.');
+      const result = await previews.exif.write(file, { XMP: xmp }, ['-overwrite_original']);
+      if (result.warnings?.length) throw new Error(result.warnings.join('; '));
+      const handle = await fs.open(file, 'r+');
+      try { await handle.sync(); } finally { await handle.close(); }
+    },
+    // Only the shell calls these two.
+    'develop-context': (session, id) => {
+      const item = library.item(session, id);
+      return { file: item.path, name: item.name, raw: item.raw, tiff: item.develop?.tiff ?? null, dehancerExe: settings.value.dehancerExe };
+    },
+    'develop-mark': (session, id, mark) => library.developMark(session, id, mark || {}),
     'scan': async (folder, recursive) => {
       if (typeof folder !== 'string' || !folder) throw new Error('Choose a photo folder.');
       return library.scan(folder, !!recursive, { removable: await onCard(folder) });
@@ -88,20 +140,26 @@ async function start() {
     'test-destination': () => smoke ? process.env.PHOTOCULL_TEST_DESTINATION || null : null,
     'copy-picks': (session, destination, options) => deleting ? Promise.reject(new Error('Wait for the deletion to finish.')) : transfers.copy(library.get(session), destination, { ...options, metadataSettings: settings.value,
       naming: options?.naming || settings.value.naming, folders: options?.folders || settings.value.folders, embedMetadata: options?.embedMetadata ?? settings.value.copyMetadata }),
-    'naming-preview': async (session, naming) => {
+    'naming-preview': async (session, naming, id = null, extension = null) => {
       naming = normalizeSettings({ naming }).naming;
       const items = library.get(session).items;
-      const item = items.find(i => i.flag === 'pick' && !i.trashed) || items[0];
+      const item = id ? library.item(session, id) : items.find(i => i.flag === 'pick' && !i.trashed) || items[0];
       if (!item) return '';
       const captured = needsCapture(naming.template) ? (await previews.metadata(item)).captured : null;
-      return renderName(item.name, naming, 0, { captured }).filename;
+      if (extension !== null && !['jpg', 'jxl', 'tif', 'png', 'avif', 'webp'].includes(extension)) throw new Error('Invalid export format.');
+      const rendered = renderName(item.name, naming, 0, { captured });
+      return extension ? `${rendered.stem}.${extension}` : rendered.filename;
     },
     'cancel-copy': () => transfers.cancel(),
     'decide': (session, id, patch) => library.decide(session, id, patch),
     'decide-many': (session, ids, patch) => library.decideMany(session, ids, patch),
     'history': (session, direction) => library.history(session, direction),
     'metadata': (session, id, kind = 'preview') => previews.metadata(library.item(session, id), kind),
-    'preview-status': (session, id, kind = 'preview') => previews.status(library.item(session, id), kind),
+    // size: the photo's real oriented pixel size (or null), for loupe zoom percentages.
+    'preview-status': async (session, id, kind = 'preview') => {
+      const item = library.item(session, id);
+      return { ...previews.status(item, kind), size: await previews.dimensions(item) };
+    },
     'settings': async patch => {
       const snapshot = patch === undefined || patch === null ? settings.snapshot() : await settings.update(patch);
       if (previews.policy !== snapshot.rawRendering) previews.setPolicy(snapshot.rawRendering);
@@ -181,7 +239,12 @@ async function start() {
       if (route === 'image' && authorized) {
         const [session, id, kind] = rest;
         const item = library.item(session, id);
-        const data = await previews.get(item, kind, kind === 'thumb' ? 1 : url.searchParams.has('prefetch') ? 5 : 100);
+        // cached=1 only returns already generated images (404 otherwise);
+        // prefetch=N ranks look-ahead work below anything on screen.
+        const rank = Number(url.searchParams.get('prefetch')) || 0;
+        const data = url.searchParams.has('cached') ? await previews.peek(item, kind)
+          : await previews.get(item, kind, kind === 'thumb' ? 1 : url.searchParams.has('prefetch') ? Math.max(2, Math.min(9, 10 - rank)) : 100);
+        if (!data) { res.writeHead(404, { 'Cache-Control': 'no-store' }).end(); return; }
         res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=31536000, immutable', 'Content-Length': data.length });
         res.end(data); return;
       }

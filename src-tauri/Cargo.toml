@@ -21,9 +21,27 @@ serde_json = "1"
 tokio = { version = "1", features = ["sync", "time"] }
 trash = "5"
 dunce = "1"
+# RAW development and export: Lightcraft (https://github.com/storytold/lightcraft, MIT OR Apache-2.0), pinned.
+lightcraft-raw = { git = "https://github.com/storytold/lightcraft", rev = "d58b4d67238ef1aafd8e3394a9f8428a3d91e561" }
+lightcraft-develop = { git = "https://github.com/storytold/lightcraft", rev = "d58b4d67238ef1aafd8e3394a9f8428a3d91e561" }
+lightcraft-pipeline = { git = "https://github.com/storytold/lightcraft", rev = "d58b4d67238ef1aafd8e3394a9f8428a3d91e561" }
+lightcraft-codecs = { git = "https://github.com/storytold/lightcraft", rev = "d58b4d67238ef1aafd8e3394a9f8428a3d91e561" }
+lightcraft-lensdb = { git = "https://github.com/storytold/lightcraft", rev = "d58b4d67238ef1aafd8e3394a9f8428a3d91e561" }
+lightcraft-raster = { git = "https://github.com/storytold/lightcraft", rev = "d58b4d67238ef1aafd8e3394a9f8428a3d91e561" }
+lightcraft-meta = { git = "https://github.com/storytold/lightcraft", rev = "d58b4d67238ef1aafd8e3394a9f8428a3d91e561" }
+lightcraft-geom = { git = "https://github.com/storytold/lightcraft", rev = "d58b4d67238ef1aafd8e3394a9f8428a3d91e561" }
+lightcraft-fetch = { git = "https://github.com/storytold/lightcraft", rev = "d58b4d67238ef1aafd8e3394a9f8428a3d91e561" }
+lightcraft-engine = { git = "https://github.com/storytold/lightcraft", rev = "d58b4d67238ef1aafd8e3394a9f8428a3d91e561" }
 
 [profile.release]
 codegen-units = 1
 lto = true
 opt-level = "s"
 strip = true
+
+# Image processing must be fully optimised, in development builds too (an unoptimised render takes seconds).
+[profile.release.package."*"]
+opt-level = 3
+
+[profile.dev.package."*"]
+opt-level = 3

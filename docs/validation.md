@@ -18,6 +18,38 @@ Native Tauri launch (Linux x86_64, Ubuntu host, Xvfb, 2026-11-05):
 - With `PHOTOCULL_NODE=/bin/false` the app shows a "PhotoCull could not start" error dialog and exits with code 1 after OK.
 - Not yet run natively: macOS, Windows, and permanent deletion from a camera card.
 
+## Develop, Dehancer and export (2026-11-05)
+
+Validation used Windows 11 and disposable Sony ILCE-7CM2 + FE 40mm F2.5 G ARW/JPEG fixtures.
+The native checks used `tauri dev`; Linux/WSL browser smokes exercised the shared renderer/backend.
+
+- Fixture-enabled Node suite: **91/91 passed**, no failures or skips.
+- All nine UI smokes passed: viewer, settings, copy export, culling, baseline UI, redesign, Develop, finished-image export and RAW previews.
+- Windows `cargo test`: three library tests passed; binary/doc tests passed. `cargo build` passed with no compiler warnings.
+- Native end-to-end: folder picker → loupe/Navigator/retained zoom → two picks → Develop recipe, exposure, histogram/clipping and copy/paste.
+- Send to Dehancer produced two 7008 × 4672, profiled 16-bit sRGB TIFFs and opened the real Lightroom plugin sequentially.
+- Cancel left the first TIFF unchanged; saving the second applied Kodak Pro Image 100, produced an 8-bit TIFF and updated its edit badge.
+- Mixed RAW/Dehancer JPEG (1600 × 1067) and JXL (1200 × 800) batches each reported two exported, zero skipped/failed.
+- All four exports decoded; ExifTool verified camera/lens metadata, and decoded images were visually inspected.
+- Reopening preserved picks and TIFF/edit badges; native shortcut, input scope, fullscreen and sidebar checks passed.
+- The separate 28-image export matrix covered JPEG, lossy/lossless JXL, TIFF, PNG, AVIF and WebP from RAW and Dehancer sources.
+- Readback verified dimensions, bit depths, profiles/color declarations, metadata policies, Display P3 and JPEG size limits; AVIF used sharp/libheif.
+- Skip-existing reported three skips; AVIF cancellation left no destination/partial images. Original photos and source TIFFs retained their hashes.
+
+Single-run Windows timings (development build; caches/automation affect results):
+
+- Two full-resolution TIFFs plus first Dehancer launch: **6.003 s**; two-image JPEG export: **4.891 s**; JXL: **4.634 s**.
+- Full-image click zoom: 0.117 s; next photo at retained zoom: 0.027 s; first Develop settled frame: 1.151 s.
+- Earlier native Develop report: warm draft rendering about 49 ms (request about 63 ms); a warm settled render took 125.5 ms (request 167.4 ms).
+  These preview samples come from the local `develop-ui-test/real-develop-report.json`, separate from the merged end-to-end timings.
+
+Known limits: lens database download, removable-card destination choice and Dehancer Skip/Stop were verified only with mocks.
+The FE 40mm F2.5 G lens profile lacks vignetting correction; manual controls remain available.
+Exports run sequentially; full-size AVIF samples took 24.6–32.9 s, and WebP is lossless-only.
+Reading Dehancer TIFFs emits a harmless libtiff unknown-tag-317 warning; decode/export checks passed.
+macOS pinch zoom and native macOS/Linux exports remain unverified; release/installer performance and colorimetric equivalence were not tested.
+Reports/screenshots remain local under ignored `artifacts/`; disposable Windows test/spike outputs were removed after validation.
+
 ## Checked behavior
 
 - Unit/integration tests cover RAW/JPEG pairing, natural sorting, source-identity invalidation, local decision persistence, undo/redo, optional recursion and symlink avoidance.
@@ -107,7 +139,7 @@ Local RAW checks used files from the [rawpy test directory](https://github.com/l
 
 ## Current limits
 
-- RAW development uses a fast LibRaw configuration rather than an editor-quality pipeline. First renders are slower and use more memory than embedded previews. Camera support, colors and lens corrections vary. The fixture coverage does not certify every recognized RAW extension.
+- RAW development for Develop and finished-image export uses the pinned Lightcraft engine. Culling prefers embedded previews/companion JPEGs and retains the fast LibRaw fallback for missing or small previews. First renders are slower and use more memory than embedded previews. Camera support, colors and lens corrections vary. The fixture coverage does not certify every recognized RAW extension.
 - Explicit deletion is supported; PhotoCull cannot undo it. No ingestion, catalog, compare view, automatic duplicate detection, AI scoring, GPU decode optimization, or live folder watcher.
 - The disk-cache limit is soft; Chromium's decoded/GPU image memory is additional to the application caches.
 - No verified speed comparison with Photo Mechanic. Larger shoots, unusual RAW formats, network storage and external XMP edits need further testing.

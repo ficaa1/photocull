@@ -31,3 +31,21 @@ The bundled Node.js runtime's license, including its third-party notices, is
 copied to `Node-LICENSE.txt` at build time. The Tauri shell's Rust crate licenses
 are those of the crates listed in `src-tauri/Cargo.lock`; the system webview
 (WebView2, WKWebView or WebKitGTK) is not bundled.
+
+## Lightcraft Develop
+
+The native Develop engine uses Lightcraft at commit
+`d58b4d67238ef1aafd8e3394a9f8428a3d91e561`:
+https://github.com/storytold/lightcraft
+
+The histogram smoothing, scaling, grayscale detection and tonal-zone interaction in
+`src/renderer/histogram.js` and `develop.js` are JavaScript adaptations of
+`crates/ui-egui/src/panels/edit/hdr_flow.rs`, `panels/histogram.rs`, and
+`crates/raster/src/histogram.rs`. Copyright (c) 2026 ArtCraft Team and the
+LightCraft contributors. These adaptations use the MIT license option; the
+complete license and upstream notice are in `lightcraft-LICENSE-MIT.txt` and
+`lightcraft-NOTICE.txt`. Lightcraft’s brands, fonts, showcase images and optional
+models are not included by these UI adaptations.
+
+Lensfun data is not bundled. The native engine downloads it only on request,
+with its CC BY-SA 3.0 notice stored beside the downloaded data.

@@ -35,7 +35,7 @@ class PreviewService {
     this.queue = new PriorityQueue(3); this.sources = new PriorityQueue(2);
     this.exif = exif || new ExifTool({ maxProcs: 2, taskTimeoutMillis: 15000 });
     this.sourceInfo = new Map(); this.infoByKind = new Map(); this.states = new Map(); this.metadataJobs = new Map();
-    this.inventories = new Map(); this.extracting = new Map();
+    this.inventories = new Map(); this.extracting = new Map(); this.sizes = new Map();
     this.policy = POLICIES.includes(rendering) ? rendering : 'missing';
     this.revision = 0; this.itemRevisions = new Map(); this.focusIds = new Set(); this.visibleIds = new Set();
     this.onState = onState; this.closed = false;
@@ -218,6 +218,53 @@ class PreviewService {
     }
     return { file: path.join(this.cacheDir, candidate.name), info: { ...candidate, limited: Math.max(candidate.width, candidate.height) < edge } };
   }
+  // The photo's real pixel size, oriented as displayed, so the loupe can place
+  // zoom percentages before the full-size image has loaded. null if unknown.
+  async dimensions(item) {
+    const key = this.baseKey(item);
+    if (!this.sizes.has(key)) {
+      const job = (async () => {
+        let width, height, orientation;
+        if (item.raw) ({ width, height, orientation } = (await this.inventory(item)).record);
+        else ({ width, height, orientation } = await sharp(item.path, { limitInputPixels: 160_000_000 }).metadata());
+        // Some RAW formats report only a thumbnail's size in the main IFD.
+        if (!width || !height || item.raw && Math.max(width, height) < 1000) return null;
+        return orientation >= 5 && orientation <= 8 ? { width: height, height: width } : { width, height };
+      })();
+      this.sizes.set(key, job); job.catch(() => this.sizes.delete(key));
+      if (this.sizes.size > 500) this.sizes.delete(this.sizes.keys().next().value);
+    }
+    return this.sizes.get(key).catch(() => null);
+  }
+  // Returns an already generated representation from memory or disk without
+  // doing any work, or null. Lets the loupe show cached previews at once while
+  // arrow keys are held.
+  async peek(item, kind) {
+    if (this.closed || !(kind in SIZES)) return null;
+    const key = this.key(item, kind), revision = this.revision, cached = this.memory.get(key);
+    if (cached) {
+      this.stats.memoryHits++; this.memory.delete(key); this.memory.set(key, cached);
+      this.setInfo(item, kind, cached.info); return cached.data;
+    }
+    const file = path.join(this.cacheDir, key + '.jpg'), infoFile = file + '.json';
+    try {
+      const [data, info] = await Promise.all([fs.readFile(file), fs.readFile(infoFile, 'utf8').then(JSON.parse)]);
+      if (!data.length) return null;
+      touch(file, infoFile); this.remember(key, data, info);
+      if (revision === this.revision) this.setInfo(item, kind, info);
+      this.stats.diskHits++; return data;
+    } catch { return null; }
+  }
+  // A full-size request needs no resizing; when the chosen JPEG is already
+  // upright it is served as is instead of being decoded and re-encoded.
+  async passThrough(kind, selected) {
+    if (SIZES[kind]) return null;
+    const info = selected.info;
+    if (info.format === 'jpeg' && (info.orientation || 1) === 1) return fs.readFile(selected.file);
+    if (info.type !== 'original') return null;
+    const metadata = await sharp(selected.file, { limitInputPixels: 160_000_000 }).metadata();
+    return metadata.format === 'jpeg' && (metadata.orientation || 1) === 1 && (!metadata.space || metadata.space === 'srgb') ? fs.readFile(selected.file) : null;
+  }
   async get(item, kind = 'thumb', priority = 1) {
     if (this.closed) throw new Error('Preview service is closing.');
     if (!(kind in SIZES)) throw new Error('Unknown preview size.');
@@ -244,7 +291,7 @@ class PreviewService {
         image = selected.info.orientation ? orient(image, selected.info.orientation) : image.autoOrient();
         if (SIZES[kind]) image = image.resize(SIZES[kind], SIZES[kind], { fit: 'inside', withoutEnlargement: true, fastShrinkOnLoad: true });
         let data;
-        try { data = await image.toColourspace('srgb').jpeg({ quality: kind === 'thumb' ? 76 : 91 }).toBuffer(); }
+        try { data = await this.passThrough(kind, selected) || await image.toColourspace('srgb').jpeg({ quality: kind === 'thumb' ? 76 : 91 }).toBuffer(); }
         catch (error) {
           if (!item.raw || TRANSIENT.has(error.code)) throw error;
           const tag = selected.info.tag;
@@ -282,7 +329,7 @@ class PreviewService {
     if (old) await old.writes;
     this.inventories.delete(key);
     await fs.rm(path.join(this.cacheDir, key + '.inventory.json'), { force: true });
-    this.states.delete(item.id);
+    this.states.delete(item.id); this.sizes.delete(key);
     for (const kind of Object.keys(SIZES)) this.infoByKind.delete(`${item.id}:${kind}`);
     this.sourceInfo.delete(item.id);
   }
@@ -323,7 +370,7 @@ class PreviewService {
     const files = await this.cacheFiles({ failures: true });
     let freed = 0;
     await Promise.all(files.map(f => fs.rm(f.file, { force: true }).then(() => { freed += f.bytes; }, () => {})));
-    this.inventories.clear();
+    this.inventories.clear(); this.sizes.clear();
     return { freed, ...await this.diskUsage() };
   }
   async prune(force = false) {

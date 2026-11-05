@@ -11,15 +11,17 @@
     subscribers.get(name).add(callback);
     return () => subscribers.get(name).delete(callback);
   };
-  const EVENTS = ['edit-shortcut', 'open-folder-shortcut', 'settings-shortcut', 'fullscreen-toggle', 'fullscreen-changed', 'devices-changed', 'copy-progress', 'preview-state'];
+  const EVENTS = ['edit-shortcut', 'open-folder-shortcut', 'settings-shortcut', 'fullscreen-toggle', 'fullscreen-changed', 'devices-changed', 'copy-progress', 'preview-state', 'develop-progress', 'export-progress', 'lens-database-progress'];
 
-  let backend, imageBase, platform, host;
+  let backend, imageBase, platform, host, shell;
   if (tauri) {
     const info = window.__PHOTOCULL__;
     platform = info.platform;
     imageBase = { prefix: `http://127.0.0.1:${info.port}/image`, query: `t=${info.token}` };
     backend = (method, ...params) => tauri.core.invoke('backend', { method, params });
     for (const name of EVENTS) void tauri.event.listen(name, event => dispatch(name, event.payload));
+    // Develop and export run in the Rust shell (src-tauri/src/develop.rs), so they need the desktop app.
+    shell = (command, args) => tauri.core.invoke(command, args);
     host = {
       pickFolder: title => tauri.core.invoke('pick_folder', { title }),
       pickSaveFile: (defaultName, filterName, extension) => tauri.core.invoke('pick_save_file', { defaultName, filterName, extension }),
@@ -29,6 +31,7 @@
       saveManifest: session => tauri.core.invoke('save_manifest', { session }),
     };
   } else {
+    shell = async () => { throw new Error('Developing and exporting need the desktop app.'); };
     const token = new URLSearchParams(location.search).get('t') || '';
     platform = 'web';
     imageBase = { prefix: `${location.origin}/image`, query: `t=${token}` };
@@ -60,8 +63,39 @@
     document.addEventListener('fullscreenchange', () => dispatch('fullscreen-changed', { fullscreen: !!document.fullscreenElement }));
   }
 
+  // develop_render replies with [u32 LE header length][JSON header][JPEG].
+  const unpackFrame = buffer => {
+    const view = new DataView(buffer), length = view.getUint32(0, true);
+    const header = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 4, length)));
+    return { ...header, blob: new Blob([new Uint8Array(buffer, 4 + length)], { type: 'image/jpeg' }) };
+  };
+
   const api = {
     platform,
+    canDevelop: !!tauri,
+    // Recipes and per-photo develop state (Node backend).
+    recipes: () => backend('recipes'),
+    saveRecipe: recipe => backend('save-recipe', recipe),
+    deleteRecipe: id => backend('delete-recipe', id),
+    developGet: (session, id) => backend('develop-get', session, id),
+    developSet: (session, ids, value) => backend('develop-set', session, ids, value),
+    developFolder: session => backend('develop-folder', session),
+    developPlan: (session, ids, folder) => backend('develop-plan', session, ids, folder),
+    makeFolder: folder => backend('make-folder', folder),
+    pickFolder: title => host.pickFolder(title),
+    exportPlan: (session, ids, options) => backend('export-plan', session, ids, options),
+    // Rendering (Rust shell). settings are partial Lightcraft develop settings.
+    developInfo: (session, id) => shell('develop_info', { session, id }),
+    developRender: async (session, id, settings, settled) => unpackFrame(await shell('develop_render', { session, id, settings, settled: !!settled })),
+    developTiffs: (session, folder, items, options = {}) => shell('develop_tiffs', { session, folder, items, options }),
+    developCancel: () => shell('develop_cancel', {}),
+    dehancerEdit: (session, id) => shell('dehancer_edit', { session, id }),
+    exportPhotos: (session, items, options, overwrite = false, metadataOverrides = null) => shell('export_photos', { session, items, options, overwrite, metadataOverrides }),
+    lensDatabase: () => shell('lens_database', {}),
+    downloadLensDatabase: () => shell('download_lens_database', {}),
+    onDevelopProgress: callback => subscribe('develop-progress', callback),
+    onExportProgress: callback => subscribe('export-progress', callback),
+    onLensDatabaseProgress: callback => subscribe('lens-database-progress', callback),
     canTrash: !!tauri,
     imageUrl: (session, id, kind, params = '') => `${imageBase.prefix}/${session}/${id}/${kind}?${imageBase.query}${params}`,
     onEdit: callback => subscribe('edit-shortcut', callback),
@@ -76,7 +110,7 @@
       if (typeof value !== 'boolean') return Promise.reject(new Error('Invalid fullscreen mode.'));
       return host.fullscreen(value);
     },
-    namingPreview: (session, naming) => backend('naming-preview', session, naming),
+    namingPreview: (session, naming, id = null, extension = null) => backend('naming-preview', session, naming, id, extension),
     settings: patch => backend('settings', patch),
     savePreset: (name, value) => backend('save-preset', name, value),
     deletePreset: id => backend('delete-preset', id),

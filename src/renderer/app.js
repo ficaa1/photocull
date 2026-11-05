@@ -1,7 +1,7 @@
 const api = window.photocull;
 const $ = id => document.getElementById(id);
-const state = { deleting: false, session: null, selected: null, marked: new Set(), anchor: null, filter: 'all', query: '', mode: 'review', zoom: false, zoomPercent: 100, fullscreen: false,
-  generation: 0, previewRevision: 0, prefetched: [], pendingSaves: 0, saveError: false, busy: false, settings: { autoAdvance: true, recursive: false, autoOpenCards: true, colors: [], naming: { template: '{filename}', text: '', start: 1 } }, settingsReady: false, colorFilter: '', devices: [], deviceError: '', autoOpened: new Set(), copy: { running: false, destination: null, copiedTo: null } };
+const state = { deleting: false, session: null, selected: null, marked: new Set(), anchor: null, filter: 'all', query: '', mode: 'review', fullscreen: false,
+  generation: 0, previewRevision: 0, pendingSaves: 0, saveError: false, busy: false, settings: { autoAdvance: true, recursive: false, autoOpenCards: true, colors: [], naming: { template: '{filename}', text: '', start: 1 } }, settingsReady: false, colorFilter: '', devices: [], deviceError: '', autoOpened: new Set(), copy: { running: false, destination: null, copiedTo: null } };
 let toastTimer, metadataTimer, framePending = false;
 const gridNodes = new Map(), filmNodes = new Map();
 let filmSignature = '';
@@ -17,7 +17,7 @@ function applyPaneLayout() {
   document.body.classList.toggle('sources-hidden', !narrow && !sources); document.body.classList.toggle('details-hidden', !narrow && !details);
   $('toggle-sidebar').setAttribute('aria-expanded', String(sources)); $('toggle-sidebar').setAttribute('aria-label', sources ? 'Hide sources' : 'Show sources');
   $('toggle-inspector').setAttribute('aria-expanded', String(details)); $('toggle-inspector').setAttribute('aria-label', details ? 'Hide details' : 'Show details');
-  requestGrid();
+  requestGrid(); loupe.layout();
 }
 function togglePane(pane) {
   if (matchMedia('(max-width: 900px)').matches) document.body.classList.toggle(pane === 'sources' ? 'mobile-sources' : 'mobile-details');
@@ -26,9 +26,24 @@ function togglePane(pane) {
 }
 $('toggle-sidebar').onclick = () => togglePane('sources'); $('toggle-inspector').onclick = () => togglePane('details');
 $('grid-size').value = layoutPrefs.gridSize; $('grid-size').oninput = () => { layoutPrefs.gridSize = Number($('grid-size').value); storeLayout(); requestGrid(); };
+// The single-photo view: zoom, pan, navigator and which preview size to load (loupe.js).
+const loupe = PhotoCullLoupe.create({ api,
+  elements: { viewport: $('image-viewport'), image: $('review-image'), loading: $('image-loading'), error: $('image-error'), retry: $('retry-preview'),
+    previewSource: $('preview-source'), previewStatus: $('preview-status'), cameraBadge: $('camera-preview'), zoomFit: $('zoom'), zoomFill: $('zoom-fill'),
+    zoomPercent: $('zoom-percent'), zoomLevel: $('zoom-level'), navigator: $('navigator'), navigatorImage: $('navigator-image'), navigatorView: $('navigator-view'),
+    navigatorPanel: $('navigator-panel'), navigatorDock: $('navigator-dock'), navigatorOverlay: $('navigator-overlay'), navigatorZoom: $('navigator-zoom'), inspector: $('inspector') },
+  imageUrl: (item, kind, extra = '') => api.imageUrl(state.session.id, item.id, kind, `&v=${state.previewRevision}${extra}`),
+  context: () => ({ session: state.session, items: state.session ? filtered() : [], mode: state.mode, revision: state.previewRevision, fullscreen: state.fullscreen }),
+  settings: () => state.settings,
+  onLoaded: item => { void loadMetadata(item); },
+  onClickZoomChange: async percent => { try { state.settings = await api.settings({ zoomPercent: percent }); } catch (error) { toast(error.message); } } });
 matchMedia('(max-width: 900px)').addEventListener('change', applyPaneLayout);
 applyPaneLayout();
-const imageView = new PhotoCullView.ImageView($('image-viewport'), $('review-image'), { onToggle: point => toggleZoom(point) });
+// Develop owns its controls and render queue; app hooks keep selection and badges shared.
+const developView = PhotoCullDevelop.init({ api, selection, toast, status: setStatus,
+  updateItems(session, items) { if (state.session?.id !== session) return; for (const patch of items) { const item = state.session.items.find(i => i.id === patch.id); if (item) Object.assign(item, patch); } render(); },
+  async saveSettings(patch) { state.settings = await api.settings(patch); return state.settings; },
+});
 
 // The open Del / Shift+Del confirmation, if any: { ids, mode, session, view }.
 let deletePrompt = null;
@@ -79,7 +94,7 @@ async function openFolder() {
 function loadSession(session) {
   state.session = session; state.selected = session.items[0]?.id ?? null;
   resetSelection();
-  state.filter = 'all'; state.colorFilter = ''; $('color-filter').value = ''; state.query = ''; state.zoom = false; state.saveError = false;
+  state.filter = 'all'; state.colorFilter = ''; $('color-filter').value = ''; state.query = ''; state.saveError = false; loupe.reset();
   $('search').value = ''; $('grid').scrollTop = 0;
   const folderName = session.folder.split(/[\\/]/).filter(Boolean).pop();
   $('folder-name').textContent = folderName; $('folder-name').title = session.folder;
@@ -142,6 +157,7 @@ function renderCounts() {
 }
 
 function render(reset = false) {
+  $('image-export').disabled = !state.session?.items.length || state.deleting || state.copy.running;
   renderCounts();
   const items = filtered();
   if (!items.some(i => i.id === state.selected)) state.selected = items[0]?.id ?? null;
@@ -159,6 +175,7 @@ function render(reset = false) {
   $('review-mode').setAttribute('aria-pressed', String(state.mode === 'review')); $('grid-mode').setAttribute('aria-pressed', String(state.mode === 'grid'));
   $('review-mode').classList.toggle('active', state.mode === 'review');
   $('grid-mode').classList.toggle('active', state.mode === 'grid');
+  $('develop-mode').classList.toggle('active', state.mode === 'develop'); $('develop-mode').setAttribute('aria-pressed', String(state.mode === 'develop'));
   const titles = { all: 'Photos', unreviewed: 'Unreviewed', pick: 'Picks', reject: 'Rejects', rated: 'Rated', trash: 'Trash' };
   $('view-title').textContent = loaded ? titles[state.filter] : 'Photos';
   $('view-count').textContent = loaded ? `${items.length}${state.marked.size > 1 ? ` · ${state.marked.size} selected` : ''}` : '';
@@ -176,11 +193,12 @@ function render(reset = false) {
 
 function renderSelection() {
   const item = photo();
+  developView.sync({ mode: state.mode, session: state.session, photo: item });
   $('image-details').hidden = !item; $('inspector-empty').hidden = !!item;
-  if (!item) { state.generation++; $('review-image').dataset.stamp = ''; if (state.fullscreen) void setFullscreen(false); return; }
+  if (!item) { state.generation++; loupe.clear(); if (state.fullscreen) void setFullscreen(false); return; }
   const items = filtered(), index = items.findIndex(i => i.id === item.id);
-  const nearbyIds = items.slice(Math.max(0, index - 1), index + 3).map(i => i.id);
-  void api.focus(state.session.id, nearbyIds).catch(() => {});
+  // Keeps the photo on screen and those prepared ahead in the direction of travel; cancels obsolete work.
+  void api.focus(state.session.id, [item.id, ...loupe.select(items, index)]).catch(() => {});
   $('photo-name').textContent = item.name;
   $('photo-size').textContent = `${fileSize(item.size)}${item.paired ? ' · RAW + JPEG pair' : ''}`;
   $('format-badge').textContent = item.raw ? item.paired ? 'RAW + JPEG' : 'RAW' : item.name.split('.').pop().toUpperCase();
@@ -191,7 +209,7 @@ function renderSelection() {
   renderDecision(item);
   renderColorLabels(item);
   renderFilmstrip(items, index);
-  if (state.mode === 'review') showImage(item);
+  if (state.mode === 'review') loupe.show(item);
   clearTimeout(metadataTimer);
   metadataTimer = setTimeout(() => loadMetadata(item), 180);
 }
@@ -213,67 +231,6 @@ function renderDecision(item) {
   $('flag-overlay').classList.toggle('rejected', item.flag === 'reject');
 }
 
-function showImage(item) {
-  const target = $('review-image');
-  const changed = target.dataset.itemId !== item.id;
-  if (changed) { state.zoom = false; target.dataset.itemId = item.id; imageView.reset(); }
-  const kind = state.zoom ? 'full' : 'preview';
-  const stamp = `${state.session.id}:${item.id}:${kind}:${state.previewRevision}`;
-  if (target.dataset.stamp === stamp && (target.dataset.complete || Number(target.dataset.generation) === state.generation)) return;
-  applyZoom();
-  const generation = ++state.generation; target.dataset.generation = generation;
-  const keep = !changed && target.naturalWidth > 0;
-  target.dataset.stamp = stamp;
-  if (!keep) { target.removeAttribute('src'); imageView.apply(); }
-  target.alt = item.name;
-  $('image-error').hidden = true; $('retry-preview').hidden = true; $('image-loading').hidden = false;
-  $('image-loading').textContent = state.zoom ? 'Loading full image…' : 'Loading preview…';
-  $('preview-source').textContent = item.raw ? 'Finding RAW preview…' : 'Original image';
-  delete target.dataset.complete;
-  const thumb = new Image();
-  thumb.onload = () => { if (generation === state.generation && !target.dataset.complete) target.src = thumb.src; };
-  if (!keep) thumb.src = imageUrl(item);
-  const full = new Image();
-  full.onload = () => {
-    if (generation !== state.generation) return;
-    target.dataset.complete = 'yes'; target.src = full.src;
-    $('image-loading').hidden = true;
-    $('preview-status').textContent = '';
-    state.prefetched = [];
-    const items = filtered(), index = items.findIndex(i => i.id === item.id);
-    for (const offset of [1, 2, -1]) {
-      const neighbor = items[index + offset]; if (!neighbor) continue;
-      const image = new Image(); image.src = imageUrl(neighbor, 'preview', true); state.prefetched.push(image);
-    }
-    void loadMetadata(item);
-    void updatePreviewStatus(item, generation);
-  };
-  full.onerror = () => {
-    if (generation !== state.generation) return;
-    $('image-loading').hidden = true; $('image-error').hidden = false;
-    $('image-error').textContent = 'Preview unavailable';
-    $('retry-preview').hidden = false;
-    void updatePreviewStatus(item, generation, true);
-  };
-  full.src = imageUrl(item, kind);
-}
-
-async function updatePreviewStatus(item, generation, failed = false) {
-  try {
-    const status = await api.previewStatus(state.session.id, item.id, state.zoom ? 'full' : 'preview');
-    if (generation !== state.generation || state.selected !== item.id) return;
-    if (failed) {
-      $('image-error').textContent = status.error || 'Preview unavailable';
-    } else if (status.info) {
-      const info = status.info;
-      $('preview-source').textContent = `${info.source}${info.cached ? ' · cached' : ''}`;
-      if (info.limited) $('preview-status').textContent = 'Limited resolution';
-      $('retry-preview').hidden = !info.renderError;
-      if (info.renderError) $('preview-status').textContent = `Using smaller preview · RAW render failed`;
-    }
-  } catch { /* The session may have changed during navigation. */ }
-}
-
 api.onPreviewState(status => {
   if (status.id !== state.selected || state.mode !== 'review' || $('review-image').dataset.complete) return;
   if (status.state === 'queued' || status.state === 'rendering') {
@@ -285,7 +242,7 @@ api.onPreviewState(status => {
 function refreshPreviews() {
   state.previewRevision++; state.generation++;
   gridNodes.clear(); $('grid-content').replaceChildren();
-  $('review-image').dataset.stamp = '';
+  loupe.invalidate();
   render();
 }
 $('retry-preview').onclick = async () => {
@@ -311,7 +268,7 @@ async function loadMetadata(item) {
     $('metadata').textContent = 'Loading…';
   }
   try {
-    const metadata = await api.metadata(sessionId, imageId, state.zoom ? 'full' : 'preview');
+    const metadata = await api.metadata(sessionId, imageId, loupe.kind());
     if (state.selected !== imageId || state.session.id !== sessionId || state.generation !== generation) return;
     const rows = [['Camera', metadata.camera], ['Lens', metadata.lens], ['Exposure', [metadata.shutter ? `${metadata.shutter} s` : '', metadata.aperture, metadata.iso ? `ISO ${metadata.iso}` : ''].filter(Boolean).join(' · ')],
       ['Captured', formatCaptureDate(metadata.captured)], ['Preview', metadata.width && metadata.height ? `${metadata.width} × ${metadata.height}` : ''], ['Source', metadata.source]];
@@ -339,7 +296,7 @@ function renderFilmstrip(items, index) {
     }
     button.classList.toggle('selected', state.marked.has(item.id)); button.classList.toggle('current', item.id === state.selected); button.setAttribute('aria-current', String(item.id === state.selected));
     button.querySelector('.film-label').textContent = String(start + i + 1).padStart(2, '0');
-    button.querySelectorAll('.mini-flag, .mini-color').forEach(node => node.remove()); addFlag(button, item); return button;
+    button.querySelectorAll('.mini-flag, .mini-color, .develop-badges').forEach(node => node.remove()); addFlag(button, item); return button;
   });
   if (signature !== filmSignature) { $('filmstrip').replaceChildren(...nodes); filmSignature = signature; }
   const retained = new Set(nearby.map(item => item.id)); for (const id of filmNodes.keys()) if (!retained.has(id)) filmNodes.delete(id);
@@ -347,6 +304,8 @@ function renderFilmstrip(items, index) {
 }
 
 function addFlag(node, item) {
+  const marks = [item.adjusted && 'Adjusted', item.developed && 'TIFF', item.dehancer && 'Dehancer'].filter(Boolean);
+  if (marks.length) { const badge = document.createElement('span'); badge.className = 'develop-badges'; badge.textContent = marks.map(m => m === 'Adjusted' ? '±' : m === 'TIFF' ? 'T' : 'D').join(' '); badge.title = marks.join(' · '); node.append(badge); }
   const color = state.settings.colors.find(c => c.id === colorOf(item));
   if (color) { const dot = document.createElement('span'); dot.className = 'mini-color'; dot.style.setProperty('--label-color', color.hex); dot.title = color.name; node.append(dot); }
   if (item.flag !== 'none' || item.rating) {
@@ -374,7 +333,7 @@ function renderGrid() {
   const last = Math.min(items.length, (Math.ceil((viewport.scrollTop + viewport.clientHeight) / rowHeight) + 1) * columns);
   const retained = new Set();
   for (let i = first; i < last; i++) {
-    const item = items[i], signature = `${item.id}:${item.flag}:${item.rating}:${item.color}:${state.previewRevision}`;
+    const item = items[i], signature = `${item.id}:${item.flag}:${item.rating}:${item.color}:${item.adjusted}:${item.developed}:${item.dehancer}:${state.previewRevision}`;
     retained.add(item.id);
     let node = gridNodes.get(item.id);
     if (!node || node.dataset.signature !== signature) {
@@ -434,7 +393,7 @@ function updateMarquee() {
   }
   current ??= marked.values().next().value ?? drag.current;
   if (current !== state.selected || marked.size !== state.marked.size || [...marked].some(id => !state.marked.has(id))) {
-    state.selected = current; state.marked = marked; state.anchor = current; state.zoom = false; render();
+    state.selected = current; state.marked = marked; state.anchor = current; render();
   }
 }
 function scrollMarquee(time) {
@@ -482,7 +441,7 @@ function select(id, event = {}) {
     else { state.marked.add(id); state.selected = id; }
     state.anchor = id;
   } else { state.selected = id; resetSelection(); }
-  state.zoom = false;
+  // Zoom level and position carry over to the next photo, as in Lightroom.
   // Plain navigation stays on the cheap path; only selection-size changes need the full render.
   if (wasMulti || state.marked.size > 1 || deletePrompt) render(); else renderSelection();
   if (state.mode === 'grid') {
@@ -499,7 +458,7 @@ function navigate(delta, extend = false) {
   const next = items[Math.max(0, Math.min(items.length - 1, index + delta))];
   if (next) select(next.id, { shiftKey: extend });
 }
-function setMode(mode) { if (mode === 'grid' && state.fullscreen) void setFullscreen(false); state.generation++; state.mode = mode; state.zoom = false; render(); }
+function setMode(mode) { if (mode !== 'review' && state.fullscreen) void setFullscreen(false); loupe.cancelHand(); state.generation++; state.mode = mode; render(); }
 
 function nextSurvivor(items, ids) {
   let last = -1;
@@ -549,7 +508,7 @@ api.onSettings(() => { if (!document.querySelector('dialog[open]')) void openSet
 document.body.classList.toggle('platform-mac', api.platform === 'darwin');
 if (api.platform === 'darwin') document.querySelectorAll('#help-dialog kbd').forEach(key => { key.textContent = key.textContent.replaceAll('Ctrl', '⌘').replaceAll('Alt', '⌥'); });
 $('open-folder').onclick = openFolder; $('empty-open').onclick = openFolder;
-$('review-mode').onclick = () => setMode('review'); $('grid-mode').onclick = () => setMode('grid');
+$('review-mode').onclick = () => setMode('review'); $('grid-mode').onclick = () => setMode('grid'); $('develop-mode').onclick = () => setMode('develop');
 $('search').oninput = event => { state.query = event.target.value.toLowerCase(); $('grid').scrollTop = 0; render(true); };
 document.querySelectorAll('.filter').forEach(button => { button.onclick = () => {
   state.filter = button.dataset.filter; $('grid').scrollTop = 0; render(true);
@@ -559,25 +518,7 @@ $('previous').onclick = () => navigate(-1); $('next').onclick = () => navigate(1
 $('pick').onclick = () => decide({ flag: photo()?.flag === 'pick' ? 'none' : 'pick' });
 $('reject').onclick = () => decide({ flag: photo()?.flag === 'reject' ? 'none' : 'reject' });
 $('clear').onclick = () => decide({ flag: 'none' });
-function applyZoom(point) {
-  imageView.setZoom(state.zoom, state.zoomPercent, point);
-  $('zoom').textContent = 'Fit';
-  $('zoom').setAttribute('aria-pressed', String(!state.zoom));
-}
-function toggleZoom(point) {
-  if (!photo()) return;
-  state.zoom = !state.zoom; applyZoom(state.zoom ? point : null); showImage(photo());
-}
-$('zoom').onclick = () => { $('zoom').blur(); if (state.zoom) toggleZoom(); };
-$('image-viewport').addEventListener('keydown', event => {
-  if (event.key === 'Enter') { event.preventDefault(); toggleZoom(); }
-});
-$('zoom-percent').onchange = async () => {
-  state.zoomPercent = Number($('zoom-percent').value); state.zoom = true;
-  $('zoom-percent').blur(); applyZoom(); if (photo()) showImage(photo());
-  try { state.settings = await api.settings({ zoomPercent: state.zoomPercent }); } catch (error) { toast(error.message); }
-};
-let dockTimer, fullscreenRequest = 0;
+let dockTimer, fullscreenRequest = 0, fullscreenPending = 0, fullscreenQueue = Promise.resolve();
 function dockActive() { return $('review-dock').matches(':hover, :focus-within') || $('filmstrip-hotspot').matches(':hover'); }
 function showDock() { clearTimeout(dockTimer); document.body.classList.add('filmstrip-visible'); }
 function hideDock(delay = 450) {
@@ -599,19 +540,25 @@ function applyFullscreen(value) {
   $('fullscreen').setAttribute('aria-pressed', String(value));
   if (value && changed) { showDock(); hideDock(1200); }
   if (!value) { clearTimeout(dockTimer); document.body.classList.remove('filmstrip-visible'); }
-  requestAnimationFrame(() => imageView.apply());
+  requestAnimationFrame(() => loupe.layout());
 }
 async function setFullscreen(value = !state.fullscreen) {
   if (value && !photo()) return;
   if (value && state.mode !== 'review') setMode('review');
   const request = ++fullscreenRequest, previous = state.fullscreen;
+  fullscreenPending++;
   applyFullscreen(value);
-  try { const result = await api.fullscreen(value); if (request === fullscreenRequest) applyFullscreen(result.fullscreen); }
+  // Native fullscreen transitions are asynchronous. Keep rapid toggles in order,
+  // and ignore intermediate native events while a newer target is pending.
+  const transition = fullscreenQueue.catch(() => {}).then(() => api.fullscreen(value));
+  fullscreenQueue = transition;
+  try { const result = await transition; if (request === fullscreenRequest) applyFullscreen(result.fullscreen); }
   catch (error) { if (request === fullscreenRequest) applyFullscreen(previous); toast(error.message); }
+  finally { fullscreenPending--; }
 }
 $('fullscreen').innerHTML = fullscreenIcons.enter;
 $('fullscreen').onclick = () => { $('fullscreen').blur(); void setFullscreen(); };
-api.onFullscreen(status => applyFullscreen(status.fullscreen));
+api.onFullscreen(status => { if (!fullscreenPending) applyFullscreen(status.fullscreen); });
 api.onFullscreenToggle(() => hideDeletePrompt());
 api.onFullscreenToggle(() => { if (!document.querySelector('dialog[open]')) void setFullscreen(); });
 $('shortcuts').onclick = () => $('help-dialog').showModal();
@@ -713,19 +660,22 @@ document.addEventListener('keydown', event => {
     if (event.key === 'Enter' && !event.repeat) void confirmDeletePrompt(); else hideDeletePrompt();
     return;
   }
-  const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+  const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable;
   if (document.querySelector('dialog[open]')) return;
   if ((event.ctrlKey || event.metaKey) && event.key === ',') { event.preventDefault(); void openSettings(); return; }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') { event.preventDefault(); void openFolder(); return; }
+  if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'e') { event.preventDefault(); void imageExport.open(); return; }
   if (event.key === 'F11') { event.preventDefault(); void setFullscreen(); return; }
   if (event.key === 'Tab' && event.ctrlKey) { event.preventDefault(); setMode(state.mode === 'review' ? 'grid' : 'review'); return; }
   if (typing) return;
   if ([' ', 'Enter'].includes(event.key) && document.activeElement?.matches('button, summary')) return;
-  if (event.key === 'Escape') { event.preventDefault(); if (state.marked.size > 1) { resetSelection(); render(); } else if (state.fullscreen) void setFullscreen(false); else if (state.zoom) toggleZoom(); return; }
+  if (event.key === 'Escape') { event.preventDefault(); if (state.marked.size > 1) { resetSelection(); render(); } else if (state.fullscreen) void setFullscreen(false); else if (state.mode === 'review' && loupe.zoomed) loupe.fit(); return; }
   if (event.key.toLowerCase() === 'f' && !event.ctrlKey && !event.metaKey && !event.altKey) { event.preventDefault(); void setFullscreen(); return; }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); void history(event.shiftKey ? 'redo' : 'undo'); return; }
   if (additive(event) && event.key.toLowerCase() === 'a') { event.preventDefault(); state.marked = new Set(filtered().map(i => i.id)); render(); return; }
   if (event.altKey && /^[0-8]$/.test(event.key)) { event.preventDefault(); void decide({ color: event.key === '0' ? '' : event.key }); return; }
+  // Z, Space (hold to pan), Ctrl/Cmd +/-/0.
+  if (state.mode === 'review' && photo() && loupe.handleKey(event)) return;
   if (event.ctrlKey || event.metaKey || event.altKey) return;
   if (event.key === 'Delete' || event.key === 'Backspace') {
     // Del moves the photo to PhotoCull's Trash; in the Trash view it deletes
@@ -749,14 +699,11 @@ document.addEventListener('keydown', event => {
   else if (event.key.toLowerCase() === 'u') { event.preventDefault(); void decide({ flag: 'none' }); }
   else if (/^[0-5]$/.test(event.key)) { event.preventDefault(); void decide({ rating: Number(event.key) }); }
   else if (/^[6-9]$/.test(event.key)) { event.preventDefault(); void decide({ color: String(Number(event.key) - 5) }); }
-  else if (event.key === ' ') {
-    event.preventDefault();
-    if (photo()) {
-      if (state.mode !== 'review') setMode('review'); else toggleZoom();
-    }
-  }
+  else if (event.key === ' ' && state.mode === 'grid') { event.preventDefault(); if (photo()) setMode('review'); }
+  else if (event.key.toLowerCase() === 'z' && state.mode === 'grid') { event.preventDefault(); if (photo()) { setMode('review'); loupe.zoomIn(); } }
   else if (event.key.toLowerCase() === 'g') { event.preventDefault(); setMode('grid'); }
   else if (event.key.toLowerCase() === 'e') { event.preventDefault(); setMode('review'); }
+  else if (event.key.toLowerCase() === 'd') { event.preventDefault(); setMode('develop'); }
   else if (event.key === '?') { event.preventDefault(); $('help-dialog').showModal(); }
 });
 
@@ -898,12 +845,17 @@ function renderColorLabels(item) {
   $('color-labels').querySelectorAll('[data-color]').forEach(button => { const active = colorOf(item) === button.dataset.color; button.setAttribute('aria-pressed', String(active)); button.classList.toggle('active', active); });
 
 }
+document.addEventListener('keyup', event => {
+  const active = document.activeElement;
+  if (state.mode !== 'review' || document.querySelector('dialog[open]') || active?.matches('input, textarea, select') || active?.isContentEditable) { loupe.cancelHand(); return; }
+  if (loupe.handleKeyUp(event)) event.preventDefault();
+});
+window.addEventListener('blur', () => loupe.cancelHand());
 function option(value, label) { const node = document.createElement('option'); node.value = value; node.textContent = label; return node; }
 function syncSettings(value) {
   state.settings = value; state.settingsReady = true;
-  state.zoomPercent = value.zoomPercent;
-  if (![...$('zoom-percent').options].some(option => Number(option.value) === value.zoomPercent)) $('zoom-percent').append(option(String(value.zoomPercent), `${value.zoomPercent}%`));
-  $('zoom-percent').value = String(value.zoomPercent); applyZoom();
+  loupe.setClickPercent(value.zoomPercent);
+  $('dehancer-exe').value = value.dehancerExe || ''; $('default-recipe').value = value.defaultRecipe || 'neutral';
   $('auto-advance').checked = value.autoAdvance; $('recursive').checked = value.recursive; $('raw-rendering').value = value.rawRendering;
   $('copy-jpeg').checked = value.copyJpeg; $('copy-xmp').checked = value.copyXmp; $('copy-metadata').checked = value.copyMetadata; fillFolders('copy', value.folders);
   $('copy-preset').replaceChildren(...value.presets.map(p => option(p.id, p.name))); $('copy-preset').value = value.activePreset;
@@ -919,7 +871,7 @@ function setSettingsTab(name) {
   document.querySelectorAll('[data-settings-page]').forEach(section => { section.hidden = section.dataset.settingsPage !== name; });
 }
 document.querySelectorAll('[data-settings-tab]').forEach(button => { button.onclick = () => setSettingsTab(button.dataset.settingsTab); });
-function buildNaming(prefix, value) {
+function buildNaming(prefix, value, onPreview) {
   const host = $(`${prefix}-naming-fields`); host.className = 'naming-fields';
   host.replaceChildren();
   const choices = [['{filename}', 'Original filename'], ['{text}_{seq:4}', 'Custom text + sequence'], ['{capturedate}_{filename}', 'Capture date + filename'], ['{date}_{seq:4}', 'Export date + sequence'], ['custom', 'Custom template']];
@@ -941,7 +893,8 @@ function buildNaming(prefix, value) {
   host.append(tokens);
   function changed() {
     templateRow.hidden = select.value !== 'custom'; tokens.hidden = select.value !== 'custom';
-    if (prefix === 'copy') { void updateNamePreview(); }
+    if (onPreview) { void onPreview(); }
+    else if (prefix === 'copy') { void updateNamePreview(); }
     else void updateSettingsNamePreview();
   }
   select.onchange = () => { if (select.value !== 'custom') template.value = select.value; changed(); if (prefix === 'copy') { renderCopyOptions(); if ($('copy-folder-mode').value !== 'named' || $('copy-folder-name').value.trim()) void saveCopyDefaults(); } };
@@ -971,7 +924,8 @@ async function saveCopyDefaults() {
   catch (error) { $('copy-name-preview').textContent = error.message; }
 }
 function fillSettings(value) {
-  $('auto-advance').checked = value.autoAdvance; $('recursive').checked = value.recursive; $('auto-open-cards').checked = value.autoOpenCards;
+  $('dehancer-exe').value = value.dehancerExe || ''; $('default-recipe').value = value.defaultRecipe || 'neutral';
+  $('auto-advance').checked = value.autoAdvance; $('recursive').checked = value.recursive; $('auto-open-cards').checked = value.autoOpenCards; $('zoom-click-center').checked = value.zoomClickCenter;
   $('preview-cache-limit').value = String(value.previewCacheGB); void showCacheUsage();
   $('raw-rendering').value = value.rawRendering; $('default-jpeg').checked = value.copyJpeg; $('default-xmp').checked = value.copyXmp; $('default-metadata').checked = value.copyMetadata; fillFolders('settings', value.folders);
   $('metadata-preset').replaceChildren(...state.settings.presets.map(p => option(p.id, p.name))); $('metadata-preset').value = value.activePreset;
@@ -992,7 +946,8 @@ function fillSettings(value) {
 }
 function readSettings() {
   const value = clone(settingsDraft);
-  value.autoAdvance = $('auto-advance').checked; value.recursive = $('recursive').checked; value.autoOpenCards = $('auto-open-cards').checked;
+  value.dehancerExe = $('dehancer-exe').value.trim(); value.defaultRecipe = $('default-recipe').value;
+  value.autoAdvance = $('auto-advance').checked; value.recursive = $('recursive').checked; value.autoOpenCards = $('auto-open-cards').checked; value.zoomClickCenter = $('zoom-click-center').checked;
   value.previewCacheGB = Number($('preview-cache-limit').value);
   value.rawRendering = $('raw-rendering').value; value.copyJpeg = $('default-jpeg').checked; value.copyXmp = $('default-xmp').checked; value.copyMetadata = $('default-metadata').checked; value.folders = readFolders('settings');
   value.activePreset = $('metadata-preset').value;
@@ -1005,7 +960,7 @@ function readSettings() {
 }
 async function openSettings(tab = 'general') {
   if (state.copy.running) return;
-  try { const value = await api.settings(); state.settings = value; settingsDraft = clone(value); fillSettings(settingsDraft); setSettingsTab(tab); $('settings-status').textContent = value.warning || ''; $('settings-dialog').showModal(); }
+  try { const value = await api.settings(); state.settings = value; settingsDraft = clone(value); const recipes = await api.recipes(); $('default-recipe').replaceChildren(...recipes.recipes.map(r => option(r.id, r.name))); fillSettings(settingsDraft); setSettingsTab(tab); $('settings-status').textContent = value.warning || ''; $('settings-dialog').showModal(); }
   catch (error) { toast(error.message); }
 }
 // The preview cache is disposable: clearing only costs regenerating previews.
@@ -1054,6 +1009,7 @@ $('copy-preset').onchange = async () => {
   } catch (error) { $('copy-status').textContent = error.message; }
 };
 $('export-dialog').addEventListener('close', () => { $('copy-progress').hidden = true; $('copy-status').textContent = ''; });
+const imageExport = PhotoCullExport.init({ api, state, selection, buildNaming, readNaming, toast });
 void api.settings().then(syncSettings).catch(error => toast(error.message));
 
 // Browser mode lets smoke tests open a folder without a native dialog.

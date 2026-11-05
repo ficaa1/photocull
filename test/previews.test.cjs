@@ -130,3 +130,44 @@ test('the disk cache prunes least recently used previews, honours its limit and 
   assert.ok(cleared.freed >= sizes[0]); assert.equal(cleared.bytes, 0);
   assert.equal((await second.get(items[0], 'thumb')).length > 0, true, 'previews regenerate after clearing');
 });
+
+test('loupe support: real oriented sizes, cached-only peeks and untouched full-size JPEGs', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'photocull-loupe-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  await fixtures(path.join(root, 'photos'), 3);
+  const library = new Library(path.join(root, 'state')), s = await library.scan(path.join(root, 'photos'));
+  const previews = new PreviewService(path.join(root, 'cache')); t.after(() => previews.close());
+  const [upright, , rotated] = s.items.map(i => library.item(s.id, i.id));
+  assert.deepEqual(await previews.dimensions(upright), { width: 1800, height: 1200 });
+  assert.deepEqual(await previews.dimensions(rotated), { width: 1200, height: 1800 }, 'EXIF orientation 6 swaps the axes');
+  // peek never generates anything.
+  assert.equal(await previews.peek(upright, 'preview'), null);
+  assert.equal(previews.stats.generated, 0);
+  const generated = await previews.get(upright, 'preview');
+  assert.deepEqual(await previews.peek(upright, 'preview'), generated);
+  const fresh = new PreviewService(path.join(root, 'cache')); t.after(() => fresh.close());
+  assert.deepEqual(await fresh.peek(upright, 'preview'), generated, 'peek reads the disk cache');
+  assert.equal(fresh.status(upright, 'preview').info.type, 'original');
+  // An upright JPEG is served byte for byte at full size; a rotated one is re-encoded upright.
+  assert.deepEqual(await previews.get(upright, 'full'), await fs.readFile(upright.path));
+  const turned = await sharp(await previews.get(rotated, 'full')).metadata();
+  assert.deepEqual([turned.width, turned.height, turned.orientation ?? 1], [1200, 1800, 1]);
+});
+
+test('a RAW full-size request passes the upright embedded JPEG through and reports the RAW size', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'photocull-loupe-raw-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const bytes = await sharp({ create: { width: 1600, height: 1000, channels: 3, background: '#628c70' } }).jpeg().toBuffer();
+  const file = path.join(root, 'a.ARW'); await fs.writeFile(file, Buffer.concat([Buffer.alloc(64), bytes]));
+  const tags = orientation => ({ JpgFromRaw: 'binary', JpgFromRawStart: 64, JpgFromRawLength: bytes.length, ExifImageWidth: 6000, ExifImageHeight: 4000, Orientation: orientation });
+  const service = orientation => new PreviewService(path.join(root, `cache-${orientation}`), { exif: { async readRaw() { return tags(orientation); }, async extractBinaryTagToBuffer() { return bytes; }, async end() {} } });
+  const upright = service(1); t.after(() => upright.close());
+  const item = { id: 'raw', path: file, fingerprint: 'one', raw: true };
+  assert.deepEqual(await upright.dimensions(item), { width: 6000, height: 4000 });
+  assert.deepEqual(await upright.get(item, 'full'), bytes, 'served without re-encoding');
+  assert.equal(upright.info(item, 'full').type, 'embedded');
+  const portrait = service(6); t.after(() => portrait.close());
+  assert.deepEqual(await portrait.dimensions(item), { width: 4000, height: 6000 });
+  const turned = await sharp(await portrait.get(item, 'full')).metadata();
+  assert.deepEqual([turned.width, turned.height], [1000, 1600], 'RAW orientation is still applied');
+});
