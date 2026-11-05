@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Instant, SystemTime};
 
 use lightcraft_develop::{DevelopSettings, EmbeddedLens, WbMode, WbScale};
-use lightcraft_engine::export::{encode_rendered, encode_with_metadata, ExportFormat, ExportOptions, OutputDepth, OutputSpace};
+use lightcraft_engine::export::{encode_rendered, ExportFormat, ExportOptions, OutputDepth, OutputSpace};
 use lightcraft_lensdb::LensDb;
 use lightcraft_pipeline::{RenderRequest, SourceInfo, StageCache};
 use lightcraft_raster::{Rgb32f, Rgba8};
@@ -714,7 +714,11 @@ pub async fn export_photos(
     let mut destinations = std::collections::HashSet::new();
     for (item, _) in &jobs {
         let dest = PathBuf::from(&item.dest);
-        if !dest.is_absolute() || !destinations.insert(item.dest.to_lowercase()) { return Err("Export destinations must be absolute and unique.".into()); }
+        if !dest.is_absolute() { return Err("Export destinations must be absolute and unique.".into()); }
+        let parent = dest.parent().ok_or("Invalid export destination.")?;
+        std::fs::create_dir_all(parent).map_err(|e|e.to_string())?;
+        let resolved = std::fs::canonicalize(parent).map_err(|e|e.to_string())?.join(dest.file_name().ok_or("Invalid export filename.")?);
+        if !destinations.insert(resolved.to_string_lossy().to_lowercase()) { return Err("Export destinations must be absolute and unique.".into()); }
     }
     let engine = engine.inner().clone();
     let total = jobs.len();
@@ -730,7 +734,7 @@ pub async fn export_photos(
             }
             let dest = PathBuf::from(&item.dest);
             let t = Instant::now();
-            let partial = dest.with_extension(format!("{}.partial", o.format.extension()));
+            let partial = dest.with_file_name(format!("{}.partial", dest.file_name().unwrap_or_default().to_string_lossy()));
             let mut staged_xmp: Option<String> = None;
             let result = (|| -> Result<&'static str, String> {
                 if dest.exists() && !overwrite {
@@ -839,6 +843,7 @@ fn ordered_export_map<T: Send, R: Send, F: Fn(T) -> R + Sync>(jobs: Vec<T>, work
 #[cfg(test)]
 mod export_tests {
     use super::*;
+    use lightcraft_engine::export::encode_with_metadata;
     use lightcraft_engine::export::{MetadataPolicy, Resize, ResizeMode};
 
     #[test]
@@ -969,6 +974,7 @@ pub async fn download_lens_database(app: AppHandle, engine: State<'_, Arc<Engine
 #[cfg(test)]
 mod result_tests {
     use super::*;
+    use lightcraft_engine::export::encode_with_metadata;
 
     #[test]
     fn preview_profile_is_srgb_without_changing_encoded_pixels() {

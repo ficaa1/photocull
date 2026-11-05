@@ -22,7 +22,21 @@ const isObject = value => !!value && typeof value === 'object' && !Array.isArray
 
 function checkSettings(settings) {
   if (!isObject(settings)) throw new Error('Invalid develop settings.');
-  if (JSON.stringify(settings).length > MAX_SETTINGS_BYTES) throw new Error('Develop settings are too large.');
+  const visit = (value, depth = 0) => {
+    if (depth > 24 || typeof value === 'number' && !Number.isFinite(value)) throw new Error('Invalid develop settings.');
+    if (value && typeof value === 'object') {
+      for (const [key, child] of Object.entries(value)) {
+        if (['__proto__', 'prototype', 'constructor'].includes(key)) throw new Error('Invalid develop settings key.');
+        visit(child, depth + 1);
+      }
+    } else if (value !== null && !['number', 'boolean', 'string'].includes(typeof value)) throw new Error('Invalid develop settings.');
+  };
+  visit(settings);
+  if (Buffer.byteLength(JSON.stringify(settings)) > MAX_SETTINGS_BYTES) throw new Error('Develop settings are too large.');
+  if ('light' in settings && !isObject(settings.light)) throw new Error('Invalid light settings.');
+  for (const [key, min, max] of [['exposure', -5, 5], ...['contrast','highlights','shadows','whites','blacks'].map(k => [k, -100, 100])]) {
+    if (settings.light && key in settings.light && (!Number.isFinite(settings.light[key]) || settings.light[key] < min || settings.light[key] > max)) throw new Error('Invalid light adjustment.');
+  }
   return structuredClone(settings);
 }
 
@@ -91,11 +105,14 @@ class RecipeStore {
   async exportFile(file, id = null) {
     checkRecipePath(file);
     const rows = id ? [this.get(id)] : this.user;
+    if (rows.length > 100) throw new Error('Use at most 100 recipes per bundle.');
     if (rows.some(r => !r)) throw new Error('Unknown recipe.');
     const recipe = r => ({ type: 'photocull-recipe', version: 1, name: r.name, settings: checkSettings(r.settings) });
     const data = JSON.stringify(id ? recipe(rows[0]) : { type: 'photocull-recipe-bundle', version: 1, recipes: rows.map(recipe) }, null, 2);
     if (Buffer.byteLength(data) > MAX_RECIPE_FILE_BYTES) throw new Error('Recipe bundle is too large. Export recipes separately.');
-    await fs.writeFile(file, data, { flag: 'wx' });
+    const stat = await fs.lstat(file).catch(e => { if (e.code === 'ENOENT') return null; throw e; });
+    if (stat && (!stat.isFile() || stat.isSymbolicLink())) throw new Error('Choose a regular recipe file.');
+    await atomicWrite(file, data);
     return file;
   }
 

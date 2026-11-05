@@ -49,7 +49,7 @@ pub fn encode_pixels(img: &Rgba8, o: &ExportOptions, extra: &ExtraOptions, meta:
     }
     if img.width > 16383 || img.height > 16383 { return Err("WebP supports dimensions up to 16383 pixels.".into()); }
     let rgba: Vec<u8> = img.data.iter().flatten().copied().collect();
-    let encoded = webp::Encoder::from_rgba(&rgba, img.width as u32, img.height as u32).encode(o.quality as f32);
+    let encoded = webp::Encoder::from_rgba(&rgba, img.width as u32, img.height as u32).encode_simple(false, o.quality as f32).map_err(|e| format!("WebP encoding failed: {e:?}"))?;
     let alpha = img.data.iter().any(|p| p[3] != 255);
     // Add standard extended RIFF chunks while retaining the encoder's image/alpha bitstream.
     let mut body = b"WEBP".to_vec();
@@ -80,7 +80,7 @@ mod tests {
     #[test]
     fn lossy_webp_quality_profile_metadata_and_readback() {
         let mut img = Rgba8::new(128, 96);
-        for (i, p) in img.data.iter_mut().enumerate() { *p = [(i % 251) as u8, (i / 17 % 251) as u8, (i / 37 % 251) as u8, 255]; }
+        for (i, p) in img.data.iter_mut().enumerate() { *p = [((i % 128) * 255 / 127) as u8, ((i / 128) * 255 / 95) as u8, (((i % 128) + (i / 128)) * 255 / 222) as u8, 255]; }
         let o = ExportOptions { format: ExportFormat::Webp, quality: 80, ..Default::default() };
         let meta = lightcraft_meta::Metadata { artist: Some("PhotoCull test".into()), ..Default::default() };
         let bytes = encode_pixels(&img, &o, &ExtraOptions::default(), Some(&meta)).unwrap();
@@ -90,7 +90,7 @@ mod tests {
         assert_eq!(lightcraft_meta::extract(&bytes).artist.as_deref(), Some("PhotoCull test"));
         let back = d.to_srgb8();
         let error: f64 = img.data.iter().zip(back.data.iter()).flat_map(|(a,b)| (0..3).map(move |i| (a[i] as f64 - b[i] as f64).abs())).sum::<f64>() / (128.0 * 96.0 * 3.0);
-        assert!(error < 20.0, "mean channel error {error}");
+        assert!(error < 5.0, "mean channel error {error}");
         let low = encode_pixels(&img, &ExportOptions {quality: 10, ..o.clone()}, &ExtraOptions::default(), None).unwrap();
         assert!(low.len() < bytes.len());
         let lossless = encode_pixels(&img, &o, &ExtraOptions {webp_lossless: true, ..Default::default()}, None).unwrap();

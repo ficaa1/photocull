@@ -2911,6 +2911,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "libwebp-sys"
+version = "0.9.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54cd30df7c7165ce74a456e4ca9732c603e8dc5e60784558c1c6dc047f876733"
+dependencies = [
+ "cc",
+ "glob",
+]
+
+[[package]]
 name = "lightcraft-catalog"
 version = "0.18.0"
 source = "git+https://github.com/storytold/lightcraft?rev=d58b4d67238ef1aafd8e3394a9f8428a3d91e561#d58b4d67238ef1aafd8e3394a9f8428a3d91e561"
@@ -4081,6 +4091,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tokio",
  "trash",
+ "webp",
 ]
 
 [[package]]
@@ -6486,6 +6497,15 @@ dependencies = [
  "pkg-config",
  "soup3-sys",
  "system-deps",
+]
+
+[[package]]
+name = "webp"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c071456adef4aca59bf6a583c46b90ff5eb0b4f758fc347cea81290288f37ce1"
+dependencies = [
+ "libwebp-sys",
 ]
 
 [[package]]

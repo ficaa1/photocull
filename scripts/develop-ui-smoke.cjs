@@ -64,6 +64,17 @@ async function main(){
   await page.waitForFunction(()=>window.__developMock.calls.at(-1).settled&&window.__developMock.calls.at(-1).settings.light.contrast===29&&window.__developMock.active===0);
   assert.equal(await page.evaluate(()=>window.__developMock.max),1);
   await page.locator('#develop-recipe-name').fill('Smoke recipe');await page.locator('#develop-recipe-save').click();await page.waitForFunction(()=>document.querySelector('#develop-recipe').selectedOptions[0]?.textContent==='Smoke recipe');
+  await page.locator('#develop-recipe-duplicate').click();await page.waitForFunction(()=>document.querySelector('#develop-recipe').selectedOptions[0]?.textContent==='Smoke recipe (2)');
+  const recipeFile=path.join(temp,'smoke.photocull-recipe.json');
+  await page.evaluate(file=>{window.prompt=()=>file;},recipeFile);
+  await page.locator('#develop-recipe-export').click();await page.waitForFunction(()=>document.querySelector('#develop-recipe-export'));
+  for(let n=0;n<50;n++){if(await fs.stat(recipeFile).catch(()=>null))break;await new Promise(r=>setTimeout(r,20));}
+  assert.equal(JSON.parse(await fs.readFile(recipeFile,'utf8')).type,'photocull-recipe');
+  await page.locator('#develop-recipe-import').click();await page.waitForFunction(()=>[...document.querySelector('#develop-recipe').options].some(p=>p.textContent==='Smoke recipe (2) (2)'));
+  const bundleFile=path.join(temp,'all.photocull-recipe.json');await page.evaluate(file=>{window.prompt=()=>file;},bundleFile);
+  await page.locator('#develop-recipes-export').click();
+  for(let n=0;n<50;n++){if(await fs.stat(bundleFile).catch(()=>null))break;await new Promise(r=>setTimeout(r,20));}
+  assert.equal(JSON.parse(await fs.readFile(bundleFile,'utf8')).recipes.length,3);
   await page.locator('#develop-recipe-default').click();await page.waitForFunction(()=>state.settings.defaultRecipe===document.querySelector('#develop-recipe').value);
   await page.evaluate(()=>{state.marked=new Set(state.session.items.filter(i=>i.raw).map(i=>i.id));render();});
   await page.locator('#develop-send').click();await page.locator('#develop-batch-start').click();await page.getByRole('button',{name:'Edit existing TIFFs',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#develop-batch-status').textContent.includes('Finished'));
