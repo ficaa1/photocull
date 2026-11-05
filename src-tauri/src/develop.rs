@@ -568,7 +568,7 @@ fn resize_rgba(img: &Rgba8, w: usize, h: usize) -> Rgba8 {
 }
 
 /// Convert decoded, already finished pixels without running the develop tone/color pipeline again.
-fn encode_finished(bytes: &[u8], o: &ExportOptions, meta: Option<&lightcraft_meta::Metadata>) -> Result<Vec<u8>, String> {
+fn encode_finished(bytes: &[u8], o: &ExportOptions, extra: &crate::export_encode::ExtraOptions, meta: Option<&lightcraft_meta::Metadata>) -> Result<Vec<u8>, String> {
     use lightcraft_engine::export::{encode_deep, DeepImage, DeepSamples};
     let decoded = lightcraft_codecs::decode(bytes, Default::default()).map_err(|e| e.to_string())?;
     let orientation = lightcraft_geom::Orientation::from_exif(decoded.orientation);
@@ -579,7 +579,7 @@ fn encode_finished(bytes: &[u8], o: &ExportOptions, meta: Option<&lightcraft_met
             Some(r) => { let (w, h) = r.apply(img.width as f64, img.height as f64); resize_rgba(&img, w, h) }
             None => img,
         };
-        return encode_with_metadata(&img, o, meta);
+        return crate::export_encode::encode_pixels(&img, o, extra, meta);
     }
     let img = decoded.to_working().into_oriented(orientation);
     drop(decoded);
@@ -602,7 +602,9 @@ fn encode_finished(bytes: &[u8], o: &ExportOptions, meta: Option<&lightcraft_met
     };
     let deep = DeepImage { width: img.width, height: img.height, space, samples };
     if o.effective_depth() == OutputDepth::U8 {
-        encode_with_metadata(&deep.to_rgba8(), o, meta)
+        crate::export_encode::encode_pixels(&deep.to_rgba8(), o, extra, meta)
+    } else if o.format == ExportFormat::Avif {
+        crate::export_encode::encode_deep_avif(&deep, o, extra, meta)
     } else {
         encode_deep(&deep, o, meta)
     }
@@ -689,6 +691,7 @@ pub async fn export_photos(
             });
         }
     }
+    let extra: crate::export_encode::ExtraOptions = serde_json::from_value(options.clone()).map_err(|e| format!("Invalid encoder settings: {e}"))?;
     let o: ExportOptions = serde_json::from_value(options).map_err(|e| format!("Invalid export settings: {e}"))?;
     if !matches!(o.format, ExportFormat::Jpeg | ExportFormat::Png | ExportFormat::Tiff | ExportFormat::Webp | ExportFormat::Avif | ExportFormat::Jxl) {
         return Err("Unsupported export format.".into());
@@ -708,6 +711,11 @@ pub async fn export_photos(
         }
         jobs.push((item, ctx));
     }
+    let mut destinations = std::collections::HashSet::new();
+    for (item, _) in &jobs {
+        let dest = PathBuf::from(&item.dest);
+        if !dest.is_absolute() || !destinations.insert(item.dest.to_lowercase()) { return Err("Export destinations must be absolute and unique.".into()); }
+    }
     let engine = engine.inner().clone();
     let total = jobs.len();
     let busy_engine = engine.clone();
@@ -715,13 +723,11 @@ pub async fn export_photos(
     engine.cancel.store(false, Ordering::SeqCst);
     let progress_app = app.clone();
     let results = blocking(move || {
-        let mut results = Vec::new();
-        for (i, (item, ctx)) in jobs.into_iter().enumerate() {
+        let done = Mutex::new(0usize);
+        let results = ordered_export_map(jobs, export_workers(), |(item, ctx)| {
             if engine.cancel.load(Ordering::SeqCst) {
-                results.push(json!({ "id": item.id, "status": "cancelled" }));
-                continue;
+                return json!({ "id": item.id, "status": "cancelled" });
             }
-            emit_progress(&progress_app, "export-progress", json!({ "done": i, "total": total, "name": ctx.name }));
             let dest = PathBuf::from(&item.dest);
             let t = Instant::now();
             let partial = dest.with_extension(format!("{}.partial", o.format.extension()));
@@ -755,7 +761,7 @@ pub async fn export_photos(
                     let size = o.resize.map_or((w, h), |r| r.apply(w as f64, h as f64));
                     let meta = export_metadata(meta, &o, metadata_overrides.as_ref(), size);
                     if o.format == ExportFormat::Avif { staged_xmp = meta.as_ref().map(|m| lightcraft_meta::write_xmp(m, None)); }
-                    encode_finished(&data, &o, meta.as_ref())?
+                    encode_finished(&data, &o, &extra, meta.as_ref())?
                 } else {
                     drop(source);
                     let photo = engine.photo(Path::new(&ctx.file))?;
@@ -768,7 +774,7 @@ pub async fn export_photos(
                     let r = lightcraft_pipeline::render(&src, &info, &settings, &req);
                     let meta = export_metadata(meta, &o, metadata_overrides.as_ref(), (r.image.width, r.image.height));
                     if o.format == ExportFormat::Avif { staged_xmp = meta.as_ref().map(|m| lightcraft_meta::write_xmp(m, None)); }
-                    encode_rendered(&r, &o, meta.as_ref())?
+                    crate::export_encode::encode_rendered(&r, &o, &extra, meta.as_ref())?
                 };
                 if engine.cancel.load(Ordering::SeqCst) { return Ok("cancelled"); }
                 // Exclusive staging creation never clobbers a stale partial file or follows its symlink.
@@ -795,11 +801,14 @@ pub async fn export_photos(
                 published?;
                 Ok("exported")
             })();
-            results.push(match result {
+            let row = match result {
                 Ok(status) => json!({ "id": item.id, "status": status, "dest": item.dest, "name": ctx.name, "ms": ms(t) }),
                 Err(error) => json!({ "id": item.id, "status": "failed", "dest": item.dest, "error": error }),
-            });
-        }
+            };
+            let mut count = lock(&done); *count += 1;
+            emit_progress(&progress_app, "export-progress", json!({ "done": *count, "total": total, "name": ctx.name }));
+            row
+        });
         Ok(results)
     })
     .await?;
@@ -807,11 +816,48 @@ pub async fn export_photos(
     Ok(json!({ "results": results }))
 }
 
+// A 33 MP float source alone is ~400 MB, with multiple render/codec buffers in flight.
+// Use at most half the logical cores and three photos; do not retain full-resolution sources.
+fn export_workers() -> usize { (std::thread::available_parallelism().map_or(2, usize::from) / 2).clamp(1, 3) }
+fn ordered_export_map<T: Send, R: Send, F: Fn(T) -> R + Sync>(jobs: Vec<T>, workers: usize, work: F) -> Vec<R> {
+    let total = jobs.len();
+    let queue = Mutex::new(jobs.into_iter().enumerate());
+    let out = Mutex::new((0..total).map(|_| None).collect::<Vec<Option<R>>>());
+    std::thread::scope(|scope| {
+        for _ in 0..workers.min(total) {
+            let (queue, out, work) = (&queue, &out, &work);
+            scope.spawn(move || loop {
+                let Some((i, job)) = lock(queue).next() else { break };
+                let result = work(job); lock(out)[i] = Some(result);
+            });
+        }
+    });
+    out.into_inner().unwrap_or_else(PoisonError::into_inner).into_iter().map(Option::unwrap).collect()
+}
+
 // Export-only tests; no camera fixtures or develop-view state required.
 #[cfg(test)]
 mod export_tests {
     use super::*;
     use lightcraft_engine::export::{MetadataPolicy, Resize, ResizeMode};
+
+    #[test]
+    fn parallel_export_preserves_order_and_cancels_queued_work() {
+        use std::sync::atomic::AtomicUsize;
+        let active = AtomicUsize::new(0); let peak = AtomicUsize::new(0);
+        let rows = ordered_export_map((0..12).collect(), 3, |i| {
+            let n = active.fetch_add(1, Ordering::SeqCst) + 1; peak.fetch_max(n, Ordering::SeqCst);
+            std::thread::sleep(std::time::Duration::from_millis((12-i) as u64));
+            active.fetch_sub(1, Ordering::SeqCst); i
+        });
+        assert_eq!(rows, (0..12).collect::<Vec<_>>()); assert!(peak.load(Ordering::SeqCst) <= 3); assert!(peak.load(Ordering::SeqCst) > 1);
+        let cancelled = AtomicBool::new(false);
+        let rows = ordered_export_map((0..20).collect(), 1, |i| {
+            if cancelled.load(Ordering::SeqCst) { return None; }
+            if i == 2 { cancelled.store(true, Ordering::SeqCst); } Some(i)
+        });
+        assert_eq!(rows[..3], [Some(0), Some(1), Some(2)]); assert!(rows[3..].iter().all(Option::is_none));
+    }
 
     #[test]
     fn publication_preserves_existing_files_unless_overwrite_is_explicit() {
@@ -856,7 +902,7 @@ mod export_tests {
             resize: Some(Resize { mode: ResizeMode::LongEdge, value: 24.0, height: 24, dont_enlarge: false }),
             ..Default::default()
         };
-        let bytes = encode_finished(&source, &o, None).unwrap();
+        let bytes = encode_finished(&source, &o, &Default::default(), None).unwrap();
         let decoded = lightcraft_codecs::decode(&bytes, Default::default()).unwrap();
         assert_eq!((decoded.width, decoded.height, decoded.bit_depth), (24, 16, 16));
         assert!(decoded.icc.is_some());

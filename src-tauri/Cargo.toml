@@ -21,6 +21,8 @@ serde_json = "1"
 tokio = { version = "1", features = ["sync", "time"] }
 trash = "5"
 dunce = "1"
+# Bundled libwebp; no system WebP installation on Windows/macOS.
+webp = { version = "0.3.1", default-features = false }
 # RAW development and export: Lightcraft (https://github.com/storytold/lightcraft, MIT OR Apache-2.0), pinned.
 lightcraft-raw = { git = "https://github.com/storytold/lightcraft", rev = "d58b4d67238ef1aafd8e3394a9f8428a3d91e561" }
 lightcraft-develop = { git = "https://github.com/storytold/lightcraft", rev = "d58b4d67238ef1aafd8e3394a9f8428a3d91e561" }

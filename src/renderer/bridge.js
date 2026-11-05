@@ -77,6 +77,15 @@
     recipes: () => backend('recipes'),
     saveRecipe: recipe => backend('save-recipe', recipe),
     deleteRecipe: id => backend('delete-recipe', id),
+    duplicateRecipe: id => backend('duplicate-recipe', id),
+    importRecipes: async () => {
+      const file = tauri ? await shell('pick_recipe_file', {}) : prompt('Import .photocull-recipe.json (full path)');
+      return file ? backend('import-recipes', file) : null;
+    },
+    exportRecipes: async (id = null) => {
+      const file = await host.pickSaveFile('recipes.photocull-recipe.json', 'PhotoCull recipe', 'json');
+      return file ? backend('export-recipes', file, id) : null;
+    },
     developGet: (session, id) => backend('develop-get', session, id),
     developSet: (session, ids, value) => backend('develop-set', session, ids, value),
     developFolder: session => backend('develop-folder', session),

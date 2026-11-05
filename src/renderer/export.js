@@ -10,15 +10,15 @@
     tiff: { label: 'TIFF', extension: 'tif', depths: [16, 8, 32] },
     png: { label: 'PNG', extension: 'png', depths: [8, 16] },
     avif: { label: 'AVIF · slow', extension: 'avif', depths: [8, 10], quality: true },
-    webp: { label: 'WebP · lossless only', extension: 'webp', depths: [8] },
+    webp: { label: 'WebP', extension: 'webp', depths: [8], quality: true },
   };
   const SPACES = { srgb: 'sRGB', displayP3: 'Display P3', adobeRgb: 'Adobe RGB', proPhoto: 'ProPhoto RGB', rec2020: 'Rec. 2020' };
   const MODES = { none: 'No resizing', longEdge: 'Long edge', shortEdge: 'Short edge', width: 'Width', height: 'Height', widthHeight: 'Width & height', dimensions: 'Dimensions', megapixels: 'Megapixels', percent: 'Percent' };
   const PRESETS = [
-    { name: 'JPEG (Small)', options: { format: 'jpeg', quality: 85, colorSpace: 'srgb', resize: { mode: 'longEdge', value: 2048, height: 2048, dontEnlarge: true } } },
-    { name: 'JPEG (Large)', options: { format: 'jpeg', quality: 92, colorSpace: 'srgb' } },
-    { name: 'JPEG XL', options: { format: 'jxl', quality: 90, colorSpace: 'srgb' } },
-    { name: 'TIFF (16-bit)', options: { format: 'tiff', bitDepth: 16, colorSpace: 'srgb', tiffCompression: 'none' } },
+    { id: 'web-jpeg', builtin: true, name: 'Web 2048 px JPEG', options: { format: 'jpeg', quality: 85, colorSpace: 'srgb', sharpen: 'screen', resize: { mode: 'longEdge', value: 2048, height: 2048, dontEnlarge: true } } },
+    { id: 'full-jpeg', builtin: true, name: 'Full-size JPEG', options: { format: 'jpeg', quality: 92, colorSpace: 'srgb' } },
+    { id: 'jpeg-xl', builtin: true, name: 'JPEG XL', options: { format: 'jxl', quality: 90, colorSpace: 'srgb' } },
+    { id: 'archive-tiff', builtin: true, name: '16-bit TIFF archive', options: { format: 'tiff', bitDepth: 16, colorSpace: 'srgb', tiffCompression: 'none' } },
   ];
   function choice(value, allowed, fallback, label) {
     value = value ?? fallback;
@@ -40,6 +40,8 @@
       sharpenAmount: choice(input.sharpenAmount, ['low', 'standard', 'high'], 'standard', 'sharpen amount'),
       metadata: choice(input.metadata, ['all', 'allExceptCamera', 'copyright', 'none'], 'all', 'metadata policy'),
       removeLocation: input.removeLocation === true, limitKb: null,
+      webpLossless: format === 'webp' && input.webpLossless === true,
+      avifSpeed: choice(input.avifSpeed, ['faster', 'balanced', 'smaller'], 'faster', 'AVIF speed'),
       jxlLossless: format === 'jxl' && input.jxlLossless === true,
       jxlEffort: format === 'jxl' ? choice(input.jxlEffort, ['fast', 'normal'], 'normal', 'JPEG XL effort') : 'normal',
       jxlProgressive: format === 'jxl' && input.jxlProgressive === true,
@@ -64,14 +66,55 @@
     const setChoices = (id, values) => $(id).replaceChildren(...Object.entries(values).map(([v, label]) => opt(v, label)));
     setChoices('format', Object.fromEntries(Object.entries(FORMATS).map(([v, spec]) => [v, spec.label])));
     setChoices('space', SPACES); setChoices('resize', MODES);
-    $('preset').append(opt('last', 'Last used'), ...PRESETS.map((p, i) => opt(String(i), p.name)));
+    let presets = [];
+    const presetName = () => $('preset-name').value.trim();
+    const selectedPreset = () => presets.find(p => p.id === $('preset').value);
+    function presetChoices(id = $('preset').value) {
+      presets = state.settings.exportPresets || PRESETS;
+      $('preset').replaceChildren(opt('last', 'Last used'), ...presets.map(p => opt(p.id, p.name)));
+      $('preset').value = presets.some(p => p.id === id) ? id : 'last';
+      const p = selectedPreset();
+      $('preset-name').value = p?.name || '';
+      for (const action of ['rename', 'delete']) $('preset-' + action).disabled = !p || !!p.builtin;
+      for (const action of ['duplicate', 'up', 'down']) $('preset-' + action).disabled = !p;
+      $('preset-reset').disabled = !p?.builtin;
+    }
+    async function storePresets(next, id) {
+      state.settings = await api.settings({ exportPresets: next }); presetChoices(id);
+    }
+    const uniqueName = name => { let v = name; for(let n=2;presets.some(p=>p.name.toLowerCase()===v.toLowerCase());n++)v=`${name.slice(0,72)} (${n})`;return v; };
+    for (const action of ['save', 'rename', 'duplicate', 'delete', 'up', 'down', 'reset']) $('preset-' + action).onclick = async () => {
+      try {
+        const p = selectedPreset(), next = structuredClone(presets), index = next.findIndex(v => v.id === p?.id);
+        let id = p?.id;
+        if (action === 'save' || action === 'duplicate') {
+          id = crypto.randomUUID();
+          next.push(action === 'duplicate' ? { ...structuredClone(p), id, builtin: false, name: uniqueName(p.name) } : { id, name: presetName() || uniqueName('My export'), options: read(), naming: readNaming('image-export'), subfolder: $('subfolder').value, conflict: $('conflict').value });
+        } else if (!p) return;
+        else if (action === 'rename' && !p.builtin) next[index].name = presetName();
+        else if (action === 'delete' && !p.builtin) next.splice(index, 1);
+        else if (action === 'reset' && p.builtin) next[index] = structuredClone(PRESETS.find(v=>v.id===id));
+        else if (action === 'up' || action === 'down') {
+          const to = index + (action === 'up' ? -1 : 1); if(to<0 || to>=next.length)return;
+          [next[index],next[to]] = [next[to],next[index]];
+        }
+        await storePresets(next,id);
+        if (action === 'reset') applyPreset(selectedPreset());
+      } catch(e) { $('status').textContent = e.message || String(e); }
+    };
+    function applyPreset(p) {
+      fill(p?.options || lastUsed);
+      $('subfolder').value = p?.subfolder ?? state.settings.exportSubfolder ?? '';
+      $('conflict').value = p?.conflict || state.settings.exportConflict || 'unique';
+      buildNaming('image-export', p?.naming || state.settings.naming, preview); refresh();
+    }
     const picked = () => state.session?.items.filter(i => i.flag === 'pick' && !i.trashed) || [];
     const scoped = () => ($('scope').value === 'selection' ? selection() : picked()).filter(i => !i.trashed);
     function fill(input) {
       let o; try { o = options(input); } catch { o = options(); }
       $('format').value = o.format; depths(o.bitDepth);
       for (const [id, key] of Object.entries({ quality: 'quality', space: 'colorSpace', ppi: 'ppi', sharpen: 'sharpen', amount: 'sharpenAmount', metadata: 'metadata', compression: 'tiffCompression', effort: 'jxlEffort' })) $(id).value = key === 'tiffCompression' ? o[key].toLowerCase() : o[key];
-      $('lossless').checked = o.jxlLossless; $('progressive').checked = o.jxlProgressive; $('location').checked = o.removeLocation;
+      $('webp-lossless').checked = o.webpLossless; $('avif-speed').value = o.avifSpeed; $('lossless').checked = o.jxlLossless; $('progressive').checked = o.jxlProgressive; $('location').checked = o.removeLocation;
       $('limit').checked = !!o.limitKb; $('limit-kb').value = o.limitKb || 2000;
       $('resize').value = o.resize?.mode || 'none'; $('size').value = o.resize?.value || 2048; $('height').value = o.resize?.height || 2048; $('enlarge').checked = o.resize?.dontEnlarge !== false;
       refresh();
@@ -83,7 +126,7 @@
     }
     function read() {
       return options({ format: $('format').value, quality: $('quality').value, bitDepth: $('depth').value, colorSpace: $('space').value, ppi: $('ppi').value,
-        jxlLossless: $('lossless').checked, jxlProgressive: $('progressive').checked, jxlEffort: $('effort').value, tiffCompression: $('compression').value,
+        webpLossless: $('webp-lossless').checked, avifSpeed: $('avif-speed').value, jxlLossless: $('lossless').checked, jxlProgressive: $('progressive').checked, jxlEffort: $('effort').value, tiffCompression: $('compression').value,
         limitKb: $('limit').checked ? $('limit-kb').value : null, sharpen: $('sharpen').value, sharpenAmount: $('amount').value,
         metadata: $('metadata').value, removeLocation: $('location').checked,
         resize: $('resize').value === 'none' ? null : { mode: $('resize').value, value: $('size').value, height: $('height').value, dontEnlarge: $('enlarge').checked } });
@@ -98,13 +141,13 @@
     }
     function refresh() {
       const format = $('format').value, spec = FORMATS[format], resize = $('resize').value;
-      $('quality-row').hidden = !spec.quality || format === 'jxl' && $('lossless').checked;
-      $('jxl-row').hidden = format !== 'jxl'; $('compression-row').hidden = format !== 'tiff'; $('limit-row').hidden = format !== 'jpeg';
+      $('quality-row').hidden = !spec.quality || format === 'jxl' && $('lossless').checked || format === 'webp' && $('webp-lossless').checked;
+      $('webp-row').hidden = format !== 'webp'; $('avif-row').hidden = format !== 'avif'; $('jxl-row').hidden = format !== 'jxl'; $('compression-row').hidden = format !== 'tiff'; $('limit-row').hidden = format !== 'jpeg';
       $('limit-kb').disabled = !$('limit').checked || running;
       $('space').disabled = format === 'avif' || running;
       if (format === 'avif') $('space').value = 'srgb';
       const fallback = format === 'jxl' && !$('lossless').checked && ['adobeRgb', 'proPhoto'].includes($('space').value);
-      $('format-note').textContent = format === 'avif' ? 'AVIF is slow and exports sRGB (container color information; no ICC profile).' : format === 'webp' ? 'WebP exports lossless 8-bit images; files can be large.' : fallback ? 'Lossy JPEG XL writes this color space as Rec. 2020.' : '';
+      $('format-note').textContent = format === 'avif' ? 'AVIF exports sRGB. Faster favors speed; Smaller spends more time compressing (no ICC profile).' : format === 'webp' ? 'WebP exports 8-bit images. Choose lossless to preserve every output pixel.' : fallback ? 'Lossy JPEG XL writes this color space as Rec. 2020.' : '';
       $('size-row').hidden = resize === 'none'; $('height-field').hidden = !['widthHeight', 'dimensions'].includes(resize);
       $('size-unit').textContent = resize === 'percent' ? '%' : resize === 'megapixels' ? 'MP' : 'px';
       $('amount').disabled = $('sharpen').value === 'none' || running;
@@ -127,14 +170,14 @@
           const develop = await api.developGet(state.session.id, item.id); item.dehancer = !!(develop.edited && develop.tiff);
         }));
         $('subfolder').value = state.settings.exportSubfolder || ''; $('conflict').value = state.settings.exportConflict || 'unique';
-        $('scope').value = 'picks'; $('source').value = 'edited'; $('preset').value = 'last';
+        $('scope').value = 'picks'; $('source').value = 'edited'; presetChoices('last');
         $('naming-preset').replaceChildren(opt('', 'Current naming'), ...(state.settings.presets || []).map(p => opt(p.id, p.name)));
         buildNaming('image-export', state.settings.naming, preview); fill(lastUsed);
         $('status').textContent = api.canDevelop ? '' : 'Finished-image export needs the desktop app.'; $('results').hidden = true; $('reveal').hidden = true; $('progress').hidden = true;
         dialog.showModal(); refresh();
       } catch (e) { toast((e.message || String(e))); }
     }
-    $('preset').onchange = () => fill($('preset').value === 'last' ? lastUsed : PRESETS[Number($('preset').value)].options);
+    $('preset').onchange = () => { const p = selectedPreset(); presetChoices(); applyPreset(p); };
     $('naming-preset').onchange = () => {
       const preset = state.settings.presets?.find(p => p.id === $('naming-preset').value);
       buildNaming('image-export', preset?.naming || state.settings.naming, preview);

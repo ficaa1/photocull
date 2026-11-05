@@ -10,14 +10,14 @@ const { renderName, needsCapture } = require('./renderer/naming.js');
 // Recipes hold partial Lightcraft develop settings (crates/develop/src/settings.rs field names), applied over
 // PhotoCull's base: Lightcraft's raw defaults with sharpening and noise reduction off and the lens profile on.
 const BUILTIN_RECIPES = [
-  { id: 'neutral', name: 'Neutral (for Dehancer)', builtin: true, settings: { profile: { id: 'lc.neutral' } } },
+  { id: 'neutral', name: 'Neutral', builtin: true, settings: { profile: { id: 'lc.neutral' } } },
   { id: 'camera', name: 'Camera look', builtin: true, settings: { profile: { id: 'lc.color' } } },
-  // Dehancer's quick guide values for Adobe Camera Raw, kept for comparison. The sliders are Lightcraft's, so
-  // the result is not identical to ACR.
-  { id: 'dehancer-guide', name: 'Dehancer guide (ACR values)', builtin: true,
-    settings: { profile: { id: 'lc.color' }, light: { exposure: -1, contrast: -40, blacks: 60 } } },
+  // Derived from Dehancer's ACR quick guide; adjusted for Lightcraft's tone mapping (see docs/recipes-export.md).
+  { id: 'dehancer-guide', name: 'Flat base (for film emulation)', builtin: true,
+    settings: { profile: { id: 'lc.color' }, light: { exposure: 0, contrast: -25, highlights: -30, blacks: 25 } } },
 ];
 const MAX_SETTINGS_BYTES = 64 * 1024;
+const MAX_RECIPE_FILE_BYTES = 1024 * 1024;
 const isObject = value => !!value && typeof value === 'object' && !Array.isArray(value);
 
 function checkSettings(settings) {
@@ -67,11 +67,58 @@ class RecipeStore {
     return structuredClone(recipe);
   }
 
+  uniqueName(name) {
+    name = checkName(name); let candidate = name;
+    for (let n = 2; this.list().some(r => r.name.toLowerCase() === candidate.toLowerCase()); n++) candidate = `${name.slice(0, 72)} (${n})`;
+    return candidate;
+  }
+
+  async duplicate(id) {
+    const recipe = this.get(id); if (!recipe) throw new Error('Unknown recipe.');
+    return this.save({ name: this.uniqueName(recipe.name), settings: recipe.settings });
+  }
+
+  async importFile(file) {
+    checkRecipePath(file);
+    const stat = await fs.lstat(file);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_RECIPE_FILE_BYTES) throw new Error('Recipe file is too large or is not a regular file.');
+    const rows = parseRecipeFile(await fs.readFile(file, 'utf8'));
+    const saved = [];
+    for (const row of rows) saved.push(await this.save({ name: this.uniqueName(row.name), settings: row.settings }));
+    return saved;
+  }
+
+  async exportFile(file, id = null) {
+    checkRecipePath(file);
+    const rows = id ? [this.get(id)] : this.user;
+    if (rows.some(r => !r)) throw new Error('Unknown recipe.');
+    const recipe = r => ({ type: 'photocull-recipe', version: 1, name: r.name, settings: checkSettings(r.settings) });
+    const data = JSON.stringify(id ? recipe(rows[0]) : { type: 'photocull-recipe-bundle', version: 1, recipes: rows.map(recipe) }, null, 2);
+    if (Buffer.byteLength(data) > MAX_RECIPE_FILE_BYTES) throw new Error('Recipe bundle is too large. Export recipes separately.');
+    await fs.writeFile(file, data, { flag: 'wx' });
+    return file;
+  }
+
   async remove(id) {
     if (!/^[\da-f-]{36}$/i.test(id)) throw new Error('Built-in recipes cannot be deleted.');
     await fs.rm(path.join(this.folder, id + '.json'), { force: true });
     this.user = this.user.filter(r => r.id !== id);
   }
+}
+
+function checkRecipePath(file) {
+  if (typeof file !== 'string' || !path.isAbsolute(file) || !file.endsWith('.photocull-recipe.json')) throw new Error('Choose a .photocull-recipe.json file.');
+}
+function parseRecipeFile(data) {
+  if (typeof data !== 'string' || Buffer.byteLength(data) > MAX_RECIPE_FILE_BYTES) throw new Error('Recipe file is too large.');
+  const value = JSON.parse(data);
+  if (!isObject(value) || value.version !== 1) throw new Error('Unsupported recipe version.');
+  const rows = value.type === 'photocull-recipe-bundle' ? value.recipes : [value];
+  if (!Array.isArray(rows) || rows.length > 100) throw new Error('Use at most 100 recipes per bundle.');
+  return rows.map(r => {
+    if (!isObject(r) || r.type !== 'photocull-recipe' || r.version !== 1) throw new Error('Invalid recipe schema.');
+    return { name: checkName(r.name), settings: checkSettings(r.settings) };
+  });
 }
 
 // Per-photo develop state as stored in the session: the recipe it started from, its own settings (null = the
@@ -90,7 +137,12 @@ function developState(input) {
 
 // Destination paths for an export: the naming template, an extension, an optional subfolder, and unique names
 // when asked ("unique" adds -2, -3 … to names that exist or repeat; otherwise duplicates are reported).
-async function planExport(items, { folder, naming, subfolder = '', extension, conflict = 'unique', captureDate, protectedPaths = [] }) {
+async function planExport(items, input) {
+  if (input.preset) {
+    const preset = normalizeSettings({ exportPresets: [input.preset] }).exportPresets.find(p => p.id === input.preset.id);
+    input = { naming: preset.naming, subfolder: preset.subfolder, conflict: preset.conflict, extension: require('./renderer/export.js').FORMATS[preset.options.format].extension, ...input };
+  }
+  let { folder, naming, subfolder = '', extension, conflict = 'unique', captureDate, protectedPaths = [] } = input;
   if (typeof folder !== 'string' || !path.isAbsolute(folder)) throw new Error('Choose an export folder.');
   if (!['jpg', 'jxl', 'tif', 'png', 'avif', 'webp'].includes(extension)) throw new Error('Invalid export format.');
   if (!['unique', 'skip', 'overwrite'].includes(conflict)) throw new Error('Invalid conflict option.');
@@ -142,4 +194,4 @@ async function planExport(items, { folder, naming, subfolder = '', extension, co
   return plan;
 }
 
-module.exports = { RecipeStore, BUILTIN_RECIPES, developState, checkSettings, planExport };
+module.exports = { RecipeStore, BUILTIN_RECIPES, developState, checkSettings, parseRecipeFile, planExport };

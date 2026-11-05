@@ -6,11 +6,12 @@ const METADATA = { writeRatings: true, writeLabels: true, rejectRating: true, pi
   creator: '', copyright: '', title: '', caption: '', keywords: [] };
 const NAMING = { template: '{filename}', text: '', start: 1 };
 const FOLDERS = { mode: 'flat', name: '' };
+const EXPORT_PRESETS = require('./renderer/export.js').PRESETS.map(p => ({ ...p, naming: NAMING, subfolder: '', conflict: 'unique' }));
 const DEFAULTS = { version: 1, zoomPercent: 100, zoomClickCenter: false, rawRendering: 'missing', previewCacheGB: 2, autoAdvance: true, recursive: false, autoOpenCards: true, deleteMode: 'trash',
   copyJpeg: false, copyXmp: false, copyMetadata: false, folders: FOLDERS,
   // Develop and export: the Dehancer plugin executable ('' = its default location), the recipe new photos start
   // from, and the last export settings (Lightcraft ExportOptions, camelCase; checked by the shell).
-  dehancerExe: '', dehancerFolder: '', defaultRecipe: 'neutral', exportOptions: { format: 'jpeg', quality: 90, colorSpace: 'srgb' }, exportSubfolder: '', exportConflict: 'unique', activePreset: 'standard', naming: NAMING, metadata: METADATA, colors: COLORS };
+  dehancerExe: '', dehancerFolder: '', defaultRecipe: 'neutral', exportOptions: { format: 'jpeg', quality: 90, colorSpace: 'srgb' }, exportSubfolder: '', exportConflict: 'unique', exportPresets: EXPORT_PRESETS, activePreset: 'standard', naming: NAMING, metadata: METADATA, colors: COLORS };
 const BUILTINS = [
   { id: 'standard', name: 'Standard', metadata: METADATA, naming: NAMING, folders: FOLDERS, colors: COLORS },
   { id: 'ratings', name: 'Ratings only', metadata: { ...METADATA, writeLabels: false }, naming: NAMING, folders: FOLDERS, colors: COLORS },
@@ -107,6 +108,22 @@ function normalizeSettings(value = {}, base = DEFAULTS) {
       if (color?.id !== String(index + 1) || !/^#[\da-f]{6}$/i.test(color.hex)) throw new Error('Invalid color label.');
       return { id: color.id, name: text(color.name, 64) || `Color ${color.id}`, hex: color.hex, label: text(color.label, 128) };
     });
+  }
+  if ('exportPresets' in value) {
+    if (!Array.isArray(value.exportPresets) || value.exportPresets.length > 100) throw new Error('Use at most 100 export presets.');
+    const ids = new Set(), names = new Set();
+    result.exportPresets = value.exportPresets.map(p => {
+      if (!p || typeof p.id !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(p.id) || ids.has(p.id)) throw new Error('Invalid export preset id.');
+      const name = text(p.name, 80);
+      if (!name || names.has(name.toLowerCase())) throw new Error('Export preset names must be unique.');
+      ids.add(p.id); names.add(name.toLowerCase());
+      const normalized = normalizeSettings({ exportOptions: p.options || {}, naming: p.naming || NAMING, folders: { mode: p.subfolder ? 'named' : 'flat', name: p.subfolder || '' }, exportConflict: p.conflict || 'unique' }, { ...DEFAULTS, exportPresets: [] });
+      return { id: p.id, name, builtin: EXPORT_PRESETS.some(b => b.id === p.id), options: normalized.exportOptions, naming: normalized.naming, subfolder: normalized.folders.name, conflict: normalized.exportConflict };
+    });
+    // Built-ins can be reset, but never removed (or relabeled as user presets).
+    for (const preset of EXPORT_PRESETS) if (!ids.has(preset.id)) result.exportPresets.push(clone(preset));
+  } else if (base === DEFAULTS && 'exportOptions' in value) {
+    result.exportPresets.push({ id: 'migrated-last-export', name: 'My last export', options: clone(result.exportOptions), naming: clone(result.naming), subfolder: result.exportSubfolder, conflict: result.exportConflict, builtin: false });
   }
   return result;
 }

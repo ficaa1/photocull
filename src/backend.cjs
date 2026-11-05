@@ -83,6 +83,9 @@ async function start() {
     'recipes': () => ({ recipes: recipes.list(), defaultRecipe: settings.value.defaultRecipe, warning: recipes.warning }),
     'save-recipe': recipe => recipes.save(recipe || {}),
     'delete-recipe': id => recipes.remove(id),
+    'duplicate-recipe': id => recipes.duplicate(id),
+    'import-recipes': file => recipes.importFile(file),
+    'export-recipes': (file, id) => recipes.exportFile(file, id),
     'develop-get': async (session, id) => {
       const state = library.developGet(session, id);
       if (state.tiff && !await fs.stat(state.tiff).then(s => s.isFile(), () => false)) { state.tiff = null; state.edited = false; }

@@ -106,3 +106,22 @@ test('export planner protects unresolved source paths through symlinked parents'
   }
   assert.equal(await fs.readFile(source, 'utf8'), 'keep');
 });
+
+test('export presets migrate last settings and retain every output and naming option', async t => {
+  const { root, items } = await fixture(t);
+  const value = normalizeSettings({ exportOptions: {format:'webp',quality:73,webpLossless:false}, exportSubfolder:'Web', exportConflict:'skip', naming:{template:'{seq:3}',start:8} });
+  const preset = value.exportPresets.find(p=>p.name==='My last export');
+  assert.equal(preset.options.quality,73); assert.equal(preset.subfolder,'Web');assert.equal(preset.conflict,'skip');assert.equal(preset.naming.start,8);
+  const migrated = normalizeSettings(JSON.parse(JSON.stringify(value)));
+  assert.equal(migrated.exportPresets.filter(p=>p.name==='My last export').length,1);
+  const plan = await planExport(items, {folder:root,preset});
+  assert.deepEqual(plan.map(r=>path.basename(r.dest)),['008.webp','009.webp']);
+  assert.equal(path.basename(path.dirname(plan[0].dest)),'Web');
+  assert.throws(()=>normalizeSettings({exportPresets:[preset,preset]}),/id/);
+  assert.throws(()=>normalizeSettings({exportPresets:[{...preset,subfolder:'../bad'}]}),/folder/);
+  assert.throws(()=>normalizeSettings({exportPresets:[{...preset,options:{avifSpeed:'bad'}}]}),/speed/);
+  assert.equal(normalizeSettings({exportPresets:[]}).exportPresets.length,4);
+  assert.equal(options({format:'webp',quality:61}).quality,61);
+  assert.equal(options({format:'webp',webpLossless:true}).webpLossless,true);
+  assert.equal(options({format:'avif'}).avifSpeed,'faster');
+});

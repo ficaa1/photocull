@@ -65,7 +65,7 @@
       this.updateRecipe = button('Update', () => this.saveRecipe(true), {id:'develop-recipe-update'});
       this.deleteRecipe = button('Delete', () => this.removeRecipe(), {id:'develop-recipe-delete'});
       recipe.append(this.recipeSelect,node('div',{class:'develop-recipe-save'},[this.recipeName,button('Save as',() => this.saveRecipe(false),{id:'develop-recipe-save'})]),
-        node('div',{class:'develop-actions'},[this.updateRecipe,this.deleteRecipe,button('Set as default',() => this.defaultRecipe(),{id:'develop-recipe-default'}),button('Reset photo to recipe',() => this.reset(),{id:'develop-reset'})]));
+        node('div',{class:'develop-actions'},[button('Import…', async()=>{await this.api.importRecipes();await this.refreshRecipes();},{id:'develop-recipe-import'}),button('Export recipe…',()=>this.api.exportRecipes(this.recipe),{id:'develop-recipe-export'}),button('Export user recipes…',()=>this.api.exportRecipes(),{id:'develop-recipes-export'}),button('Duplicate',async()=>{const r=await this.api.duplicateRecipe(this.recipe);await this.refreshRecipes();await this.chooseRecipe(r.id);},{id:'develop-recipe-duplicate'}),this.updateRecipe,this.deleteRecipe,button('Set as default',() => this.defaultRecipe(),{id:'develop-recipe-default'}),button('Reset photo to recipe',() => this.reset(),{id:'develop-reset'})]));
       const profile = this.group('Profile',true);
       this.profile = node('select',{id:'develop-profile','aria-label':'Profile'}, ['neutral','color','portrait','landscape','vivid','mono'].map(k => node('option',{value:`lc.${k}`,text:k[0].toUpperCase()+k.slice(1)})));
       this.profile.onchange = () => this.change('profile.id',this.profile.value); profile.append(this.profile);

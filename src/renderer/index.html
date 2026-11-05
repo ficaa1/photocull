@@ -128,6 +128,7 @@
   <dialog id="image-export-dialog" aria-labelledby="image-export-title">
     <div class="dialog-header"><h2 id="image-export-title">Export finished images</h2><button id="image-export-close" aria-label="Close export">×</button></div>
     <div class="field-row"><label for="image-export-preset">Preset</label><select id="image-export-preset"></select></div>
+    <div class="inline-options"><input id="image-export-preset-name" aria-label="Export preset name" placeholder="Preset name" maxlength="80"><button id="image-export-preset-save" class="button quiet">Save as preset</button><button id="image-export-preset-rename" class="button quiet">Rename</button><button id="image-export-preset-duplicate" class="button quiet">Duplicate</button><button id="image-export-preset-delete" class="button quiet">Delete</button><button id="image-export-preset-up" class="button quiet" aria-label="Move preset up">↑</button><button id="image-export-preset-down" class="button quiet" aria-label="Move preset down">↓</button><button id="image-export-preset-reset" class="button quiet">Reset built-in</button></div>
     <div class="image-export-scroll">
       <section><h3>Source</h3>
         <div class="field-row"><label for="image-export-scope">Export</label><select id="image-export-scope"><option value="picks">All picks</option><option value="selection">Current selection</option></select></div>
@@ -139,6 +140,8 @@
         <label id="image-export-quality-row">Quality<input id="image-export-quality" type="number" min="1" max="100" value="90"></label><label>Color space<select id="image-export-space"></select></label>
         <label>Resolution (ppi)<input id="image-export-ppi" type="number" min="1" max="65535" value="240"></label>
         <label id="image-export-compression-row">Compression<select id="image-export-compression"><option value="none">Uncompressed</option><option value="deflate">Deflate</option></select></label></div>
+        <div id="image-export-webp-row" class="inline-options"><label><input id="image-export-webp-lossless" type="checkbox"> Lossless WebP</label></div>
+        <div id="image-export-avif-row" class="inline-options"><label>Encoder speed <select id="image-export-avif-speed"><option value="faster">Faster</option><option value="balanced">Balanced</option><option value="smaller">Smaller</option></select></label></div>
         <div id="image-export-jxl-row" class="inline-options"><label><input id="image-export-lossless" type="checkbox"> Lossless</label><label>Effort <select id="image-export-effort"><option value="fast">Fast</option><option value="normal">Normal</option></select></label><label><input id="image-export-progressive" type="checkbox"> Progressive</label></div>
         <div id="image-export-limit-row" class="inline-options"><label><input id="image-export-limit" type="checkbox"> Limit file size</label><label><input id="image-export-limit-kb" type="number" min="1" max="4294967295" value="2000" aria-label="Maximum file size in KB"> KB</label></div>
         <p id="image-export-format-note" class="subtle small"></p>
@@ -162,7 +165,7 @@
       <!-- Develop preferences. -->
       <div class="field-row"><label for="dehancer-folder">Camera-card TIFF folder</label><input id="dehancer-folder" type="text" placeholder="Choose a local folder for Dehancer"><button id="dehancer-folder-choose" type="button" class="button quiet">Change…</button></div>
       <div class="field-row"><label for="dehancer-exe">Dehancer location</label><input id="dehancer-exe" type="text" placeholder="C:\Program Files\Dehancer Lightroom Plugin\DehancerLightroom.exe"></div>
-      <div class="field-row"><label for="default-recipe">Default recipe</label><select id="default-recipe"><option value="neutral">Neutral (for Dehancer)</option></select></div>
+      <div class="field-row"><label for="default-recipe">Default recipe</label><select id="default-recipe"><option value="neutral">Neutral</option></select></div>
       <!-- End Develop preferences. -->
       <label class="toggle-row"><input type="checkbox" id="auto-advance"> Auto advance</label>
       <label class="toggle-row"><input type="checkbox" id="recursive"> Include subfolders</label>
