@@ -3,7 +3,7 @@
 // Copies ARWs/JPEGs before reading metadata. Never drives or stops the installed app.
 const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),assert=require('node:assert/strict');
 const {spawn}=require('node:child_process'),{createHash}=require('node:crypto'),{chromium}=require('playwright-core'),{ExifTool}=require('exiftool-vendored');
-const {normalizeFocus}=require('../src/renderer/culling.js');
+const {normalizeFocus,numbers,orientPoint}=require('../src/renderer/culling.js');
 async function main() {
   if(process.platform!=='win32')throw new Error('Run this check on Windows.');
   const executable=path.resolve(process.argv[2]),reports=path.resolve(process.argv[3]),source=path.resolve(process.argv[4] || 'C:/Users/alex/Pictures/photo-samples');
@@ -18,6 +18,7 @@ async function main() {
   try {
     const tags=await exif.readRaw(hashes[0][2],{readArgs:['-Make','-Model','-FocusLocation','-FocusLocation2','-FocusFrameSize#','-Orientation#','-ImageWidth','-ImageHeight','-ExifImageWidth','-ExifImageHeight','-DefaultCropOrigin','-DefaultCropSize']});
     const expected=normalizeFocus(tags);assert.ok(expected,'The copied Sony fixture must contain AF coordinates.');
+    const raw=numbers(tags.FocusLocation || tags.FocusLocation2);assert.equal(raw.length,4);const [expectedX,expectedY]=orientPoint(raw[2]/raw[0],raw[3]/raw[1],Number(tags.Orientation) || 1);assert.ok(Math.abs(expected.x-expectedX)<1e-9 && Math.abs(expected.y-expectedY)<1e-9);
     const runExe=path.join(root,'photocull.exe');await fs.copyFile(executable,runExe);
     const port=9349,env={...process.env,PHOTOCULL_SMOKE_TEST:'1',PHOTOCULL_DATA_DIR:data,PHOTOCULL_NODE:process.execPath,PHOTOCULL_BACKEND:path.resolve(__dirname,'../src/backend.cjs'),WEBVIEW2_USER_DATA_FOLDER:path.join(root,'webview'),WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:`--remote-debugging-port=${port}`};
     child=spawn(runExe,[],{env,stdio:['ignore','pipe','pipe']});let output='';child.stderr.on('data',c=>{output+=c;});
