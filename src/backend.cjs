@@ -91,7 +91,7 @@ async function start() {
   const recipes = new RecipeStore(settings.folder);
   await recipes.init();
   const bundles = new SettingsBundles(settings, recipes);
-  const requireIdle = () => { if(deleting || transfers.active || backups.active)throw new Error('Wait for the current file operation to finish.'); };
+  const requireIdle = () => { if(importing || deleting || transfers.active || backups.active)throw new Error('Wait for the current file operation to finish.'); };
   const backupSource = async source => { if(typeof source !== 'string' || !path.isAbsolute(source))throw new Error('Choose a card or folder.');const real=await fs.realpath(source);if(!(await fs.stat(real)).isDirectory())throw new Error('Choose a folder.');return real; };
   previews.editorName = id => settings.value.editors.find(e=>e.id===id)?.name;
   let importing=false;
@@ -110,7 +110,7 @@ async function start() {
       const device=devices.devices.find(d=>d.root===source);
       return backups.start(source,destination,{identity:device ? 'volume:'+(device.identity||device.id) : 'folder:'+source,label:device?.label || path.basename(source),template:options.template || settings.value.backupTemplate});
     },
-    'backup-status': async source => { source=await backupSource(source);const device=devices.devices.find(d=>d.root===source);return backups.status(source,device ? 'volume:'+(device.identity||device.id) : 'folder:'+source); },
+    'backup-status': async source => { requireIdle();source=await backupSource(source);const device=devices.devices.find(d=>d.root===source);return backups.status(source,device ? 'volume:'+(device.identity||device.id) : 'folder:'+source); },
     'backup-cancel': () => backups.cancel(),
     // Develop (rendering is in the shell, src-tauri/src/develop.rs).
     'recipes': () => ({ recipes: recipes.list(), defaultRecipe: settings.value.defaultRecipe, warning: recipes.warning }),

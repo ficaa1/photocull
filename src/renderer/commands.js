@@ -4,19 +4,19 @@
   const ALL = ['review', 'grid', 'develop'];
   const table = [];
   const add = (id, title, category, keys, context = ALL, extra = {}) => table.push({ id, title, category, shortcuts: { default: keys, darwin: keys.map(k => k.replaceAll('Mod', 'Meta')), win32: keys.map(k => k.replaceAll('Mod', 'Ctrl')) }, context, ...extra });
-  add('settings', 'Settings', 'Application', ['Mod+,'], ALL, { typing: true });
-  add('open', 'Open folder…', 'Application', ['Mod+O'], ALL, { typing: true, ignoreShift: true });
-  add('export', 'Export photos…', 'Files', ['Mod+Shift+E'], ALL, { typing: true });
-  add('fullscreen-key', 'Fullscreen (F11)', 'View', ['F11'], ALL, { typing: true, ignoreShift: true });
-  add('switch-view', 'Switch review / contact sheet', 'View', ['Ctrl+Tab'], ALL, { typing: true, ignoreShift: true });
-  add('edit', 'Edit in external editor…', 'Files', ['Mod+E']);
+  add('settings', 'Settings', 'Application', ['Mod+,'], ALL, { typing: true, ignoreShift: true, allowModifiers: ['Alt'] });
+  add('open', 'Open folder…', 'Application', ['Mod+O'], ALL, { typing: true, ignoreShift: true, allowModifiers: ['Alt'] });
+  add('export', 'Export photos…', 'Files', ['Mod+Shift+E'], ALL, { typing: true, allowModifiers: ['Alt'] });
+  add('fullscreen-key', 'Fullscreen (F11)', 'View', ['F11'], ALL, { typing: true, ignoreShift: true, allowModifiers: ['Ctrl','Meta','Alt'] });
+  add('switch-view', 'Switch review / contact sheet', 'View', ['Ctrl+Tab'], ALL, { typing: true, ignoreShift: true, allowModifiers: ['Meta','Alt'] });
+  add('edit', 'Edit in external editor…', 'Files', ['Mod+E'], ALL, { allowModifiers: ['Alt'] });
   add('original', 'Show original / external edit', 'View', ['\\'], ['review','grid'], { ignoreShift: true });
-  add('escape', 'Clear selection / exit fullscreen / fit', 'View', ['Escape'], ALL, { ignoreShift: true });
+  add('escape', 'Clear selection / exit fullscreen / fit', 'View', ['Escape'], ALL, { ignoreShift: true, allowModifiers: ['Ctrl','Meta','Alt'] });
   add('fullscreen', 'Toggle fullscreen', 'View', ['F','Ctrl+Meta+F'], ALL, { ignoreShift: true });
-  add('undo', 'Undo', 'Edit', ['Mod+Z']);
-  add('redo', 'Redo', 'Edit', ['Mod+Shift+Z']);
-  add('select-all', 'Select all visible photos', 'Selection', ['Mod+A'], ALL, { ignoreShift: true });
-  for (let n=0;n<=8;n++) add('color-alt-'+n, n ? 'Set color '+n : 'Clear color', 'Labels', ['Alt+'+n], ALL, { ignoreShift: true });
+  add('undo', 'Undo', 'Edit', ['Mod+Z'], ALL, { allowModifiers: ['Alt'] });
+  add('redo', 'Redo', 'Edit', ['Mod+Shift+Z'], ALL, { allowModifiers: ['Alt'] });
+  add('select-all', 'Select all visible photos', 'Selection', ['Mod+A'], ALL, { ignoreShift: true, primaryModifier: true, allowModifiers: ['Alt'] });
+  for (let n=0;n<=8;n++) add('color-alt-'+n, n ? 'Set color '+n : 'Clear color', 'Labels', ['Alt+'+n], ALL, { ignoreShift: true, allowModifiers: ['Ctrl','Meta'] });
   add('zoom-in', 'Zoom in', 'Zoom', ['Mod+=','Mod++','Mod+Shift+='], ['review'], { codes: ['Equal','NumpadAdd'], loupe: 'zoom-in' });
   add('zoom-out', 'Zoom out', 'Zoom', ['Mod+-','Mod+_'], ['review'], { codes: ['Minus','NumpadSubtract'], loupe: 'zoom-out' });
   add('fit', 'Fit photo', 'Zoom', ['Mod+0','Mod+Shift+0'], ['review'], { codes: ['Digit0','Numpad0'], loupe: 'fit' });
@@ -64,17 +64,25 @@
   }
   function shortcuts(command, custom={}) { return Object.hasOwn(custom,command.id)?custom[command.id]:command.shortcuts.default; }
   function variants(binding, ignoreShift=false) {
-    const values=binding.includes('Mod+')?['Ctrl','Meta'].map(mod=>binding.replace('Mod',mod)):[binding];
+    const values=binding.includes('Mod+')?['Ctrl','Meta','Ctrl+Meta'].map(mod=>binding.replace('Mod',mod)):[binding];
     return values.flatMap(k=>ignoreShift&&!k.includes('Shift+')?[k,k.replace(/([^+]+)$/, 'Shift+$1')]:[k]);
+  }
+  function bindingVariants(command,bindings,defaults) {
+    let values=bindings.flatMap(k=>variants(normalize(k),defaults&&command.ignoreShift));
+    if(defaults)for(const mod of command.allowModifiers||[])values=values.flatMap(k=>[k,normalize(mod+'+'+k)]);
+    return [...new Set(values)];
   }
   function overlaps(a,b){return a.context.some(c=>b.context.includes(c));}
   function conflicts(commands,custom,id,bindings,{defaults=false}={}) {
     const command=commands.find(c=>c.id===id); if(!command)throw new Error('Unknown command.');
-    const proposed=bindings.flatMap(k=>variants(normalize(k),defaults&&command.ignoreShift));
-    return commands.filter(c=>c.id!==id&&overlaps(command,c)&&shortcuts(c,custom).some(k=>variants(normalize(k),!Object.hasOwn(custom,c.id)&&c.ignoreShift).some(v=>proposed.includes(v))));
+    const proposed=bindingVariants(command,bindings,defaults);
+    return commands.filter(c=>c.id!==id&&overlaps(command,c)&&bindingVariants(c,shortcuts(c,custom),!Object.hasOwn(custom,c.id)).some(v=>proposed.includes(v)));
   }
-  function matches(command,event,custom={}) {
-    const changed=Object.hasOwn(custom,command.id),key=eventKey(event);
+  function matches(command,event,custom={},platform='web') {
+    const changed=Object.hasOwn(custom,command.id);
+    if(!changed&&command.primaryModifier&&(platform==='darwin'?!event.metaKey:platform!=='web'&&!event.ctrlKey))return false;
+    let key=eventKey(event);
+    if(!changed)for(const mod of command.allowModifiers||[])key=key?.replace(mod+'+','');
     return shortcuts(command,custom).some(k=>variants(normalize(k),!changed&&command.ignoreShift).includes(key)) || !changed && command.codes?.includes(event.code) && (event.ctrlKey||event.metaKey) && !event.altKey;
   }
   function loupeAction(event) {return table.find(command=>command.loupe&&matches(command,event))?.loupe || null;}
@@ -91,11 +99,11 @@
     query=query.toLowerCase().trim();text=text.toLowerCase();if(!query)return 1;
     let index=0,score=0,last=-2;for(const char of query){const at=text.indexOf(char,index);if(at<0)return 0;score+=at===last+1?4:1;last=at;index=at+1;}return score+(text.includes(query)?20:0);
   }
-  function create({actions,context,custom=()=>({}),enabled=()=>true,onRun=()=>{}}) {
+  function create({actions,context,custom=()=>({}),enabled=()=>true,onRun=()=>{},platform='web'}) {
     const commands=table.map(row=>({...row,enabled:()=>enabled(row),run:event=>actions[row.id]?.(event)}));
     return {commands,execute(id,event={}){const c=commands.find(c=>c.id===id);if(!c||!c.context.includes(context())||!c.enabled())return false;const input=typeof event.preventDefault==='function'?event:{...event,preventDefault(){}};const result=c.run(input);onRun(c);return result??true;},
       dispatch(event,{typing=false,button=false}={}){if(event.defaultPrevented)return false;const key=eventKey(event);if(!key)return false;
-        const command=commands.find(c=>c.context.includes(context())&&(!typing||c.typing)&&(!button||!['Space','Enter'].includes(event.key===' '?'Space':event.key))&&c.enabled()&&matches(c,event,custom()));
+        const command=commands.find(c=>c.context.includes(context())&&(!typing||c.typing)&&(!button||!['Space','Enter'].includes(event.key===' '?'Space':event.key))&&c.enabled()&&matches(c,event,custom(),platform));
         if(!command)return false;event.preventDefault();this.execute(command.id,event);return true;},
       search(query,recent=[]){return commands.map(c=>({command:c,score:fuzzy(query,c.title+' '+c.category)+(query?0:Math.max(0,10-recent.indexOf(c.id))*(recent.includes(c.id)?1:0))})).filter(r=>r.score>0).sort((a,b)=>b.score-a.score).map(r=>r.command);}};
   }

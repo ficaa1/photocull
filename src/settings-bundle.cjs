@@ -16,9 +16,11 @@ async function validate(input,{pathMap={}}={}) {
   if(!input.preferences||!Array.isArray(input.recipes)||input.recipes.length>100||!Array.isArray(input.presets)||input.presets.length>100)throw new Error('Invalid settings bundle.');
   if(!pathMap||typeof pathMap!=='object'||Array.isArray(pathMap)||Object.entries(pathMap).some(([a,b])=>!a||typeof b!=='string'))throw new Error('Invalid path mappings.');
   const map=value=>{
-    if(!value)return value;
+    if(!value)return value;if(typeof value!=='string')throw new Error('Invalid mapped path.');
     const match=Object.keys(pathMap).sort((a,b)=>b.length-a.length).find(p=>value===p||value.startsWith(p+'/')||value.startsWith(p+'\\'));
-    return match?pathMap[match]+value.slice(match.length):value;
+    if(!match)return value;
+    const target=pathMap[match],separator=/^[A-Za-z]:[\\/]|^\\\\/.test(target)?'\\':'/';
+    return target+value.slice(match.length).replace(/[\\/]+/g,separator);
   };
   const source=structuredClone(input.preferences);
   source.handoffFolder=map(source.handoffFolder);
@@ -44,11 +46,13 @@ async function validate(input,{pathMap={}}={}) {
 }
 class SettingsBundles {
   constructor(settings,recipes){this.settings=settings;this.recipes=recipes;this.pending=new Map();}
-  async export(file,options){const value=bundle(this.settings,this.recipes,options);await writeBundle(file,value);return file;}
+  async export(file,options){const value=bundle(this.settings,this.recipes,options);await validate(value);await writeBundle(file,value);return file;}
   async preview(input,options) {
     const value=await validate(input,options),current=bundle(this.settings,this.recipes,{excludePaths:false}),token=randomUUID();
     const changes=Object.keys(value.preferences).filter(k=>JSON.stringify(value.preferences[k])!==JSON.stringify(current.preferences[k]));
-    const summary={token,changes,recipes:{before:current.recipes.length,after:value.recipes.length},presets:{before:current.presets.length,after:value.presets.length},warnings:value.warnings};
+    const changesTo=(before,after)=>({added:after.filter(v=>!before.some(p=>p.id===v.id)).map(v=>v.name),removed:before.filter(v=>!after.some(p=>p.id===v.id)).map(v=>v.name),updated:after.filter(v=>before.some(p=>p.id===v.id&&JSON.stringify(p)!==JSON.stringify(v))).map(v=>v.name)});
+    const details=changes.map(key=>({key,before:current.preferences[key],after:value.preferences[key]}));
+    const summary={token,changes,details,recipeChanges:changesTo(current.recipes,value.recipes),presetChanges:changesTo(current.presets,value.presets),recipes:{before:current.recipes.length,after:value.recipes.length},presets:{before:current.presets.length,after:value.presets.length},warnings:value.warnings};
     this.pending.clear();this.pending.set(token,{value,current});return summary;
   }
   async apply(token) {
@@ -57,6 +61,7 @@ class SettingsBundles {
     return this.settings.serial(async()=>{
       // Recipes and presets are replaced only after the complete current bundle is durable.
       if(JSON.stringify(bundle(this.settings,this.recipes,{excludePaths:false}).preferences)!==JSON.stringify(current.preferences)||JSON.stringify(this.recipes.user)!==JSON.stringify(current.recipes)||JSON.stringify(this.settings.presets.filter(p=>!BUILTINS.some(b=>b.id===p.id)))!==JSON.stringify(current.presets))throw new Error('Settings changed since preview. Preview again.');
+      if(Buffer.byteLength(JSON.stringify(current))>MAX)throw new Error('Current settings exceed the backup bundle size limit. Export recipes separately first.');
       const folder=path.join(this.settings.folder,'backups');await fs.mkdir(folder,{recursive:true});
       const backup=path.join(folder,Date.now()+'-'+randomUUID()+'.json');await atomicWrite(backup,JSON.stringify(current,null,2));
       const restore=async data=>{

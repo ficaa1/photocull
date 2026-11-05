@@ -22,9 +22,9 @@ function diagnostics(dataDir,settings,details={}) {
   for(const name of ['shell.log','shell.log.1','sidecar.log','sidecar.log.1'])try{
     const file=path.join(folder,name),stat=fs.statSync(file),buffer=Buffer.alloc(Math.min(stat.size,128*1024)),fd=fs.openSync(file,'r');
     try{fs.readSync(fd,buffer,0,buffer.length,Math.max(0,stat.size-buffer.length));}finally{fs.closeSync(fd);}
-    logs.push(...buffer.toString('utf8').split('\n').filter(Boolean).map(line=>`${name}: ${line}`));
+    logs.push(...buffer.toString('utf8').split('\n').filter(Boolean).map(line=>({text:`${name}: ${line}`,time:/^\d{10} /.test(line)?Number(line.slice(0,10))*1000:Date.parse(line.slice(0,24))||0})));
   }catch{}
   const summary={autoAdvance:settings.autoAdvance,recursive:settings.recursive,rawRendering:settings.rawRendering,previewCacheGB:settings.previewCacheGB,defaultRecipe:settings.defaultRecipe,editorCount:settings.editors.length,editors:settings.editors.map(e=>({name:e.name,path:e.path,needsPath:e.needsPath})),handoffFolder:settings.handoffFolder,shortcutOverrides:Object.keys(settings.shortcuts||{}).length};
-  return redact(JSON.stringify({app:'PhotoCull',version:require('../package.json').version,os:`${os.platform()} ${os.release()} ${os.arch()}`,node:process.version,details,settings:summary},null,2)+'\n\nRecent logs\n'+logs.sort().slice(-200).join('\n'));
+  return redact(JSON.stringify({app:'PhotoCull',version:require('../package.json').version,os:`${os.platform()} ${os.release()} ${os.arch()}`,node:process.version,details,settings:summary},null,2)+'\n\nRecent logs\n'+logs.sort((a,b)=>a.time-b.time).slice(-200).map(row=>row.text).join('\n'));
 }
 module.exports={createLogger,diagnostics,redact,rotate,LIMIT};

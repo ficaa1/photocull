@@ -13,6 +13,7 @@ test('portable bundles include shortcuts, recipes, presets and editors but strip
   const portable=await validate(exported);assert.equal(portable.preferences.editors[0].needsPath,true);assert.match(portable.warnings[0],/needs path/);
   const editor=path.join(root,'editor');await fs.writeFile(editor,'fake editor');const full=bundle(settings,recipes,{excludePaths:false});full.preferences.editors[0].path='/old-machine/editor';full.preferences.handoffFolder='/old-machine';
   const imported=await validate(full,{pathMap:{'/old-machine':root}});assert.equal(imported.preferences.editors[0].path,editor);assert.equal(imported.preferences.editors[0].needsPath,false);assert.equal(imported.preferences.handoffFolder,root);
+  full.preferences.handoffFolder='C:\\Old\\Nested';const windowsMapped=await validate(full,{pathMap:{'C:\\Old':root}});assert.equal(windowsMapped.preferences.handoffFolder,path.join(root,'Nested'));
 });
 test('preview is read-only; apply backs up complete current settings before replacing, and survives restart',async t=>{
   const {root,settings,recipes,service}=await fixture(t);const recipe=await recipes.save({name:'Keep',settings:{exposure:1}});const saved=bundle(settings,recipes,{excludePaths:false});saved.preferences.autoAdvance=false;saved.preferences.shortcuts={'flag-pick':['Ctrl+L']};saved.recipes=[{...recipe,name:'Synced'}];

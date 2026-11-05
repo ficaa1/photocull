@@ -36,6 +36,7 @@ test('custom bindings replace defaults, isolate contexts, and detect modifier an
   assert.equal(C.conflicts(C.table,{},'flag-pick',['X'])[0].id,'flag-reject');
   assert.equal(C.conflicts(C.table,{},'flag-pick',['Shift+X'])[0].id,'flag-reject');
   assert.equal(C.conflicts(C.table,{},'flag-pick',['Ctrl+O'])[0].id,'open');
+  assert.equal(C.conflicts(C.table,{},'flag-pick',['Ctrl+Alt+O'])[0].id,'open');
   assert.equal(C.conflicts(C.table,{},'original',['\\']).length,0);
   assert.equal(C.conflicts(C.table,{},'before',['J'])[0].id,'clipping');
   assert.throws(()=>C.validateCustom({a:['bad+bad+P']}));
@@ -46,4 +47,20 @@ test('palette supports fuzzy search, recent ranking, and stable command identiti
   assert.equal(registry.search('edit in')[0].id,'edit');assert.equal(registry.search('', ['rating-5'])[0].id,'rating-5');
   assert.equal(C.fuzzy('zzzz','Open folder'),0);
   for(const c of registry.commands){assert.equal(typeof c.run,'function');assert.equal(typeof c.enabled,'function');assert.ok(c.category&&c.title&&c.context.length);}
+});
+
+test('legacy global shortcut precedence survives extra modifiers and platform selection',()=>{
+ const f=fixture();
+ for(const mods of [{ctrlKey:true,altKey:true},{ctrlKey:true,metaKey:true},{metaKey:true,altKey:true,shiftKey:true}])assert.equal(f.press('o',mods),'open');
+ assert.equal(f.press('F11',{ctrlKey:true,altKey:true,shiftKey:true}),'fullscreen-key');
+ assert.equal(f.press('Escape',{ctrlKey:true,metaKey:true,altKey:true,shiftKey:true}),'escape');
+ assert.equal(f.press('3',{ctrlKey:true,altKey:true}),'color-alt-3');
+ assert.equal(f.press('z',{ctrlKey:true,altKey:true}),'undo');
+ for(const [platform,modifier,ignored] of [['darwin','metaKey','ctrlKey'],['win32','ctrlKey','metaKey']]){
+   let ran=false;const registry=C.create({actions:{'select-all':()=>{ran=true;}},context:()=> 'review',platform});
+   registry.dispatch({key:'a',[ignored]:true,preventDefault(){}});assert.equal(ran,false);
+   registry.dispatch({key:'a',[modifier]:true,preventDefault(){}});assert.equal(ran,true);
+ }
+ assert.equal(f.press('ß',{ctrlKey:true,code:'Minus'}),'zoom-out');
+ const custom=fixture('review',{'zoom-out':['Ctrl+L']});assert.equal(custom.press('ß',{ctrlKey:true,code:'Minus'}),null);
 });
