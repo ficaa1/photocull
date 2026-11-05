@@ -230,7 +230,7 @@ function portableDevelop(state, photo, root) {
 }
 function resolveDevelop(state, photo, root) {
   if (!state) return null;
-  return { ...state, tiff: resolvePath(state.tiff, photo, root), handoffs: (Array.isArray(state.handoffs) ? state.handoffs : []).map(r => ({ ...r, path: resolvePath(r.path, photo, root), realPath: resolvePath(r.realPath, photo, root) })) };
+  return { ...state, tiff: resolvePath(state.tiff, photo, root), handoffs: (Array.isArray(state.handoffs) ? state.handoffs : []).filter(r => r && typeof r === 'object').map(r => ({ ...r, path: resolvePath(r.path, photo, root), realPath: resolvePath(r.realPath, photo, root) })) };
 }
 function sidecarPaths(photo) { return [photo.slice(0, -path.extname(photo).length) + '.xmp', photo + '.xmp']; }
 async function writableSidecar(file) {
