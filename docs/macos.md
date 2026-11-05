@@ -17,7 +17,7 @@ npm start
 npm run build
 ```
 
-The outputs are `src-tauri/target/release/bundle/macos/PhotoCull.app` and a `.dmg` under `src-tauri/target/release/bundle/dmg/`. Build natively because sharp and ExifTool include platform-specific binaries. [.github/workflows/build.yml](../.github/workflows/build.yml) builds Apple Silicon installers on macOS 15; Intel Mac builds are currently manual.
+The outputs are `src-tauri/target/release/bundle/macos/PhotoCull.app` and a `.dmg` under `src-tauri/target/release/bundle/dmg/`. Build natively because sharp and ExifTool include platform-specific binaries. Build the `.dmg` on the Mac itself; GitHub Actions builds are disabled.
 
 ## Opening an unsigned build
 
@@ -39,4 +39,4 @@ Allow removable-volume access when macOS requests it. Camera cards mounted under
 
 ## Validation limits
 
-**Native Tauri launch on a Mac has not been verified yet.** Permissions, native menu shortcuts, fullscreen, removable-card discovery, bundled module loading and deletion still need native validation. Browser-mode smoke tests exercise the shared renderer and backend in Chromium; they do not drive WKWebView or verify native shell behavior. The Mac CI jobs build bundles, but their UI tests also use browser mode.
+**Native Tauri launch on a Mac has not been verified yet.** Permissions, native menu shortcuts, fullscreen, removable-card discovery, bundled module loading and deletion still need native validation. Browser-mode smoke tests exercise the shared renderer and backend in Chromium; they do not drive WKWebView or verify native shell behavior.
