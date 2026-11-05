@@ -149,6 +149,25 @@ class Library {
     return { id: item.id, ...after, edited: true };
   }
 
+  async decideMany(sessionId, ids, patch) {
+    const s = this.get(sessionId);
+    if (!Array.isArray(ids) || !ids.length || ids.length > 100_000) throw new Error('Choose photos to edit.');
+    const items = [...new Set(ids)].map(id => this.item(sessionId, id));
+    const batch = items.map(item => {
+      const before = decision(item), after = decision({ ...before, ...patch });
+      return { id: item.id, before, after };
+    });
+    s.undo.push({ batch });
+    if (s.undo.length > 500) s.undo.shift();
+    s.redo = [];
+    const result = batch.map(({ id, after }, index) => {
+      Object.assign(items[index], after, { edited: true });
+      return { id, ...after, edited: true };
+    });
+    await this.save(s);
+    return { items: result };
+  }
+
   async history(sessionId, direction) {
     const s = this.get(sessionId);
     const from = direction === 'redo' ? s.redo : s.undo;
@@ -156,10 +175,13 @@ class Library {
     const action = from.pop();
     if (!action) return null;
     to.push(action);
-    const item = this.item(sessionId, action.id);
-    Object.assign(item, direction === 'redo' ? action.after : action.before, { edited: true });
+    const items = (action.batch || [action]).map(entry => {
+      const item = this.item(sessionId, entry.id);
+      Object.assign(item, direction === 'redo' ? entry.after : entry.before, { edited: true });
+      return { id: item.id, ...decision(item), edited: true };
+    });
     await this.save(s);
-    return { id: item.id, ...decision(item), edited: true };
+    return action.batch ? { items } : items[0];
   }
 
   async exportXmp(sessionId, settings = this.settings()) {
@@ -233,8 +255,12 @@ class Library {
     const s = this.get(sessionId), gone = new Set(ids);
     s.items = s.items.filter(item => !gone.has(item.id));
     for (const id of gone) s.byId.delete(id);
-    s.undo = s.undo.filter(action => !gone.has(action.id));
-    s.redo = s.redo.filter(action => !gone.has(action.id));
+    const keep = actions => actions.flatMap(action => {
+      if (!action.batch) return gone.has(action.id) ? [] : [action];
+      const batch = action.batch.filter(entry => !gone.has(entry.id));
+      return batch.length ? [{ batch }] : [];
+    });
+    s.undo = keep(s.undo); s.redo = keep(s.redo);
     await this.save(s);
     return { removed: [...gone] };
   }

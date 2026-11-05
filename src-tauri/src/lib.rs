@@ -17,7 +17,7 @@ use tauri_plugin_opener::OpenerExt;
 /// go through `delete_photos` and `save_manifest`, so the renderer never names
 /// a file to remove or overwrite.
 const RENDERER_METHODS: &[&str] = &[
-    "scan", "devices", "open-device", "test-destination", "copy-picks", "naming-preview", "cancel-copy", "decide",
+    "scan", "devices", "open-device", "test-destination", "copy-picks", "naming-preview", "cancel-copy", "decide", "decide-many",
     "history", "metadata", "preview-status", "settings", "save-preset", "delete-preset", "settings-folder",
     "preview-settings", "retry-preview", "focus", "visible", "export-xmp", "session-folder", "stats",
 ];

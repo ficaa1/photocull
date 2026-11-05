@@ -56,6 +56,68 @@ test('XMP edits preserve unrelated metadata, namespaces and backups', async t =>
   assert.throws(() => updateXmp('<!DOCTYPE x [<!ENTITY e SYSTEM "file:///etc/passwd">]><x/>', { flag: 'none', rating: 0 }));
 });
 
+test('batch decisions save once, undo/redo together and survive reopen', async t => {
+  const root = await temp(t), photos = path.join(root, 'photos'); await fs.mkdir(photos);
+  for (const name of ['a.jpg', 'b.jpg', 'c.jpg']) await fs.writeFile(path.join(photos, name), 'fixture');
+  const data = path.join(root, 'state'), library = new Library(data), s = await library.scan(photos);
+  const [a, b, c] = s.items, ids = [a.id, b.id];
+  await library.decide(s.id, a.id, { rating: 2, color: '1' });
+  const writes = library.stats.sessionWrites;
+  const patch = { flag: 'pick', rating: 5, color: '3', trashed: true };
+  const result = await library.decideMany(s.id, ids, patch);
+  assert.deepEqual(result, { items: ids.map(id => ({ id, ...patch, edited: true })) });
+  assert.equal(library.stats.sessionWrites, writes + 1);
+  assert.equal(library.get(s.id).undo.length, 2);
+  assert.deepEqual(library.get(s.id).undo.at(-1).batch.map(entry => entry.id), ids);
+  const undone = await library.history(s.id, 'undo');
+  assert.deepEqual(undone.items, [
+    { id: a.id, flag: 'none', rating: 2, color: '1', trashed: false, edited: true },
+    { id: b.id, flag: 'none', rating: 0, color: null, trashed: false, edited: true },
+  ]);
+  assert.deepEqual(await library.history(s.id, 'redo'), result);
+  assert.equal(library.item(s.id, c.id).flag, 'none');
+  const reopened = await new Library(data).scan(photos);
+  for (const item of reopened.items.slice(0, 2)) for (const [key, value] of Object.entries(patch)) assert.equal(item[key], value);
+  assert.equal(reopened.items[2].edited, false);
+  await library.history(s.id, 'undo');
+  await library.decideMany(s.id, ids, { color: '' });
+  assert.equal(await library.history(s.id, 'redo'), null, 'a new batch clears redo');
+});
+
+test('batch validation is atomic, deduplicates ids and retains the 500-action cap', async t => {
+  const root = await temp(t), photos = path.join(root, 'photos'); await fs.mkdir(photos);
+  await fs.writeFile(path.join(photos, 'a.jpg'), 'fixture');
+  const library = new Library(path.join(root, 'state')), s = await library.scan(photos), id = s.items[0].id;
+  for (const ids of [null, id, [], Array(100_001).fill(id)]) await assert.rejects(library.decideMany(s.id, ids, { flag: 'pick' }), /Choose photos/);
+  await assert.rejects(library.decideMany(s.id, [id, 'missing'], { flag: 'pick' }), /not in this folder session/);
+  assert.equal(library.item(s.id, id).flag, 'none');
+  assert.equal(library.get(s.id).undo.length, 0); assert.equal(library.stats.sessionWrites, 0);
+  const result = await library.decideMany(s.id, [id, id], { flag: 'pick', rating: 9, color: '9' });
+  assert.equal(result.items.length, 1); assert.equal(result.items[0].rating, 0); assert.equal(result.items[0].color, null);
+  await Promise.all(Array.from({ length: 501 }, () => library.decideMany(s.id, [id], { rating: 4 })));
+  assert.equal(library.get(s.id).undo.length, 500);
+});
+
+test('forget prunes deleted ids and empty batches from both undo and redo', async t => {
+  const root = await temp(t), photos = path.join(root, 'photos'); await fs.mkdir(photos);
+  for (const name of ['a.jpg', 'b.jpg', 'c.jpg']) await fs.writeFile(path.join(photos, name), 'fixture');
+  const library = new Library(path.join(root, 'state')), s = await library.scan(photos), [a, b, c] = s.items;
+  await library.decideMany(s.id, [a.id], { rating: 2 });
+  await library.decideMany(s.id, [a.id, b.id], { flag: 'pick' });
+  await library.decideMany(s.id, [a.id, c.id], { color: '3' });
+  await library.decideMany(s.id, [a.id], { trashed: true });
+  await library.history(s.id, 'undo'); await library.history(s.id, 'undo');
+  await library.forget(s.id, [a.id]);
+  assert.deepEqual(library.get(s.id).undo.map(action => action.batch.map(entry => entry.id)), [[b.id]]);
+  assert.deepEqual(library.get(s.id).redo.map(action => action.batch.map(entry => entry.id)), [[c.id]]);
+  assert.deepEqual((await library.history(s.id, 'redo')).items.map(i => [i.id, i.color]), [[c.id, '3']]);
+  await library.history(s.id, 'undo');
+  assert.deepEqual((await library.history(s.id, 'undo')).items.map(i => [i.id, i.flag]), [[b.id, 'none']]);
+  assert.equal(await library.history(s.id, 'undo'), null);
+  const saved = JSON.parse(await fs.readFile(library.get(s.id).store, 'utf8'));
+  assert.deepEqual(Object.keys(saved.decisions), [b.id, c.id]);
+});
+
 test('unpaired same-stem RAWs report conflicting XMP paths without writing', async t => {
   const root = await temp(t);
   const photos = path.join(root, 'photos'); await fs.mkdir(photos);

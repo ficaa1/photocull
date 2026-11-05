@@ -93,6 +93,7 @@
     },
     openPath: (folder, recursive) => backend('scan', folder, !!recursive),
     decide: (session, id, patch) => backend('decide', session, id, patch),
+    decideMany: (session, ids, patch) => backend('decide-many', session, ids, patch),
     history: (session, direction) => backend('history', session, direction),
     metadata: (session, id, kind) => backend('metadata', session, id, kind),
     previewStatus: (session, id, kind) => backend('preview-status', session, id, kind),

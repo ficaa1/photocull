@@ -143,16 +143,19 @@ kbd { color: #82949f; font-family: inherit; font-size: 9px; border: 1px solid #4
 .film-card { position: relative; width: 95px; height: 76px; flex-shrink: 0; border: 2px solid transparent; border-radius: 3px; padding: 3px; background: #282e33; }
 .film-card:hover { background: #36414a; }
 .film-card.selected { border-color: #9bbacd; background: #3d505d; }
+.film-card.current, .film-card.current:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .film-card img { width: 100%; height: 100%; object-fit: contain; }
 .film-label { position: absolute; top: 4px; left: 4px; border-radius: 2px; background: #11171bcf; padding: 1px 3px; font-size: 9px; color: #a6bac6; font-variant-numeric: tabular-nums; }
 .mini-flag { position: absolute; bottom: 3px; right: 3px; padding: 1px 4px; background: #18251de8; border-radius: 3px; color: #b1d6b9; font-size: 10px; }
 .mini-flag.rejected { background: #392628ed; color: #e5a5a2; }
 .mini-color { position: absolute; top: 5px; right: 5px; width: 8px; height: 8px; background: var(--label-color); border: 1px solid #fff7; border-radius: 50%; }
 .grid-viewport { position: relative; flex: 1; min-height: 0; overflow: auto; scrollbar-width: thin; scrollbar-color: #4d5a63 transparent; }
-.grid-content { position: relative; }
+.grid-content { position: relative; user-select: none; touch-action: none; }
+.marquee { position: absolute; pointer-events: none; z-index: 2; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .grid-card { position: absolute; padding: 7px; border: 1px solid transparent; border-radius: 4px; background: #23282c; display: flex; flex-direction: column; text-align: left; }
 .grid-card:hover { background: #2e3840; }
 .grid-card.selected { border-color: #96b4c9; background: #344753; }
+.grid-card.current, .grid-card.current:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
 .grid-card .thumb-wrap { position: relative; flex: 1; min-height: 0; background: #121619; border-radius: 2px; }
 .grid-card img { width: 100%; height: 100%; object-fit: contain; }
 .grid-caption { display: flex; justify-content: space-between; gap: 6px; align-items: center; margin-top: 7px; font-size: 10px; }

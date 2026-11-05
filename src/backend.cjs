@@ -97,6 +97,7 @@ async function start() {
     },
     'cancel-copy': () => transfers.cancel(),
     'decide': (session, id, patch) => library.decide(session, id, patch),
+    'decide-many': (session, ids, patch) => library.decideMany(session, ids, patch),
     'history': (session, direction) => library.history(session, direction),
     'metadata': (session, id, kind = 'preview') => previews.metadata(library.item(session, id), kind),
     'preview-status': (session, id, kind = 'preview') => previews.status(library.item(session, id), kind),

@@ -1,6 +1,6 @@
 const api = window.photocull;
 const $ = id => document.getElementById(id);
-const state = { deleting: false, session: null, selected: null, filter: 'all', query: '', mode: 'review', zoom: false, zoomPercent: 100, fullscreen: false,
+const state = { deleting: false, session: null, selected: null, marked: new Set(), anchor: null, filter: 'all', query: '', mode: 'review', zoom: false, zoomPercent: 100, fullscreen: false,
   generation: 0, previewRevision: 0, prefetched: [], pendingSaves: 0, saveError: false, busy: false, settings: { autoAdvance: true, recursive: false, autoOpenCards: true, colors: [], naming: { template: '{filename}', text: '', start: 1 } }, settingsReady: false, colorFilter: '', devices: [], deviceError: '', autoOpened: new Set(), copy: { running: false, destination: null, copiedTo: null } };
 let toastTimer, metadataTimer, framePending = false;
 const gridNodes = new Map(), filmNodes = new Map();
@@ -30,13 +30,18 @@ matchMedia('(max-width: 900px)').addEventListener('change', applyPaneLayout);
 applyPaneLayout();
 const imageView = new PhotoCullView.ImageView($('image-viewport'), $('review-image'), { onToggle: point => toggleZoom(point) });
 
-// The open Del / Shift+Del confirmation, if any: { id, mode, session, filter }.
+// The open Del / Shift+Del confirmation, if any: { ids, mode, session, view }.
 let deletePrompt = null;
 function toast(message) {
   $('toast').textContent = message; $('toast').hidden = false;
   clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 5500);
 }
 function photo() { return state.session?.items.find(i => i.id === state.selected); }
+function selection() { return state.marked.size > 1 ? filtered().filter(i => state.marked.has(i.id)) : photo() ? [photo()] : []; }
+function resetSelection() { state.marked = new Set(state.selected ? [state.selected] : []); state.anchor = state.selected; }
+function viewKey() { return JSON.stringify([state.filter, state.query, state.colorFilter]); }
+function sameIds(ids, items = selection()) { const marked = new Set(ids); return ids.length === items.length && items.every(item => marked.has(item.id)); }
+function additive(event) { return api.platform === 'darwin' ? event.metaKey : event.ctrlKey; }
 function reviewed(item) { return item.flag !== 'none' || item.rating > 0 || !!item.color; }
 function filtered() {
   return (state.session?.items ?? []).filter(item => {
@@ -70,6 +75,7 @@ async function openFolder() {
 
 function loadSession(session) {
   state.session = session; state.selected = session.items[0]?.id ?? null;
+  resetSelection();
   state.filter = 'all'; state.colorFilter = ''; $('color-filter').value = ''; state.query = ''; state.zoom = false; state.saveError = false;
   $('search').value = ''; $('grid').scrollTop = 0;
   const folderName = session.folder.split(/[\\/]/).filter(Boolean).pop();
@@ -132,10 +138,15 @@ function renderCounts() {
   document.querySelectorAll('.filter').forEach(button => { const active = button.dataset.filter === state.filter; button.classList.toggle('active', active); button.setAttribute('aria-pressed', String(active)); });
 }
 
-function render() {
+function render(reset = false) {
   renderCounts();
   const items = filtered();
   if (!items.some(i => i.id === state.selected)) state.selected = items[0]?.id ?? null;
+  const visible = new Set(items.map(i => i.id)), hadMarked = state.marked.size > 0;
+  state.marked = new Set([...state.marked].filter(id => visible.has(id)));
+  if (hadMarked && state.selected) state.marked.add(state.selected);
+  if (reset) resetSelection();
+  if (!visible.has(state.anchor)) state.anchor = state.selected;
   const loaded = !!state.session?.items.length;
   $('empty').hidden = loaded;
   $('no-matches').hidden = !loaded || !!items.length;
@@ -147,7 +158,7 @@ function render() {
   $('grid-mode').classList.toggle('active', state.mode === 'grid');
   const titles = { all: 'Photos', unreviewed: 'Unreviewed', pick: 'Picks', reject: 'Rejects', rated: 'Rated', trash: 'Trash' };
   $('view-title').textContent = loaded ? titles[state.filter] : 'Photos';
-  $('view-count').textContent = loaded ? `${items.length}` : '';
+  $('view-count').textContent = loaded ? `${items.length}${state.marked.size > 1 ? ` · ${state.marked.size} selected` : ''}` : '';
   const rejects = scopeItems('reject').length, trashed = scopeItems('trash').length, locked = state.busy || state.copy.running || state.deleting;
   $('delete-rejects').hidden = !loaded || state.filter !== 'reject' || !rejects;
   $('delete-rejects').disabled = locked;
@@ -155,8 +166,7 @@ function render() {
   $('trash-restore').hidden = !loaded || state.filter !== 'trash' || !trashed;
   $('empty-trash').hidden = !loaded || state.filter !== 'trash' || !trashed;
   $('trash-restore').disabled = $('empty-trash').disabled = locked;
-  // A prompt is about one photo in one view; it goes away once either changes.
-  if (deletePrompt && (state.filter !== deletePrompt.filter || state.selected !== deletePrompt.id)) hideDeletePrompt();
+  if (deletePrompt && (state.session?.id !== deletePrompt.session || viewKey() !== deletePrompt.view || !sameIds(deletePrompt.ids))) hideDeletePrompt();
   renderSelection();
   if (state.mode === 'grid') requestGrid();
 }
@@ -194,7 +204,7 @@ function renderDecision(item) {
   }
   [...$('rating').children].forEach((button, i) => { button.classList.toggle('selected', i < item.rating); button.setAttribute('aria-pressed', String(i < item.rating)); });
   $('pick').setAttribute('aria-pressed', String(item.flag === 'pick')); $('reject').setAttribute('aria-pressed', String(item.flag === 'reject'));
-  $('detail-decision').textContent = `${item.flag === 'pick' ? '⚑ Pick' : item.flag === 'reject' ? '× Rejected' : item.rating ? 'Rated' : 'Unreviewed'}${item.rating ? ` · ${'★'.repeat(item.rating)}` : ''}`;
+  $('detail-decision').textContent = state.marked.size > 1 ? `${state.marked.size} photos selected` : `${item.flag === 'pick' ? '⚑ Pick' : item.flag === 'reject' ? '× Rejected' : item.rating ? 'Rated' : 'Unreviewed'}${item.rating ? ` · ${'★'.repeat(item.rating)}` : ''}`;
   $('flag-overlay').hidden = item.flag === 'none';
   $('flag-overlay').textContent = item.flag === 'pick' ? 'Picked' : 'Rejected';
   $('flag-overlay').classList.toggle('rejected', item.flag === 'reject');
@@ -322,9 +332,9 @@ function renderFilmstrip(items, index) {
       const image = document.createElement('img'); image.src = imageUrl(item); image.alt = ''; image.decoding = 'async';
       image.onerror = () => { image.style.opacity = '0'; };
       const label = document.createElement('span'); label.className = 'film-label'; button.append(image, label);
-      button.onclick = event => { select(item.id); if (state.fullscreen && event.detail) button.blur(); }; filmNodes.set(item.id, button);
+      button.onclick = event => { select(item.id, event); if (state.fullscreen && event.detail) button.blur(); }; filmNodes.set(item.id, button);
     }
-    button.classList.toggle('selected', item.id === state.selected); button.setAttribute('aria-current', String(item.id === state.selected));
+    button.classList.toggle('selected', state.marked.has(item.id)); button.classList.toggle('current', item.id === state.selected); button.setAttribute('aria-current', String(item.id === state.selected));
     button.querySelector('.film-label').textContent = String(start + i + 1).padStart(2, '0');
     button.querySelectorAll('.mini-flag, .mini-color').forEach(node => node.remove()); addFlag(button, item); return button;
   });
@@ -347,11 +357,15 @@ function requestGrid() {
   if (framePending) return;
   framePending = true; requestAnimationFrame(() => { framePending = false; renderGrid(); });
 }
+function gridLayout() {
+  const columns = Math.max(1, Math.floor($('grid').clientWidth / layoutPrefs.gridSize));
+  const width = Math.floor(($('grid').clientWidth - 12) / columns), rowHeight = Math.round(width * .77) + 35;
+  return { columns, width, rowHeight };
+}
 function renderGrid() {
   if (state.mode !== 'grid' || $('grid').hidden) return;
   const viewport = $('grid'), container = $('grid-content'), items = filtered();
-  const columns = Math.max(1, Math.floor(viewport.clientWidth / layoutPrefs.gridSize));
-  const width = Math.floor((viewport.clientWidth - 12) / columns), rowHeight = Math.round(width * .77) + 35;
+  const { columns, width, rowHeight } = gridLayout();
   container.style.height = `${Math.ceil(items.length / columns) * rowHeight}px`;
   const first = Math.max(0, Math.floor(viewport.scrollTop / rowHeight) - 1) * columns;
   const last = Math.min(items.length, (Math.ceil((viewport.scrollTop + viewport.clientHeight) / rowHeight) + 1) * columns);
@@ -370,10 +384,10 @@ function renderGrid() {
       const name = document.createElement('span'); name.textContent = item.name;
       const type = document.createElement('span'); type.textContent = item.raw ? 'RAW' : item.name.split('.').pop().toUpperCase(); type.className = 'subtle';
       caption.append(name, type); node.append(wrap, caption);
-      node.onclick = () => select(item.id); node.ondblclick = () => setMode('review');
+      node.onclick = event => select(item.id, event); node.ondblclick = () => setMode('review');
       node.setAttribute('aria-label', item.name); container.append(node); gridNodes.set(item.id, node);
     }
-    node.classList.toggle('selected', item.id === state.selected);
+    node.classList.toggle('selected', state.marked.has(item.id)); node.classList.toggle('current', item.id === state.selected);
     node.style.left = `${(i % columns) * width}px`; node.style.top = `${Math.floor(i / columns) * rowHeight}px`;
     node.style.width = `${width - 10}px`; node.style.height = `${rowHeight - 12}px`;
   }
@@ -381,39 +395,128 @@ function renderGrid() {
   for (const [id, node] of gridNodes) { if (!retained.has(id)) { node.remove(); gridNodes.delete(id); } }
 }
 
-function select(id) {
-  state.selected = id; state.zoom = false;
-  renderSelection();
+let marquee = null, suppressGridClick = false;
+$('grid').addEventListener('dragstart', event => event.preventDefault());
+$('grid').addEventListener('click', event => {
+  if (suppressGridClick) { event.preventDefault(); event.stopPropagation(); suppressGridClick = false; }
+}, true);
+$('grid').addEventListener('pointerdown', event => {
+  if (event.button !== 0 || !event.isPrimary || state.deleting) return;
+  const bounds = $('grid').getBoundingClientRect();
+  // Presses on the scrollbar scroll; they never start a selection box.
+  if (event.clientX - bounds.left >= $('grid').clientWidth || event.clientY - bounds.top >= $('grid').clientHeight) return;
+  marquee = { pointer: event.pointerId, x: event.clientX, y: event.clientY, startX: event.clientX - bounds.left + $('grid').scrollLeft,
+    startY: event.clientY - bounds.top + $('grid').scrollTop, clientX: event.clientX, clientY: event.clientY,
+    base: event.shiftKey || additive(event) ? new Set(state.marked) : new Set(), current: state.selected,
+    session: state.session.id, view: viewKey(), active: false, frame: null, node: null };
+});
+function updateMarquee() {
+  const drag = marquee; if (!drag?.active) return;
+  if (state.mode !== 'grid' || state.session?.id !== drag.session || viewKey() !== drag.view) { endMarquee(); return; }
+  const viewport = $('grid'), bounds = viewport.getBoundingClientRect();
+  const x = Math.max(0, Math.min(viewport.clientWidth, drag.clientX - bounds.left)) + viewport.scrollLeft;
+  const y = Math.max(0, Math.min(viewport.clientHeight, drag.clientY - bounds.top)) + viewport.scrollTop;
+  const left = Math.min(drag.startX, x), top = Math.min(drag.startY, y), right = Math.max(drag.startX, x), bottom = Math.max(drag.startY, y);
+  Object.assign(drag.node.style, { left: `${left}px`, top: `${top}px`, width: `${right - left}px`, height: `${bottom - top}px` });
+  const { columns, width, rowHeight } = gridLayout(), items = filtered(), marked = new Set(drag.base);
+  let current = null;
+  // Hit-test layout coordinates: most of the intersecting cards may not be mounted.
+  const first = Math.max(0, Math.floor(top / rowHeight)) * columns;
+  const last = Math.min(items.length, (Math.floor(bottom / rowHeight) + 1) * columns);
+  for (let i = first; i < last; i++) {
+    const cardX = i % columns * width, cardY = Math.floor(i / columns) * rowHeight;
+    if (cardX <= right && cardX + width - 10 >= left && cardY <= bottom && cardY + rowHeight - 12 >= top) {
+      marked.add(items[i].id); current ??= items[i].id;
+    }
+  }
+  current ??= marked.values().next().value ?? drag.current;
+  if (current !== state.selected || marked.size !== state.marked.size || [...marked].some(id => !state.marked.has(id))) {
+    state.selected = current; state.marked = marked; state.anchor = current; state.zoom = false; render();
+  }
+}
+function scrollMarquee(time) {
+  const drag = marquee; if (!drag?.active) return;
+  const viewport = $('grid'), bounds = viewport.getBoundingClientRect(), edge = 40;
+  const velocity = drag.clientY < bounds.top + edge ? -Math.min(1, (bounds.top + edge - drag.clientY) / edge)
+    : drag.clientY > bounds.bottom - edge ? Math.min(1, (drag.clientY - bounds.bottom + edge) / edge) : 0;
+  viewport.scrollTop += velocity * Math.min(32, time - (drag.time ?? time)) * .6; drag.time = time;
+  updateMarquee();
+  if (marquee === drag) drag.frame = requestAnimationFrame(scrollMarquee);
+}
+window.addEventListener('pointermove', event => {
+  const drag = marquee; if (!drag || event.pointerId !== drag.pointer) return;
+  drag.clientX = event.clientX; drag.clientY = event.clientY;
+  if (!drag.active && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) > 5) {
+    drag.active = true; $('grid').setPointerCapture(drag.pointer);
+    drag.node = document.createElement('div'); drag.node.className = 'marquee'; $('grid-content').append(drag.node);
+    drag.frame = requestAnimationFrame(scrollMarquee);
+  }
+  if (drag.active) { event.preventDefault(); updateMarquee(); }
+});
+function endMarquee() {
+  const drag = marquee; if (!drag) return;
+  marquee = null; cancelAnimationFrame(drag.frame); drag.node?.remove();
+  if (drag.active) {
+    suppressGridClick = true;
+    // The synthetic click follows pointerup before the next task; later clicks are independent.
+    setTimeout(() => { suppressGridClick = false; }, 0);
+    if ($('grid').hasPointerCapture(drag.pointer)) $('grid').releasePointerCapture(drag.pointer);
+  }
+}
+window.addEventListener('pointerup', event => { if (event.pointerId === marquee?.pointer) { if (marquee.active) updateMarquee(); endMarquee(); } });
+window.addEventListener('pointercancel', event => { if (event.pointerId === marquee?.pointer) endMarquee(); });
+$('grid').addEventListener('lostpointercapture', event => { if (event.pointerId === marquee?.pointer) endMarquee(); });
+
+function select(id, event = {}) {
+  const wasMulti = state.marked.size > 1;
+  if (event.shiftKey) {
+    const items = filtered(), anchor = items.findIndex(i => i.id === state.anchor), index = items.findIndex(i => i.id === id);
+    const start = anchor < 0 ? index : anchor;
+    state.marked = new Set(items.slice(Math.min(start, index), Math.max(start, index) + 1).map(i => i.id));
+    state.selected = id;
+  } else if (additive(event)) {
+    if (state.marked.has(id)) { state.marked.delete(id); if (state.selected === id) state.selected = state.marked.values().next().value ?? id; }
+    else { state.marked.add(id); state.selected = id; }
+    state.anchor = id;
+  } else { state.selected = id; resetSelection(); }
+  state.zoom = false;
+  // Plain navigation stays on the cheap path; only selection-size changes need the full render.
+  if (wasMulti || state.marked.size > 1 || deletePrompt) render(); else renderSelection();
   if (state.mode === 'grid') {
     const items = filtered(), index = items.findIndex(i => i.id === id);
-    const columns = Math.max(1, Math.floor($('grid').clientWidth / layoutPrefs.gridSize));
-    const rowHeight = Math.round(Math.floor(($('grid').clientWidth - 12) / columns) * .77) + 35;
+    const { columns, rowHeight } = gridLayout();
     const y = Math.floor(index / columns) * rowHeight;
     if (y < $('grid').scrollTop) $('grid').scrollTop = y;
     else if (y + rowHeight > $('grid').scrollTop + $('grid').clientHeight) $('grid').scrollTop = y + rowHeight - $('grid').clientHeight;
     requestGrid();
   }
 }
-function navigate(delta) {
+function navigate(delta, extend = false) {
   const items = filtered(), index = items.findIndex(i => i.id === state.selected);
   const next = items[Math.max(0, Math.min(items.length - 1, index + delta))];
-  if (next) select(next.id);
+  if (next) select(next.id, { shiftKey: extend });
 }
 function setMode(mode) { if (mode === 'grid' && state.fullscreen) void setFullscreen(false); state.generation++; state.mode = mode; state.zoom = false; render(); }
 
-async function decide(patch, item = photo()) {
-  if (!item) return;
+function nextSurvivor(items, ids) {
+  let last = -1;
+  for (let i = 0; i < items.length; i++) if (ids.has(items[i].id)) last = i;
+  return items.slice(last + 1).find(i => !ids.has(i.id)) ?? items.slice(0, last).reverse().find(i => !ids.has(i.id));
+}
+async function decide(patch) {
+  const targets = selection();
+  if (!targets.length) return;
   const sessionId = state.session.id;
-  const items = filtered(), index = items.findIndex(i => i.id === item.id);
-  const nextId = items[index + 1]?.id ?? items[index - 1]?.id;
-  Object.assign(item, patch, { edited: true });
-  // Trashing or restoring takes the photo out of the current view.
-  if ('trashed' in patch && state.selected === item.id) state.selected = nextId ?? null;
-  else if (patch.flag && state.settings.autoAdvance && nextId) state.selected = nextId;
+  const items = filtered(), ids = new Set(targets.map(i => i.id)), nextId = nextSurvivor(items, ids)?.id;
+  for (const item of targets) Object.assign(item, patch, { edited: true });
+  if ('trashed' in patch || targets.length === 1 && patch.flag && state.settings.autoAdvance && nextId) {
+    state.selected = nextId ?? null; resetSelection();
+  }
   state.pendingSaves++; setStatus('Saving…');
   render();
   try {
-    await api.decide(sessionId, item.id, patch);
+    if (targets.length > 1) await api.decideMany(sessionId, [...ids], patch);
+    else await api.decide(sessionId, targets[0].id, patch);
   } catch (e) { state.saveError = true; toast(`Could not save: ${e.message}`); }
   finally {
     state.pendingSaves--;
@@ -427,8 +530,10 @@ async function history(direction) {
   try {
     const result = await api.history(state.session.id, direction);
     if (!result) return toast(direction === 'redo' ? 'Nothing to redo' : 'Nothing to undo');
-    Object.assign(state.session.items.find(i => i.id === result.id), result);
-    state.selected = result.id; render(); setStatus('Saved');
+    const items = result.items || [result], byId = new Map(state.session.items.map(i => [i.id, i]));
+    for (const item of items) Object.assign(byId.get(item.id), item);
+    state.selected = items[0].id; state.anchor = state.selected; state.marked = new Set(items.map(i => i.id));
+    render(); setStatus('Saved');
   } catch (e) { toast(e.message); }
 }
 
@@ -442,11 +547,11 @@ document.body.classList.toggle('platform-mac', api.platform === 'darwin');
 if (api.platform === 'darwin') document.querySelectorAll('#help-dialog kbd').forEach(key => { key.textContent = key.textContent.replaceAll('Ctrl', '⌘').replaceAll('Alt', '⌥'); });
 $('open-folder').onclick = openFolder; $('empty-open').onclick = openFolder;
 $('review-mode').onclick = () => setMode('review'); $('grid-mode').onclick = () => setMode('grid');
-$('search').oninput = event => { state.query = event.target.value.toLowerCase(); $('grid').scrollTop = 0; render(); };
+$('search').oninput = event => { state.query = event.target.value.toLowerCase(); $('grid').scrollTop = 0; render(true); };
 document.querySelectorAll('.filter').forEach(button => { button.onclick = () => {
-  state.filter = button.dataset.filter; $('grid').scrollTop = 0; render();
+  state.filter = button.dataset.filter; $('grid').scrollTop = 0; render(true);
 }; });
-$('reset-filter').onclick = () => { state.colorFilter = ''; $('color-filter').value = ''; state.filter = 'all'; state.query = ''; $('search').value = ''; render(); };
+$('reset-filter').onclick = () => { state.colorFilter = ''; $('color-filter').value = ''; state.filter = 'all'; state.query = ''; $('search').value = ''; render(true); };
 $('previous').onclick = () => navigate(-1); $('next').onclick = () => navigate(1);
 $('pick').onclick = () => decide({ flag: photo()?.flag === 'pick' ? 'none' : 'pick' });
 $('reject').onclick = () => decide({ flag: photo()?.flag === 'reject' ? 'none' : 'reject' });
@@ -613,9 +718,10 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Tab' && event.ctrlKey) { event.preventDefault(); setMode(state.mode === 'review' ? 'grid' : 'review'); return; }
   if (typing) return;
   if ([' ', 'Enter'].includes(event.key) && document.activeElement?.matches('button, summary')) return;
-  if (event.key === 'Escape') { event.preventDefault(); if (state.fullscreen) void setFullscreen(false); else if (state.zoom) toggleZoom(); return; }
+  if (event.key === 'Escape') { event.preventDefault(); if (state.marked.size > 1) { resetSelection(); render(); } else if (state.fullscreen) void setFullscreen(false); else if (state.zoom) toggleZoom(); return; }
   if (event.key.toLowerCase() === 'f' && !event.ctrlKey && !event.metaKey && !event.altKey) { event.preventDefault(); void setFullscreen(); return; }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); void history(event.shiftKey ? 'redo' : 'undo'); return; }
+  if (additive(event) && event.key.toLowerCase() === 'a') { event.preventDefault(); state.marked = new Set(filtered().map(i => i.id)); render(); return; }
   if (event.altKey && /^[0-8]$/.test(event.key)) { event.preventDefault(); void decide({ color: event.key === '0' ? '' : event.key }); return; }
   if (event.ctrlKey || event.metaKey || event.altKey) return;
   if (event.key === 'Delete' || event.key === 'Backspace') {
@@ -630,10 +736,10 @@ document.addEventListener('keydown', event => {
   if (event.key.toLowerCase() === 'r' && state.filter === 'trash') { event.preventDefault(); void restoreFromTrash(); return; }
   if (event.key.toLowerCase() === 'b') { event.preventDefault(); togglePane('sources'); return; }
   if (event.key.toLowerCase() === 'i') { event.preventDefault(); togglePane('details'); return; }
-  if (event.key === 'ArrowLeft') { event.preventDefault(); navigate(-1); }
-  else if (event.key === 'ArrowRight') { event.preventDefault(); navigate(1); }
+  if (event.key === 'ArrowLeft') { event.preventDefault(); navigate(-1, event.shiftKey); }
+  else if (event.key === 'ArrowRight') { event.preventDefault(); navigate(1, event.shiftKey); }
   else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-    event.preventDefault(); navigate((event.key === 'ArrowDown' ? 1 : -1) * (state.mode === 'grid' ? Math.max(1, Math.floor($('grid').clientWidth / layoutPrefs.gridSize)) : 1));
+    event.preventDefault(); navigate((event.key === 'ArrowDown' ? 1 : -1) * (state.mode === 'grid' ? gridLayout().columns : 1), event.shiftKey && state.mode === 'grid');
   }
   else if (event.key.toLowerCase() === 'p') { event.preventDefault(); void decide({ flag: 'pick' }); }
   else if (event.key.toLowerCase() === 'x') { event.preventDefault(); void decide({ flag: 'reject' }); }
@@ -680,11 +786,9 @@ function setDeleting(value) {
 }
 function removeFromSession(ids) {
   if (!ids.length) return;
-  const gone = new Set(ids), before = filtered(), index = before.findIndex(i => i.id === state.selected);
-  if (gone.has(state.selected)) {
-    // Keep the reviewer's place: select the next surviving photo, else the previous one.
-    const next = before.slice(index + 1).find(i => !gone.has(i.id)) ?? before.slice(0, Math.max(0, index)).reverse().find(i => !gone.has(i.id));
-    state.selected = next?.id ?? null;
+  const gone = new Set(ids), before = filtered();
+  if (before.some(i => gone.has(i.id) && state.marked.has(i.id))) {
+    state.selected = nextSurvivor(before, gone)?.id ?? null; resetSelection();
   }
   state.session.items = state.session.items.filter(i => !gone.has(i.id));
   for (const id of gone) { gridNodes.get(id)?.remove(); gridNodes.delete(id); filmNodes.delete(id); }
@@ -693,33 +797,35 @@ function removeFromSession(ids) {
   $('export').disabled = !state.session.items.length;
 }
 async function moveToTrash() {
-  const item = photo();
+  const item = photo(), count = selection().length;
   if (!item || item.trashed || state.deleting) return;
-  await decide({ trashed: true }, item);
-  toast(`Moved ${item.name} to Trash · ${api.platform === 'darwin' ? '⌘' : 'Ctrl+'}Z to undo`);
+  await decide({ trashed: true });
+  toast(`Moved ${count > 1 ? plural(count, 'photo') : item.name} to Trash · ${api.platform === 'darwin' ? '⌘' : 'Ctrl+'}Z to undo`);
 }
 async function restoreFromTrash() {
-  const item = photo();
+  const item = photo(), count = selection().length;
   if (!item?.trashed || state.deleting) return;
-  await decide({ trashed: false }, item);
-  toast(`Restored ${item.name}`);
+  await decide({ trashed: false });
+  toast(`Restored ${count > 1 ? plural(count, 'photo') : item.name}`);
 }
 $('trash-restore').onclick = () => void restoreFromTrash();
 function showDeletePrompt(mode) {
   const item = photo();
   if (!item || state.deleting || state.copy.running || state.busy) return;
   if (!trashAvailable()) mode = 'permanent';
-  deletePrompt = { id: item.id, mode, session: state.session.id, filter: state.filter };
-  $('delete-prompt-text').textContent = `${mode === 'trash' ? 'Move' : 'Permanently delete'} ${item.name}${item.paired ? ' + JPEG' : ''}${mode === 'trash' ? ` to the ${systemTrash}` : ''}?`;
+  const ids = selection().map(i => i.id);
+  deletePrompt = { ids, mode, session: state.session.id, view: viewKey() };
+  const name = ids.length > 1 ? plural(ids.length, 'photo') : `${item.name}${item.paired ? ' + JPEG' : ''}`;
+  $('delete-prompt-text').textContent = `${mode === 'trash' ? 'Move' : 'Permanently delete'} ${name}${mode === 'trash' ? ` to the ${systemTrash}` : ''}?`;
   $('delete-prompt').hidden = false;
 }
 function hideDeletePrompt() { deletePrompt = null; $('delete-prompt').hidden = true; }
 async function confirmDeletePrompt() {
-  const { id, mode, session, filter } = deletePrompt; hideDeletePrompt();
-  // Only delete the photo the prompt named, in the view it was asked from.
-  const item = state.session?.id === session && state.filter === filter && state.selected === id ? state.session.items.find(i => i.id === id) : null;
-  if (!item || document.querySelector('dialog[open]')) return;
-  await deletePhotos([id], mode);
+  if (!deletePrompt) return;
+  const { ids, mode, session, view } = deletePrompt; hideDeletePrompt();
+  const visible = new Set(filtered().map(i => i.id));
+  if (state.session?.id !== session || viewKey() !== view || !sameIds(ids) || !ids.every(id => visible.has(id)) || document.querySelector('dialog[open]')) return;
+  await deletePhotos(ids, mode);
 }
 document.addEventListener('pointerdown', () => { if (deletePrompt) hideDeletePrompt(); }, true);
 // The dialog's selection is its own state: saving the preference happens in
@@ -804,7 +910,7 @@ function syncSettings(value) {
   if (state.session) { gridNodes.clear(); $('grid-content').replaceChildren(); render(); }
   receiveDevices({ devices: state.devices, error: state.deviceError });
 }
-$('color-filter').onchange = () => { state.colorFilter = $('color-filter').value; render(); };
+$('color-filter').onchange = () => { state.colorFilter = $('color-filter').value; render(true); };
 function setSettingsTab(name) {
   document.querySelectorAll('[data-settings-tab]').forEach(button => { const active = button.dataset.settingsTab === name; button.classList.toggle('active', active); button.setAttribute('aria-pressed', String(active)); });
   document.querySelectorAll('[data-settings-page]').forEach(section => { section.hidden = section.dataset.settingsPage !== name; });
