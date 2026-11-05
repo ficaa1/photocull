@@ -3,6 +3,7 @@
 //! Node backend; see backend.rs.
 
 mod backend;
+mod logs;
 mod develop;
 pub mod export_encode;
 mod external;
@@ -20,6 +21,7 @@ use tauri_plugin_opener::OpenerExt;
 /// go through `delete_photos` and `save_manifest`, so the renderer never names
 /// a file to remove or overwrite.
 const RENDERER_METHODS: &[&str] = &[
+    "workspace-info", "settings-bundle-export", "settings-bundle-preview", "settings-bundle-apply", "diagnostics", "log-folder", "manual-card", "backup-start", "backup-status", "backup-cancel",
     "scan", "devices", "open-device", "test-destination", "copy-picks", "naming-preview", "cancel-copy", "decide", "decide-many",
     "app-info", "history", "metadata", "preview-status", "settings", "save-preset", "delete-preset", "settings-folder",
     "preview-settings", "preview-cache", "clear-preview-cache", "retry-preview", "focus", "visible", "export-xmp", "session-folder", "stats",
@@ -29,7 +31,9 @@ const RENDERER_METHODS: &[&str] = &[
 #[tauri::command]
 async fn backend(state: State<'_, Backend>, method: String, params: Vec<Value>) -> Result<Value, String> {
     if !RENDERER_METHODS.contains(&method.as_str()) { return Err(format!("Unknown request: {method}")); }
-    state.call(&method, Value::Array(params)).await
+    let result = state.call(&method, Value::Array(params)).await;
+    if let Err(error) = &result { logs::write(&format!("{method}: {error}")); }
+    result
 }
 
 #[tauri::command]
@@ -187,7 +191,7 @@ fn mac_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     // Undo/Redo are custom items: the predefined ones would swallow Cmd+Z
     // before the renderer could undo a culling decision.
     use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
-    let item = |id: &str, label: &str, accelerator: &str| MenuItemBuilder::with_id(id, label).accelerator(accelerator).build(app);
+    let item = |id: &str, label: &str, _accelerator: &str| MenuItemBuilder::with_id(id, label).build(app);
     let app_menu = SubmenuBuilder::new(app, "PhotoCull")
         .item(&PredefinedMenuItem::about(app, None, None)?)
         .item(&item("settings", "Settings…", "Cmd+,")?).separator()
@@ -232,11 +236,13 @@ pub fn run() {
             develop::export_photos, develop::lens_database, develop::download_lens_database])
         .setup(|app| {
             let handle = app.handle().clone();
+            logs::init(logs::data_dir().join("logs"));
             let backend = match Backend::spawn(&handle) {
                 Ok(backend) => backend,
                 Err(message) => {
                     // setup() runs on the main thread, where a blocking dialog
                     // would wait on itself; show it and quit once it is dismissed.
+                    logs::write(&message);
                     eprintln!("{message}");
                     let exit = handle.clone();
                     handle.dialog().message(message).title("PhotoCull could not start")
@@ -268,6 +274,7 @@ pub fn run() {
         .expect("error while building PhotoCull");
     app.run(|app, event| {
         if let RunEvent::Exit = event {
+            logs::write("PhotoCull shell closing");
             if let Some(backend) = app.try_state::<Backend>() { backend.shutdown(); }
         }
     });

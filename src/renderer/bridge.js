@@ -11,7 +11,7 @@
     subscribers.get(name).add(callback);
     return () => subscribers.get(name).delete(callback);
   };
-  const EVENTS = ['edit-shortcut', 'open-folder-shortcut', 'settings-shortcut', 'fullscreen-toggle', 'fullscreen-changed', 'devices-changed', 'copy-progress', 'preview-state', 'develop-progress', 'export-progress', 'lens-database-progress'];
+  const EVENTS = ['backup-progress','edit-shortcut', 'open-folder-shortcut', 'settings-shortcut', 'fullscreen-toggle', 'fullscreen-changed', 'devices-changed', 'copy-progress', 'preview-state', 'develop-progress', 'export-progress', 'lens-database-progress'];
 
   let backend, imageBase, platform, host, shell;
   if (tauri) {
@@ -76,6 +76,18 @@
     platform,
     appInfo: () => backend('app-info'),
     openProjectLink: url => tauri ? shell('open_project_link', { url }) : window.open(url, '_blank', 'noopener,noreferrer'),
+    workspaceInfo: () => backend('workspace-info'),
+    bundleExport: async options => { const file=await host.pickSaveFile('photocull-settings.json','PhotoCull settings','json');return file?backend('settings-bundle-export',file,options):null; },
+    bundlePreview: (value,options) => backend('settings-bundle-preview',value,options),
+    bundleApply: token => backend('settings-bundle-apply',token),
+    diagnostics: details => backend('diagnostics',details),
+    displayColor: () => tauri ? shell('display_color_status',{}) : Promise.resolve({mode:'browser'}),
+    openLogs: async () => host.openFolder(await backend('log-folder')),
+    manualCard: source => backend('manual-card',source),
+    backupStart: (source,destination,options) => backend('backup-start',source,destination,options),
+    backupStatus: source => backend('backup-status',source),
+    backupCancel: () => backend('backup-cancel'),
+    onBackupProgress: callback => subscribe('backup-progress',callback),
     canDevelop: !!tauri,
     // Recipes and per-photo develop state (Node backend).
     recipes: () => backend('recipes'),

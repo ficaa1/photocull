@@ -415,3 +415,22 @@ dialog::backdrop { background: #0a1015b0; }
 
 .about-notices { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; font-size: 12px; user-select: text; }
 [data-settings-page="about"] a { color: inherit; text-decoration: underline; }
+/* Command palette and portable workspace preferences. */
+#command-palette { width: min(720px, 90vw); }
+#command-query { width: 100%; margin: 14px 0; padding: 12px; }
+#command-results { max-height: 55vh; overflow: auto; }
+.command-option { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px; cursor: pointer; }
+.command-option[aria-selected="true"] { background: #35433e; outline: 1px solid #8db49b; }
+.command-option[aria-disabled="true"] { opacity: .5; }
+.keyboard-row { display: grid; grid-template-columns: minmax(120px,1fr) minmax(80px,auto) auto auto auto; gap: 8px; align-items: center; margin: 8px 0; }
+[data-settings-page="keyboard"] { max-height: 55vh; overflow: auto; }
+.settings-tabs { flex-wrap: wrap; }
+#settings-dialog textarea, #settings-dialog [data-settings-page="general"] input:not([type]), #backup-dialog input { width: 100%; }
+#welcome-panel { position: fixed; z-index: 15; bottom: 30px; left: 30px; width: min(640px,90vw); padding: 20px; margin: 12px; border: 1px solid #65766b; border-radius: 8px; max-width: 640px; background: var(--panel, #202623); }
+#welcome-panel .shortcut-list { max-height: 220px; overflow: auto; }
+#backup-dialog { width: min(680px,90vw); }
+#backup-dialog label { display: block; margin: 12px 0; }
+#backup-dialog pre, #bundle-changes { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 28vh; overflow: auto; }
+.device-backup { padding: 0 8px 10px; }
+.device-backup button { font-size: 11px; }
+.backup-safe { color: #a3dbab; font-size: 12px; }

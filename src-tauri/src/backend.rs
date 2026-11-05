@@ -78,6 +78,7 @@ impl Backend {
                     if let Some(tx) = reader_pending.lock().unwrap().remove(&id) { let _ = tx.send(reply); }
                 }
             }
+            crate::logs::write("PhotoCull backend stream closed");
             // The backend exited: fail whatever is still waiting.
             for (_, tx) in reader_pending.lock().unwrap().drain() {
                 let _ = tx.send(Err("PhotoCull's backend stopped. Restart the app.".into()));

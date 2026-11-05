@@ -71,17 +71,7 @@
   }
   // Maps a keydown to a loupe action, or null if the loupe does not use it.
   function keyAction(event) {
-    const command = event.ctrlKey || event.metaKey;
-    if (command && !event.altKey) {
-      if (['+', '='].includes(event.key) || ['Equal', 'NumpadAdd'].includes(event.code)) return 'zoom-in';
-      if (['-', '_'].includes(event.key) || ['Minus', 'NumpadSubtract'].includes(event.code)) return 'zoom-out';
-      if (event.key === '0' || ['Digit0', 'Numpad0'].includes(event.code)) return 'fit';
-      return null;
-    }
-    if (command || event.altKey) return null;
-    if (event.key === ' ') return 'space';
-    if (event.key === 'z' || event.key === 'Z') return 'toggle';
-    return null;
+    return (typeof module !== 'undefined' && module.exports ? require('./commands.js') : root.PhotoCullCommands).loupeAction(event);
   }
 
   // Loads low-priority images in order, at most `limit` at once (so prefetches
@@ -374,8 +364,7 @@
     }
 
     // Returns true if the loupe handled the key.
-    handleKey(event) {
-      const action = keyAction(event); if (!action) return false;
+    handleKey(event, action = keyAction(event)) { if (!action) return false;
       event.preventDefault();
       if (action === 'zoom-in') this.step(1);
       else if (action === 'zoom-out') this.step(-1);

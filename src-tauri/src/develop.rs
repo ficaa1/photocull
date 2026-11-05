@@ -224,7 +224,7 @@ impl Engine {
         if db.is_none() && lightcraft_engine::lensfun_download::installed(&self.lens_dir) {
             match LensDb::load_dir(&self.lens_dir) {
                 Ok((loaded, _)) => *db = Some(Arc::new(loaded)),
-                Err(e) => eprintln!("lens database: {e}"),
+                Err(e) => { crate::logs::write(&format!("lens database: {e}")); eprintln!("lens database: {e}"); },
             }
         }
         let generation = db.as_ref().map_or(0, |d| Arc::as_ptr(d) as usize);

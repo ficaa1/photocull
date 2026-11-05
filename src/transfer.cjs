@@ -29,13 +29,13 @@ async function existing(file) {
 
 class TransferService {
   constructor({ onProgress = () => {}, captureDate = async () => null, metadataWriter } = {}) { this.onProgress = onProgress; this.captureDate = captureDate; this.active = null; this.metadataWriter = metadataWriter || new MetadataWriter(); }
-  async copy(session, destination, { includeJpeg = false, includeXmp = false, metadataSettings, naming, folders, embedMetadata = false } = {}) {
+  async copy(session, destination, { includeJpeg = false, includeXmp = false, metadataSettings, naming, folders, embedMetadata = false, verify = false } = {}) {
     if (this.active) throw new Error('Another copy is already running.');
     const validated = normalizeSettings({ naming: naming || {}, folders: folders || {} });
     naming = validated.naming; folders = validated.folders;
     const controller = new AbortController();
     const operation = { id: randomUUID(), controller }; this.active = operation;
-    const work = this.run(operation, session, destination, { includeJpeg: includeJpeg === true, includeXmp: includeXmp === true, metadataSettings, naming, folders, embedMetadata: embedMetadata === true });
+    const work = this.run(operation, session, destination, { includeJpeg: includeJpeg === true, includeXmp: includeXmp === true, metadataSettings, naming, folders, embedMetadata: embedMetadata === true, verify: verify === true });
     operation.work = work;
     try { return await work; } finally { if (this.active === operation) this.active = null; }
   }
@@ -134,6 +134,15 @@ class TransferService {
             if ((await output.stat()).size !== (file.bytes?.length ?? file.stat.size)) throw new Error('Copy size did not match the source.');
           } finally { await Promise.allSettled([input?.close(), output?.close()]); }
         }
+        if (options.verify) {
+          progress.state = 'verifying'; emit(true);
+          const { hashFile } = require('./backup.cjs'), { createHash } = require('node:crypto');
+          for (const file of group.files) {
+            const source = file.bytes ? createHash('sha256').update(file.bytes).digest('hex') : (await hashFile(file.source, signal)).hash;
+            if ((await hashFile(path.join(root,file.relative),signal)).hash !== source) throw new Error('Copy verification failed: hash mismatch.');
+          }
+          progress.state = 'copying';
+        }
         if (options.embedMetadata) {
           for (const file of group.files.filter(file => file.source)) {
             if (signal.aborted) throw canceled();
@@ -143,6 +152,7 @@ class TransferService {
           progress.state = 'copying';
         }
         if (signal.aborted) throw canceled();
+        if (options.verify) progress.verified = (progress.verified || 0) + group.files.length;
         progress.copied++; progress.copiedFiles += created.length;
       } catch (error) {
         const cleanupErrors = [];

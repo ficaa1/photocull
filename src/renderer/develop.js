@@ -32,7 +32,6 @@
       this.queue = new L.RenderQueue((v, settled) => v.result ? (this.resultFrame ||= this.api.developResult(v.session,v.id).catch(e=>{this.resultFrame=null;throw e;})) : this.api.developRender(v.session, v.id, v.settings, settled), (frame, job) => this.frame(frame,job), e => this.message(e.message));
       this.api.onDevelopProgress(p => { if (this.batch?.phase === 'develop') { this.progress.max = p.total || 1; this.progress.value = p.done || 0; this.batchText.textContent = `Developing ${Math.min((p.done || 0) + 1, p.total)} of ${p.total}${p.name ? ` — ${p.name}` : ''}`; } });
       this.api.onLensDatabaseProgress(p => { this.lensDownload.textContent = `Downloading lens database: ${p.done} / ${p.total}`; });
-      document.addEventListener('keydown', e => this.keydown(e), true);
       window.addEventListener('pagehide', () => { void this.flush(); this.queue.invalidate(); this.releaseFrame(); });
     }
     build() {
@@ -299,13 +298,6 @@
     }
     async lensState(token) { try {const db=await this.api.lensDatabase();if(token!==this.token)return;this.lensDownload.hidden=db.installed;this.lensDownload.textContent=`Download lens database (${db.megabytes} MB)`;}catch(e){if(token===this.token)this.lensStatus.textContent=e.message;} }
     async downloadLens() {this.lensDownload.disabled=true;try{await this.api.downloadLensDatabase();this.key='';this.sync(this.context);}finally{this.lensDownload.disabled=false;} }
-    keydown(e) {
-      if(!this.active || document.querySelector('dialog[open]') || ['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable)return;
-      const key=e.key.toLowerCase(),mod=e.ctrlKey||e.metaKey;
-      if(mod&&e.shiftKey&&['c','v'].includes(key)){e.preventDefault();e.stopImmediatePropagation();if(key==='c')this.copy();else void this.paste().catch(err=>this.host.toast(err.message));return;}
-      if(mod || e.altKey)return;
-      if(key==='j' || key==='\\'){e.preventDefault();e.stopImmediatePropagation();key==='j'?this.toggleClipping():this.toggleBefore();}
-    }
     buildBatch() {
       this.dialog=node('dialog',{id:'develop-batch-dialog','aria-labelledby':'develop-batch-title'});
       this.batchText=node('p',{id:'develop-batch-status',role:'status','aria-live':'polite'});this.batchFolder=node('p',{id:'develop-batch-folder',class:'subtle small'});

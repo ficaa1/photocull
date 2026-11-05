@@ -1,0 +1,11 @@
+# Workspace changes — local validation
+
+Implemented searchable commands and recent/filename navigation; shortcut recording, conflict checks and resets; portable settings bundles with preview, mapping and backup; skippable welcome; local diagnostics/log rotation; verified resumable complete-card backup; optional verification for Copy picks; configurable card layouts/manual roots and backup naming.
+
+Decisions: existing copy naming and finished-image export presets remain their defaults UI. Settings import replaces bundle-owned user configuration, with a complete restorable backup first. Portable export excludes editor paths, remembered hand-off folders and manual card roots; command arguments remain visible for review. SHA-256 uses built-in Node crypto. Conflicting destination files are kept and reported; no source files are deleted or formatted. Device refresh invalidates saved verification using source inventories and destination stamps; explicit Check verified backup rereads every hash. Symbolic links and empty cards never produce a complete backup claim. Keyboard defaults and aliases live in one declarative table; focus/widget controls remain native.
+
+Local measurement, WSL, temporary 64 MiB binary: one SHA-256 read 263.8 ms (about 243 MiB/s); copy plus complete repeated source/destination verification 1864.4 ms. This is a cached local filesystem measurement, not SD-card throughput.
+
+Node suite: 128 tests, 126 passed, two pre-existing optional RAW fixture skips. UI smokes: baseline, settings (temporary copied fixtures), Develop and workspace screens passed without renderer errors. Workspace smoke uses generated photos and a mocked card, and exercises palette, customized shortcuts/help, import preview/backup, welcome and changed-card detection. Backup tests inject corrupt copied bytes and cover restart, cancellation/resume, conflicts, links and new/changed files. Windows Rust test/build results are recorded in the pull request.
+
+No physical cards or owner settings were used. No new dependencies. Native macOS launch remains unverified; browser smokes exercise the shared renderer. Native file dialogs/clipboard and real-card throughput require an interactive desktop/card check.

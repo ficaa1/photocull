@@ -26,7 +26,10 @@ const { RecipeStore, planExport } = require('./develop.cjs');
 const { planTiffs, writableFolder } = require('./develop-plan.cjs');
 const { PreviewService } = require('./previews.cjs');
 const { TransferService } = require('./transfer.cjs');
-const { DeviceMonitor } = require('./devices.cjs');
+const { BackupService } = require('./backup.cjs');
+const { SettingsBundles } = require('./settings-bundle.cjs');
+const { createLogger, diagnostics } = require('./diagnostics.cjs');
+const { DeviceMonitor, discoverDevices } = require('./devices.cjs');
 const { renderName, needsCapture } = require('./renderer/naming.js');
 const { normalizeSettings } = require('./preferences.cjs');
 const { SettingsStore } = require('./settings.cjs');
@@ -38,7 +41,7 @@ console.log = console.info = console.debug = console.error;
 
 const rendererDir = path.join(__dirname, 'renderer');
 const RENDERER_FILES = new Map([['index.html', 'text/html'], ['styles.css', 'text/css'], ['app.js', 'text/javascript'],
-  ['histogram.js', 'text/javascript'], ['develop.js', 'text/javascript'], ['export.js', 'text/javascript'],
+  ['commands.js', 'text/javascript'], ['histogram.js', 'text/javascript'], ['develop.js', 'text/javascript'], ['export.js', 'text/javascript'],
   ['naming.js', 'text/javascript'], ['image-view.js', 'text/javascript'], ['loupe.js', 'text/javascript'], ['bridge.js', 'text/javascript']]);
 const inside = (parent, child) => { const rel = path.relative(parent, child); return rel === '' || !!rel && !rel.startsWith('..') && !path.isAbsolute(rel); };
 
@@ -54,6 +57,12 @@ function defaultDataDir() {
 
 async function start() {
   const dataDir = path.resolve(process.env.PHOTOCULL_DATA_DIR || defaultDataDir());
+  const logger = createLogger(dataDir);
+  const stderr=console.error.bind(console);
+  console.error=(...args)=>{logger.write('error',...args);stderr(...args);};
+  console.warn=(...args)=>{logger.write('warn',...args);stderr(...args);};
+  console.log=console.info=console.debug=console.error;
+  logger.write('info','PhotoCull sidecar started %s %s',process.version,process.platform);
   const token = randomBytes(24).toString('hex');
   const listeners = new Set();
   const send = (event, payload) => {
@@ -65,7 +74,8 @@ async function start() {
   const library = new Library(dataDir, { settings: () => settings.value });
   let previews;
   const transfers = new TransferService({ onProgress: value => send('copy-progress', value), captureDate: item => previews.metadata(item).then(data => data.captured) });
-  const devices = new DeviceMonitor({ onChange: value => send('devices-changed', value),
+  const backups = new BackupService(dataDir, { onProgress: value => send('backup-progress', value) });
+  const devices = new DeviceMonitor({ discover: async () => { const found=await discoverDevices(settings.value);for(const device of found)device.backup=await backups.snapshot(device.root,'volume:'+device.identity).catch(()=>null);return found; }, onChange: value => send('devices-changed', value),
     ...(smoke ? { discover: async () => process.env.PHOTOCULL_TEST_DEVICES ? JSON.parse(await fs.readFile(process.env.PHOTOCULL_TEST_DEVICES, 'utf8')) : [] } : {}) });
   const GB = 1024 ** 3;
   previews = new PreviewService(path.join(dataDir, 'previews'), { rendering: settings.value.rawRendering, maxDiskBytes: settings.value.previewCacheGB * GB, onState: status => send('preview-state', status) });
@@ -80,10 +90,28 @@ async function start() {
   let deleting = false;
   const recipes = new RecipeStore(settings.folder);
   await recipes.init();
+  const bundles = new SettingsBundles(settings, recipes);
+  const requireIdle = () => { if(deleting || transfers.active || backups.active)throw new Error('Wait for the current file operation to finish.'); };
+  const backupSource = async source => { if(typeof source !== 'string' || !path.isAbsolute(source))throw new Error('Choose a card or folder.');const real=await fs.realpath(source);if(!(await fs.stat(real)).isDirectory())throw new Error('Choose a folder.');return real; };
   previews.editorName = id => settings.value.editors.find(e=>e.id===id)?.name;
+  let importing=false;
   const methods = {
     'app-info': async () => ({ name: 'PhotoCull', version: require('../package.json').version, license: 'MIT',
       copyright: 'Copyright (C) 2026 Filip Biljic', notices: await fs.readFile(path.join(__dirname, '..', 'THIRD_PARTY_NOTICES.md'), 'utf8') }),
+    'workspace-info': () => ({ smoke, welcome: !smoke || process.env.PHOTOCULL_TEST_WELCOME === '1' }),
+    'settings-bundle-export': (file,options) => { requireIdle();return bundles.export(file,options); },
+    'settings-bundle-preview': (input,options) => { requireIdle();return bundles.preview(input,options); },
+    'settings-bundle-apply': async token => { requireIdle();importing=true;let result;try{result=await bundles.apply(token);}finally{importing=false;}previews.setPolicy(settings.value.rawRendering);await previews.setDiskLimit(settings.value.previewCacheGB * GB);return result; },
+    'diagnostics': details => diagnostics(dataDir,settings.value,details),
+    'log-folder': () => logger.folder,
+    'manual-card': async source => { requireIdle();const root=await backupSource(source);await settings.update({manualCards:[...new Set([...settings.value.manualCards,root])]});return devices.refresh(); },
+    'backup-start': async (source,destination,options={}) => {
+      requireIdle(); source=await backupSource(source);requireIdle();
+      const device=devices.devices.find(d=>d.root===source);
+      return backups.start(source,destination,{identity:device ? 'volume:'+(device.identity||device.id) : 'folder:'+source,label:device?.label || path.basename(source),template:options.template || settings.value.backupTemplate});
+    },
+    'backup-status': async source => { source=await backupSource(source);const device=devices.devices.find(d=>d.root===source);return backups.status(source,device ? 'volume:'+(device.identity||device.id) : 'folder:'+source); },
+    'backup-cancel': () => backups.cancel(),
     // Develop (rendering is in the shell, src-tauri/src/develop.rs).
     'recipes': () => ({ recipes: recipes.list(), defaultRecipe: settings.value.defaultRecipe, warning: recipes.warning }),
     'save-recipe': recipe => recipes.save(recipe || {}),
@@ -177,7 +205,7 @@ async function start() {
       return { ...session, deviceId: device.id, deviceRoot: device.root };
     },
     'test-destination': () => smoke ? process.env.PHOTOCULL_TEST_DESTINATION || null : null,
-    'copy-picks': (session, destination, options) => deleting ? Promise.reject(new Error('Wait for the deletion to finish.')) : transfers.copy(library.get(session), destination, { ...options, metadataSettings: settings.value,
+    'copy-picks': (session, destination, options) => deleting || backups.active ? Promise.reject(new Error('Wait for the current file operation to finish.')) : transfers.copy(library.get(session), destination, { ...options, metadataSettings: settings.value,
       naming: options?.naming || settings.value.naming, folders: options?.folders || settings.value.folders, embedMetadata: options?.embedMetadata ?? settings.value.copyMetadata }),
     'naming-preview': async (session, naming, id = null, extension = null) => {
       naming = normalizeSettings({ naming }).naming;
@@ -233,7 +261,7 @@ async function start() {
     'session-folder': session => library.get(session).folder,
     'deletion-plan': async (session, ids) => {
       if (deleting) throw new Error('Another deletion is already running.');
-      if (transfers.active) throw new Error('Wait for the copy to finish.');
+      if (backups.active || transfers.active) throw new Error('Wait for the copy to finish.');
       deleting = true;
       try { return await library.deletionPlan(session, ids); } catch (error) { deleting = false; throw error; }
     },
@@ -264,8 +292,9 @@ async function start() {
     };
   }
   const call = async (method, params) => {
+    if(importing && ['settings','save-preset','delete-preset','save-recipe','delete-recipe','duplicate-recipe','import-recipes'].includes(method) && params?.[0] !== undefined)throw new Error('Wait for settings import to finish.');
     if (!Object.hasOwn(methods, method)) throw new Error(`Unknown request: ${method}`);
-    return methods[method](...(Array.isArray(params) ? params : []));
+    try { return await methods[method](...(Array.isArray(params) ? params : [])); } catch(error) { logger.write('error','%s: %s',method,error.message);throw error; }
   };
 
   const server = http.createServer(async (req, res) => {
@@ -313,7 +342,7 @@ async function start() {
   let closing = null;
   const shutdown = () => closing ??= (async () => {
     server.close();
-    await Promise.allSettled([library.writes, settings.writes, previews.close(), transfers.close(), devices.close()]);
+    await Promise.allSettled([library.writes, settings.writes, previews.close(), transfers.close(), backups.close(), devices.close()]);
     process.exit(0);
   })();
   methods.shutdown = () => { void shutdown(); };

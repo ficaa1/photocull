@@ -20,7 +20,7 @@ function normalizeEditors(input) {
     if (!['exit', 'watch'].includes(e.detect) || typeof e.multiple !== 'boolean' || e.multiple && (!args.includes('{files}') || args.some(a=>a.includes('{file}')))) throw new Error('Multi-file editors must use {files}; choose exit or watch detection.');
     const h = { ...dehancerPreset().handoff, ...e.handoff };
     if (!['tiff', 'png', 'jpeg'].includes(h.format) || ![8, 16].includes(h.bitDepth) || h.format === 'jpeg' && h.bitDepth !== 8 || !['none', 'lzw', 'deflate'].includes(h.compression) || !SPACES.includes(h.colorSpace) || !Number.isInteger(h.jpegQuality) || h.jpegQuality < 1 || h.jpegQuality > 100) throw new Error('Invalid hand-off format, depth, compression, color space or JPEG quality.');
-    return { id: e.id, name: e.name.trim(), path: e.path.trim(), args: [...args], handoff: h, detect: e.detect, multiple: e.multiple };
+    return { needsPath: e.needsPath === true || !e.path.trim(), id: e.id, name: e.name.trim(), path: e.path.trim(), args: [...args], handoff: h, detect: e.detect, multiple: e.multiple };
   });
   if (!ids.has('dehancer')) throw new Error('The built-in Dehancer preset can be reset, but cannot be removed.');
   return editors;

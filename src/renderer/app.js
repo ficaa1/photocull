@@ -124,7 +124,7 @@ function renderDevices() {
     button.title = device.photoRoot;
     button.disabled = state.busy || state.copy.running || state.deleting;
     button.onclick = () => openDevice(device);
-    return button;
+    const row=document.createElement('div');row.append(button,deviceBackupRow(device));return row;
   }));
   $('device-status').textContent = removed ? 'Card disconnected' : state.deviceError || '';
 }
@@ -138,6 +138,7 @@ async function openDevice(device) {
 }
 function receiveDevices(snapshot) {
   const previous = new Set(state.devices.map(d => d.id));
+  for(const device of state.devices)if(!snapshot.devices.some(d=>d.id===device.id))cardStatuses.delete(device.root);
   state.devices = snapshot.devices; state.deviceError = snapshot.error;
   renderDevices();
   const cameras = state.devices.filter(d => d.camera);
@@ -515,11 +516,11 @@ async function history(direction) {
 }
 
 api.onEdit(() => hideDeletePrompt());
-api.onEdit(direction => { if (['INPUT','TEXTAREA'].includes(document.activeElement?.tagName)) document.execCommand(direction); else if (!document.querySelector('dialog[open]')) void history(direction); });
+api.onEdit(direction => { if (['INPUT','TEXTAREA'].includes(document.activeElement?.tagName)) document.execCommand(direction); else if (!document.querySelector('dialog[open]')) commands.execute(direction); });
 api.onOpenFolder(() => hideDeletePrompt());
-api.onOpenFolder(() => { if (!document.querySelector('dialog[open]')) void openFolder(); });
+api.onOpenFolder(() => { if (!document.querySelector('dialog[open]')) commands.execute('open'); });
 api.onSettings(() => hideDeletePrompt());
-api.onSettings(() => { if (!document.querySelector('dialog[open]')) void openSettings(); });
+api.onSettings(() => { if (!document.querySelector('dialog[open]')) commands.execute('settings'); });
 document.body.classList.toggle('platform-mac', api.platform === 'darwin');
 if (api.platform === 'darwin') document.querySelectorAll('#help-dialog kbd').forEach(key => { key.textContent = key.textContent.replaceAll('Ctrl', '⌘').replaceAll('Alt', '⌥'); });
 $('open-folder').onclick = openFolder; $('empty-open').onclick = openFolder;
@@ -576,7 +577,7 @@ $('fullscreen').onclick = () => { $('fullscreen').blur(); void setFullscreen(); 
 api.onFullscreen(status => { if (!fullscreenPending) applyFullscreen(status.fullscreen); });
 api.onFullscreenToggle(() => hideDeletePrompt());
 api.onFullscreenToggle(() => { if (!document.querySelector('dialog[open]')) void setFullscreen(); });
-$('shortcuts').onclick = () => $('help-dialog').showModal();
+$('shortcuts').onclick = () => openHelp();
 $('export').onclick = () => {
   $('export-results').hidden = true;
   const count = state.session.items.filter(i => i.edited).length;
@@ -592,7 +593,7 @@ function renderCopyOptions() {
   $('copy-destination').disabled = state.copy.running;
   $('copy-jpeg').disabled = state.copy.running;
   $('copy-xmp').disabled = state.copy.running;
-  for (const id of ['copy-metadata','copy-folder-mode','copy-folder-name']) $(id).disabled = state.copy.running;
+  for (const id of ['copy-verify','copy-metadata','copy-folder-mode','copy-folder-name']) $(id).disabled = state.copy.running;
   $('copy-destination-path').textContent = state.copy.destination || 'Choose folder…';
   $('copy-cancel').hidden = !state.copy.running;
   $('copy-reveal').hidden = !state.copy.copiedTo || state.copy.running;
@@ -624,14 +625,14 @@ function showCopyProgress(progress) {
 }
 api.onCopyProgress(progress => { if (state.copy.running) showCopyProgress(progress); });
 $('copy-start').onclick = async () => {
-  if (state.copy.running || state.pendingSaves || state.deleting) return;
+  if (state.busy || state.copy.running || state.pendingSaves || state.deleting) return;
   state.copy.running = true; state.copy.copiedTo = null;
   $('export-results').hidden = true;
   $('copy-status').textContent = 'Checking picked originals…';
   $('open-folder').disabled = true; $('empty-open').disabled = true;
   renderCopyOptions(); renderDevices();
   try {
-    const result = await api.copyPicks(state.session.id, state.copy.destination, { includeJpeg: $('copy-jpeg').checked, includeXmp: $('copy-xmp').checked, embedMetadata: $('copy-metadata').checked, naming: readNaming('copy'), folders: readFolders('copy') });
+    const result = await api.copyPicks(state.session.id, state.copy.destination, { verify: $('copy-verify').checked, includeJpeg: $('copy-jpeg').checked, includeXmp: $('copy-xmp').checked, embedMetadata: $('copy-metadata').checked, naming: readNaming('copy'), folders: readFolders('copy') });
     state.copy.copiedTo = result.destination;
     showCopyProgress(result);
     const heading = `${result.state === 'canceled' ? 'Canceled · ' : ''}${result.copied} copied · ${result.skipped.length} skipped · ${result.failures.length} failed`;
@@ -664,6 +665,33 @@ $('export-json').onclick = async () => {
 };
 $('grid').onscroll = requestGrid;
 new ResizeObserver(requestGrid).observe($('grid'));
+const commandActions = {
+  settings: () => openSettings(), open: () => openFolder(), export: () => imageExport.open(),
+  'fullscreen-key': () => setFullscreen(), fullscreen: () => setFullscreen(),
+  'switch-view': () => setMode(state.mode === 'review' ? 'grid' : 'review'), edit: () => developView.openBatch(), original: () => toggleOriginal(),
+  escape: () => { if (state.marked.size > 1) { resetSelection(); render(); } else if (state.fullscreen) return setFullscreen(false); else if (state.mode === 'review' && loupe.zoomed) loupe.fit(); },
+  undo: () => history('undo'), redo: () => history('redo'), 'select-all': () => { state.marked = new Set(filtered().map(i => i.id)); render(); },
+  delete: () => state.filter === 'trash' ? showDeletePrompt(deleteMode()) : moveToTrash(), 'delete-permanent': () => showDeletePrompt('permanent'), restore: () => restoreFromTrash(),
+  sources: () => togglePane('sources'), details: () => togglePane('details'),
+  'review-space': () => { if (photo()) setMode('review'); }, 'review-zoom': () => { if (photo()) { setMode('review'); loupe.zoomIn(); } },
+  'view-grid': () => setMode('grid'), 'view-review': () => setMode('review'), 'view-develop': () => setMode('develop'), help: () => openHelp(),
+  'develop-copy': () => developView.copy(), 'develop-paste': () => developView.paste(), clipping: () => developView.toggleClipping(), before: () => developView.toggleBefore(),
+  palette: () => openPalette(), 'go-photo': () => openPalette('> '), backup: () => openBackup(), 'treat-card': () => treatCard(), welcome: () => showWelcome(), diagnostics: () => copyDiagnostics(), logs: () => api.openLogs(),
+};
+for (let n=0;n<=8;n++) commandActions['color-alt-'+n] = () => decide({ color: n ? String(n) : '' });
+for (let n=0;n<=5;n++) commandActions['rating-'+n] = () => decide({ rating: n });
+for (let n=6;n<=9;n++) commandActions['color-'+n] = () => decide({ color: String(n-5) });
+for (const flag of ['pick','reject','none']) commandActions['flag-'+flag] = () => decide({ flag });
+for (const direction of ['left','right','up','down']) for (const extend of [false,true]) commandActions[(extend?'extend-':'navigate-')+direction] = () => navigate((['left','up'].includes(direction)?-1:1) * (['up','down'].includes(direction) && state.mode==='grid' ? gridLayout().columns : 1), extend && (!['up','down'].includes(direction) || state.mode==='grid'));
+for (const [id,action] of Object.entries({'zoom-in':'zoom-in','zoom-out':'zoom-out',fit:'fit','zoom-toggle':'toggle',pan:'space'})) commandActions[id] = event => loupe.handleKey(event, action);
+let recentCommands = [], panKey = null;
+const commands = PhotoCullCommands.create({ actions: Object.fromEntries(Object.entries(commandActions).map(([id,run]) => [id,event => {
+  if(id==='pan'){if(!event.key)return loupe.handleKey(event,'toggle');panKey=event.code || event.key;}
+  try { return Promise.resolve(run(event)).catch(error=>toast(error.message)); } catch(error) { toast(error.message); }
+}])), context: () => state.mode, custom: () => state.settings.shortcuts || {},
+  enabled: command => (!command.when || state.filter===command.when) && (!/^(flag-|rating-|color-|navigate-|extend-|delete|restore|select-all|go-photo)/.test(command.id) || !!photo()) && (!['zoom-in','zoom-out','fit','zoom-toggle','pan','review-zoom'].includes(command.id) || !!photo()),
+  onRun: command => { if(command.id!=='palette'){ recentCommands=[command.id,...recentCommands.filter(id=>id!==command.id)].slice(0,12); try{localStorage.setItem('photocull-recent-commands',JSON.stringify(recentCommands));}catch{} } } });
+try { recentCommands=JSON.parse(localStorage.getItem('photocull-recent-commands')||'[]').filter(id=>commands.commands.some(c=>c.id===id)).slice(0,12); } catch {}
 document.addEventListener('keydown', event => {
   // A dialog opened over the prompt (e.g. from a native menu) owns the keyboard.
   if (deletePrompt && document.querySelector('dialog[open]')) hideDeletePrompt();
@@ -675,53 +703,9 @@ document.addEventListener('keydown', event => {
     if (event.key === 'Enter' && !event.repeat) void confirmDeletePrompt(); else hideDeletePrompt();
     return;
   }
-  const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable;
   if (document.querySelector('dialog[open]')) return;
-  if ((event.ctrlKey || event.metaKey) && event.key === ',') { event.preventDefault(); void openSettings(); return; }
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') { event.preventDefault(); void openFolder(); return; }
-  if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'e') { event.preventDefault(); void imageExport.open(); return; }
-  if (event.key === 'F11') { event.preventDefault(); void setFullscreen(); return; }
-  if (event.key === 'Tab' && event.ctrlKey) { event.preventDefault(); setMode(state.mode === 'review' ? 'grid' : 'review'); return; }
-  if (typing) return;
-  if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'e') { event.preventDefault(); void developView.openBatch().catch(e=>toast(e.message)); return; }
-  if(event.key==='\\' && !event.ctrlKey && !event.metaKey && !event.altKey && state.mode!=='develop'){event.preventDefault();toggleOriginal();return;}
-  if ([' ', 'Enter'].includes(event.key) && document.activeElement?.matches('button, summary')) return;
-  if (event.key === 'Escape') { event.preventDefault(); if (state.marked.size > 1) { resetSelection(); render(); } else if (state.fullscreen) void setFullscreen(false); else if (state.mode === 'review' && loupe.zoomed) loupe.fit(); return; }
-  if (event.key.toLowerCase() === 'f' && !event.ctrlKey && !event.metaKey && !event.altKey) { event.preventDefault(); void setFullscreen(); return; }
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); void history(event.shiftKey ? 'redo' : 'undo'); return; }
-  if (additive(event) && event.key.toLowerCase() === 'a') { event.preventDefault(); state.marked = new Set(filtered().map(i => i.id)); render(); return; }
-  if (event.altKey && /^[0-8]$/.test(event.key)) { event.preventDefault(); void decide({ color: event.key === '0' ? '' : event.key }); return; }
-  // Z, Space (hold to pan), Ctrl/Cmd +/-/0.
-  if (state.mode === 'review' && photo() && loupe.handleKey(event)) return;
-  if (event.ctrlKey || event.metaKey || event.altKey) return;
-  if (event.key === 'Delete' || event.key === 'Backspace') {
-    // Del moves the photo to PhotoCull's Trash; in the Trash view it deletes
-    // for real. Shift+Del always asks to delete permanently.
-    event.preventDefault();
-    if (event.shiftKey) showDeletePrompt('permanent');
-    else if (state.filter === 'trash') showDeletePrompt(deleteMode());
-    else void moveToTrash();
-    return;
-  }
-  if (event.key.toLowerCase() === 'r' && state.filter === 'trash') { event.preventDefault(); void restoreFromTrash(); return; }
-  if (event.key.toLowerCase() === 'b') { event.preventDefault(); togglePane('sources'); return; }
-  if (event.key.toLowerCase() === 'i') { event.preventDefault(); togglePane('details'); return; }
-  if (event.key === 'ArrowLeft') { event.preventDefault(); navigate(-1, event.shiftKey); }
-  else if (event.key === 'ArrowRight') { event.preventDefault(); navigate(1, event.shiftKey); }
-  else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-    event.preventDefault(); navigate((event.key === 'ArrowDown' ? 1 : -1) * (state.mode === 'grid' ? gridLayout().columns : 1), event.shiftKey && state.mode === 'grid');
-  }
-  else if (event.key.toLowerCase() === 'p') { event.preventDefault(); void decide({ flag: 'pick' }); }
-  else if (event.key.toLowerCase() === 'x') { event.preventDefault(); void decide({ flag: 'reject' }); }
-  else if (event.key.toLowerCase() === 'u') { event.preventDefault(); void decide({ flag: 'none' }); }
-  else if (/^[0-5]$/.test(event.key)) { event.preventDefault(); void decide({ rating: Number(event.key) }); }
-  else if (/^[6-9]$/.test(event.key)) { event.preventDefault(); void decide({ color: String(Number(event.key) - 5) }); }
-  else if (event.key === ' ' && state.mode === 'grid') { event.preventDefault(); if (photo()) setMode('review'); }
-  else if (event.key.toLowerCase() === 'z' && state.mode === 'grid') { event.preventDefault(); if (photo()) { setMode('review'); loupe.zoomIn(); } }
-  else if (event.key.toLowerCase() === 'g') { event.preventDefault(); setMode('grid'); }
-  else if (event.key.toLowerCase() === 'e') { event.preventDefault(); setMode('review'); }
-  else if (event.key.toLowerCase() === 'd') { event.preventDefault(); setMode('develop'); }
-  else if (event.key === '?') { event.preventDefault(); $('help-dialog').showModal(); }
+  commands.dispatch(event, { typing: ['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable,
+    button: document.activeElement?.matches('button, summary') });
 });
 
 // Deletion. Camera cards have no trash, so photos there are always deleted
@@ -865,7 +849,7 @@ function renderColorLabels(item) {
 document.addEventListener('keyup', event => {
   const active = document.activeElement;
   if (state.mode !== 'review' || document.querySelector('dialog[open]') || active?.matches('input, textarea, select') || active?.isContentEditable) { loupe.cancelHand(); return; }
-  if (loupe.handleKeyUp(event)) event.preventDefault();
+  if (panKey && (event.code || event.key) === panKey) { panKey=null; if (loupe.handleKeyUp({ key: ' ' })) event.preventDefault(); }
 });
 window.addEventListener('blur', () => loupe.cancelHand());
 function option(value, label) { const node = document.createElement('option'); node.value = value; node.textContent = label; return node; }
@@ -874,7 +858,7 @@ function syncSettings(value) {
   loupe.setClickPercent(value.zoomPercent);
   $('default-recipe').value = value.defaultRecipe || 'neutral';
   $('auto-advance').checked = value.autoAdvance; $('recursive').checked = value.recursive; $('raw-rendering').value = value.rawRendering;
-  $('copy-jpeg').checked = value.copyJpeg; $('copy-xmp').checked = value.copyXmp; $('copy-metadata').checked = value.copyMetadata; fillFolders('copy', value.folders);
+  $('copy-verify').checked = value.copyVerify; $('copy-jpeg').checked = value.copyJpeg; $('copy-xmp').checked = value.copyXmp; $('copy-metadata').checked = value.copyMetadata; fillFolders('copy', value.folders);
   $('copy-preset').replaceChildren(...value.presets.map(p => option(p.id, p.name))); $('copy-preset').value = value.activePreset;
   const filter = state.colorFilter;
   $('color-filter').replaceChildren(option('', 'All colors'), ...value.colors.map(c => option(c.id, c.name))); $('color-filter').value = filter;
@@ -938,7 +922,7 @@ async function updateSettingsNamePreview() {
   } catch (error) { if (generation === settingsNameGeneration) $('settings-name-preview').textContent = error.message; }
 }
 async function saveCopyDefaults() {
-  try { state.settings = await api.settings({ copyJpeg: $('copy-jpeg').checked, copyXmp: $('copy-xmp').checked, copyMetadata: $('copy-metadata').checked, naming: readNaming('copy'), folders: readFolders('copy') }); }
+  try { state.settings = await api.settings({ copyVerify: $('copy-verify').checked, copyJpeg: $('copy-jpeg').checked, copyXmp: $('copy-xmp').checked, copyMetadata: $('copy-metadata').checked, naming: readNaming('copy'), folders: readFolders('copy') }); }
   catch (error) { $('copy-name-preview').textContent = error.message; }
 }
 function fillSettings(value) {
@@ -960,6 +944,7 @@ function fillSettings(value) {
     }
     return row;
   }));
+  fillWorkspaceSettings(value);
   buildNaming('settings', value.naming);
   $('metadata-results').hidden = true; $('export-xmp').disabled = !state.session?.items.some(i => i.edited); $('export-json').disabled = !state.session;
 }
@@ -975,10 +960,10 @@ function readSettings() {
   for (const key of ['creator','copyright','title','caption']) value.metadata[key] = $(`meta-${key}`).value;
   value.metadata.keywords = $('meta-keywords').value.split(',').map(v => v.trim()).filter(Boolean);
   value.colors = [...$('color-settings').children].map(row => ({ id: row.dataset.id, ...Object.fromEntries([...row.querySelectorAll('input')].map(input => [input.dataset.field, input.value])) }));
-  value.naming = readNaming('settings'); return value;
+  readWorkspaceSettings(value); value.naming = readNaming('settings'); return value;
 }
 async function openSettings(tab = 'general') {
-  if (state.copy.running) return;
+  if (state.copy.running || backupRunning) return;
   try { const value = await api.settings(); state.settings = value; settingsDraft = clone(value); const recipes = await api.recipes(); $('default-recipe').replaceChildren(...recipes.recipes.map(r => option(r.id, r.name))); fillSettings(settingsDraft); setSettingsTab(tab); $('settings-status').textContent = value.warning || ''; $('settings-dialog').showModal(); }
   catch (error) { toast(error.message); }
 }
@@ -1088,7 +1073,7 @@ $('handoff-cleanup').onclick=async()=>{
 };
 function readEditorRow(row) {
   const input=k=>row.querySelector(`[data-editor-field="${k}"]`), previous=settingsDraft.editors.find(e=>e.id===row.dataset.editorId);
-  return {...previous,name:input('name').value,path:input('path').value.trim(),args:JSON.parse(input('args').value),detect:input('detect').value,multiple:input('multiple').checked,
+  return {...previous,name:input('name').value,path:input('path').value.trim(),needsPath:input('path').value.trim()===previous.path?previous.needsPath:!input('path').value.trim(),args:JSON.parse(input('args').value),detect:input('detect').value,multiple:input('multiple').checked,
     handoff:{format:input('format').value,bitDepth:Number(input('bitDepth').value),compression:input('compression').value,colorSpace:input('colorSpace').value,jpegQuality:Number(input('jpegQuality').value)}};
 }
 function collectEditors() {
@@ -1108,7 +1093,7 @@ function drawEditors() {
   const host=$('external-editors');host.replaceChildren();
   for(const editor of settingsDraft.editors){
     const row=document.createElement('fieldset');row.className='editor-settings';row.dataset.editorId=editor.id;
-    const legend=document.createElement('legend');legend.textContent=editor.name;row.append(legend);
+    const legend=document.createElement('legend');legend.textContent=editor.name+(editor.needsPath?' · needs path':'');row.append(legend);
     function field(key,label,value,choices){const l=document.createElement('label');l.textContent=label;const el=document.createElement(choices?'select':'input');el.dataset.editorField=key;el.setAttribute('aria-label',`${editor.name} ${label}`);if(choices)el.append(...Object.entries(choices).map(([v,n])=>option(v,n)));el.value=value;l.append(el);row.append(l);return el;}
     function toggle(key,label,checked){const l=document.createElement('label');l.className='toggle-row';const el=document.createElement('input');el.type='checkbox';el.dataset.editorField=key;el.checked=checked;l.append(el,document.createTextNode(label));row.append(l);return el;}
     const def=toggle('default','Default editor',editor.id===settingsDraft.defaultEditor);def.type='radio';def.name='default-editor';
@@ -1133,3 +1118,114 @@ function drawEditors() {
   }
 }
 $('editor-add').onclick=async()=>{try{collectEditors();const editor=await api.editorPreset();editor.id=crypto.randomUUID();editor.name='New editor';editor.path='';settingsDraft.editors.push(editor);drawEditors();}catch(e){$('settings-status').textContent=e.message;}};
+
+// Shared command, settings-sync, welcome and card-backup surfaces.
+const workspaceNode = (tag, text, attrs={}) => { const el=document.createElement(tag);if(text)el.textContent=text;for(const [key,value] of Object.entries(attrs))el.setAttribute(key,value);return el; };
+const workspaceButton = (text,run,id) => {const el=workspaceNode('button',text,{type:'button',class:'button quiet',...(id?{id}:{})});el.onclick=()=>Promise.resolve().then(run).catch(error=>toast(error.message));return el;};
+function shortcutLabel(command,custom=state.settings.shortcuts||{}) {return PhotoCullCommands.shortcuts(command,custom).map(k=>k.replaceAll('Mod',api.platform==='darwin'?'⌘':'Ctrl').replaceAll('Meta','⌘').replaceAll('Space','Space')).join(' / ')||'Unassigned';}
+function openHelp() {
+  const host=$('help-dialog').querySelector('.shortcut-list');host.replaceChildren();
+  for(const command of commands.commands){host.append(workspaceNode('span',command.title),workspaceNode('kbd',shortcutLabel(command)));}
+  if(!$('help-dialog').open)$('help-dialog').showModal();
+}
+const helpActions=workspaceNode('div',null,{class:'copy-actions'});
+for(const [text,id] of [['Command palette','palette'],['Welcome','welcome'],['Copy diagnostics','diagnostics'],['Open log folder','logs']])helpActions.append(workspaceButton(text,()=>{$('help-dialog').close();commands.execute(id);}));
+$('help-dialog').prepend(helpActions);$('help-dialog').querySelector('h2').textContent='Help & shortcuts';
+const palette=workspaceNode('dialog',null,{id:'command-palette','aria-label':'Command palette'});
+palette.innerHTML='<label for="command-query">Command palette · type > to find a photo</label><input id="command-query" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="command-results" autocomplete="off" placeholder="Search commands or > photo name"><div id="command-results" role="listbox" aria-label="Commands"></div><p id="command-count" class="subtle small" role="status"></p>';
+document.body.append(palette);
+let paletteRows=[],paletteIndex=0,paletteFocus;
+function openPalette(query='') {if(document.querySelector('dialog[open]'))return;paletteFocus=document.activeElement;palette.showModal();$('command-query').value=query;paletteIndex=0;drawPalette();$('command-query').focus();}
+function drawPalette() {
+  const query=$('command-query').value,findPhoto=query.startsWith('>');
+  paletteRows=findPhoto?(state.session?.items||[]).filter(item=>!item.trashed&&PhotoCullCommands.fuzzy(query.slice(1),item.name)).slice(0,60).map(item=>({id:'photo-'+item.id,title:item.name,category:'Photo',run:()=>{state.filter='all';state.query='';state.colorFilter='';$('search').value='';$('color-filter').value='';state.selected=item.id;resetSelection();render(true);}})):
+    commands.search(query,recentCommands).slice(0,60).map(command=>({...command,disabled:!command.context.includes(state.mode)||!command.enabled(),run:()=>commands.execute(command.id)}));
+  paletteIndex=Math.min(paletteIndex,Math.max(0,paletteRows.length-1));
+  $('command-results').replaceChildren(...paletteRows.map((row,index)=>{
+    const el=workspaceNode('div',null,{id:'command-option-'+index,role:'option','aria-selected':String(index===paletteIndex),'aria-disabled':String(!!row.disabled),class:'command-option'});
+    el.append(workspaceNode('span',`${row.title} · ${row.category}${!query&&recentCommands.includes(row.id)?' · recent':''}`),workspaceNode('kbd',row.shortcuts?shortcutLabel(row):''));
+    el.onmousedown=e=>e.preventDefault();el.onclick=()=>runPalette(index);return el;
+  }));
+  if(paletteRows.length)$('command-query').setAttribute('aria-activedescendant','command-option-'+paletteIndex);else $('command-query').removeAttribute('aria-activedescendant');
+  $('command-count').textContent=`${paletteRows.length} result(s) · ↑ ↓ select · Enter run · Esc close`;
+  $('command-option-'+paletteIndex)?.scrollIntoView({block:'nearest'});
+}
+function runPalette(index) {const row=paletteRows[index];if(!row||row.disabled)return;palette.close();Promise.resolve().then(row.run).catch(e=>toast(e.message));}
+$('command-query').oninput=()=>{paletteIndex=0;drawPalette();};
+$('command-query').onkeydown=event=>{if(['ArrowDown','ArrowUp'].includes(event.key)){event.preventDefault();paletteIndex=(paletteIndex+(event.key==='ArrowDown'?1:-1)+paletteRows.length)%Math.max(1,paletteRows.length);drawPalette();}else if(event.key==='Enter'){event.preventDefault();runPalette(paletteIndex);}else if(event.key==='Escape'){event.preventDefault();palette.close();}};
+palette.addEventListener('close',()=>{if(paletteFocus?.isConnected)paletteFocus.focus();});
+// Keyboard edits stay in the settings draft until Save, just like other preferences.
+const keyboardTab=workspaceButton('Keyboard',()=>setSettingsTab('keyboard'));keyboardTab.dataset.settingsTab='keyboard';$('settings-dialog').querySelector('nav').append(keyboardTab);
+const keyboardPage=workspaceNode('section',null,{'data-settings-page':'keyboard',hidden:''});
+keyboardPage.innerHTML='<p class="subtle small">Select Record, then press a key combination. Escape cancels recording. Clear removes a binding. Save applies changes.</p><p id="keyboard-status" role="status" aria-live="polite"></p><div id="keyboard-commands"></div>';
+keyboardPage.append(workspaceButton('Reset all shortcuts',()=>{settingsDraft.shortcuts={};drawKeyboard();},'keyboard-reset-all'));
+$('settings-status').before(keyboardPage);
+let recording=null;
+function drawKeyboard() {
+  recording=null;const host=$('keyboard-commands');host.replaceChildren();let category='';
+  for(const command of [...commands.commands].sort((a,b)=>a.category.localeCompare(b.category)||a.title.localeCompare(b.title))){
+    if(command.category!==category){category=command.category;host.append(workspaceNode('h3',category));}
+    const row=workspaceNode('div',null,{class:'keyboard-row','data-command':command.id});
+    row.append(workspaceNode('span',command.title+' ('+command.context.join(', ')+')'),workspaceNode('kbd',shortcutLabel(command,settingsDraft.shortcuts||{})),
+      workspaceButton('Record',()=>{recording=command.id;$('keyboard-status').textContent=`Press a shortcut for ${command.title}…`;},'record-'+command.id),
+      workspaceButton('Clear',()=>{settingsDraft.shortcuts||={};settingsDraft.shortcuts[command.id]=[];drawKeyboard();}),
+      workspaceButton('Reset',()=>{const conflicts=PhotoCullCommands.conflicts(commands.commands,settingsDraft.shortcuts||{},command.id,command.shortcuts.default,{defaults:true});if(conflicts.length){$('keyboard-status').textContent='Conflicts with '+conflicts.map(c=>c.title).join(', ');return;}delete settingsDraft.shortcuts[command.id];drawKeyboard();}));host.append(row);
+  }
+}
+document.addEventListener('keydown',event=>{
+  if(!recording||!$('settings-dialog').open)return;
+  event.preventDefault();event.stopImmediatePropagation();if(event.key==='Escape'){recording=null;$('keyboard-status').textContent='Recording canceled.';return;}
+  const key=PhotoCullCommands.eventKey(event);if(!key)return;
+  const conflicts=PhotoCullCommands.conflicts(commands.commands,settingsDraft.shortcuts||{},recording,[key]);
+  if(conflicts.length){$('keyboard-status').textContent='Conflicts with '+conflicts.map(c=>c.title).join(', ')+'. Choose another shortcut.';return;}
+  settingsDraft.shortcuts||={};settingsDraft.shortcuts[recording]=[key];drawKeyboard();$('keyboard-status').textContent='Shortcut recorded. Save to apply.';
+},true);
+$('settings-dialog').addEventListener('close',()=>{recording=null;});
+// The existing naming page covers copy names/folder layouts. Export presets own export naming.
+const cardSettings=workspaceNode('section');cardSettings.innerHTML='<h3>Camera cards & backup</h3><label>Camera folder layouts (one relative path per line)<textarea id="card-folders" rows="3" placeholder="DCIM&#10;PRIVATE/M4ROOT"></textarea></label><label>Folders treated as cards (one absolute path per line)<textarea id="manual-cards" rows="3"></textarea></label><label>Default backup folder template<input id="backup-template" placeholder="{date}-{card}"></label><p class="subtle small">Backup tokens: {date}, {card}, {year}, {month}, {day}. Copy naming is in File naming; finished-image naming is saved in export presets.</p>';
+$('settings-dialog').querySelector('[data-settings-page="general"]').append(cardSettings);
+const syncTab=workspaceButton('Import / export',()=>setSettingsTab('sync'));syncTab.dataset.settingsTab='sync';$('settings-dialog').querySelector('nav').append(syncTab);
+const syncPage=workspaceNode('section',null,{'data-settings-page':'sync',hidden:''});syncPage.innerHTML='<h3>Move settings between computers</h3><p>Bundles include preferences, user recipes, metadata and export presets, external editors and shortcuts. Import replaces these settings after saving a full backup.</p><label class="toggle-row"><input id="bundle-exclude-paths" type="checkbox" checked> Exclude machine-specific paths on export</label><div class="copy-actions"><button id="bundle-export" class="button quiet">Export settings…</button><label class="button quiet">Choose settings JSON<input id="bundle-file" type="file" accept=".json,application/json"></label></div><label>Path mappings (JSON object, old prefix → new prefix)<textarea id="bundle-path-map" rows="3">{}</textarea></label><button id="bundle-preview" class="button quiet">Preview import</button><pre id="bundle-changes" role="status"></pre><button id="bundle-apply" class="button primary" disabled>Back up current settings & import</button>';
+$('settings-status').before(syncPage);
+let bundleInput=null,bundleToken=null;
+const clearBundlePreview=()=>{bundleToken=null;$('bundle-apply').disabled=true;};
+$('bundle-file').onchange=async()=>{clearBundlePreview();try{const file=$('bundle-file').files[0];if(!file||file.size>4*1024*1024)throw new Error('Choose a settings JSON smaller than 4 MB.');bundleInput=JSON.parse(await file.text());$('bundle-changes').textContent='File loaded. Preview to validate.';}catch(e){bundleInput=null;$('bundle-changes').textContent=e.message;}};
+$('bundle-path-map').oninput=clearBundlePreview;
+$('bundle-export').onclick=async()=>{try{const file=await api.bundleExport({excludePaths:$('bundle-exclude-paths').checked});$('bundle-changes').textContent=file?`Saved ${file}`:'Export canceled.';}catch(e){$('bundle-changes').textContent=e.message;}};
+$('bundle-preview').onclick=async()=>{clearBundlePreview();try{const result=await api.bundlePreview(bundleInput,{pathMap:JSON.parse($('bundle-path-map').value)});bundleToken=result.token;$('bundle-changes').textContent=`Preferences changed: ${result.changes.join(', ')||'none'}\nUser recipes: ${result.recipes.before} → ${result.recipes.after}\nMetadata presets: ${result.presets.before} → ${result.presets.after}\n${result.warnings.join('\n')}`;$('bundle-apply').disabled=false;}catch(e){$('bundle-changes').textContent=e.message;}};
+$('bundle-apply').onclick=async()=>{if(!bundleToken)return;$('bundle-apply').disabled=true;try{const result=await api.bundleApply(bundleToken);syncSettings(result.settings);settingsDraft=clone(result.settings);const recipes=await api.recipes();$('default-recipe').replaceChildren(...recipes.recipes.map(r=>option(r.id,r.name)));fillSettings(settingsDraft);$('bundle-changes').textContent=`Imported. Previous settings backed up to ${result.backup}`;clearBundlePreview();}catch(e){$('bundle-changes').textContent=e.message;}};
+function fillWorkspaceSettings(value) {drawKeyboard();$('card-folders').value=(value.cardFolders||['DCIM']).join('\n');$('manual-cards').value=(value.manualCards||[]).join('\n');$('backup-template').value=value.backupTemplate||'{date}-{card}';}
+function readWorkspaceSettings(value) {value.cardFolders=$('card-folders').value.split('\n').map(s=>s.trim()).filter(Boolean);value.manualCards=$('manual-cards').value.split('\n').map(s=>s.trim()).filter(Boolean);value.backupTemplate=$('backup-template').value.trim();}
+const welcome=workspaceNode('aside',null,{id:'welcome-panel','aria-label':'Welcome to PhotoCull',hidden:''});
+welcome.innerHTML='<h2>Welcome to PhotoCull</h2><p>Open a photo folder or choose a connected camera card in the sidebar.</p><div id="welcome-keys" class="shortcut-list"></div><div id="welcome-actions" class="copy-actions"></div>';
+document.body.append(welcome);
+function showWelcome() {if($('help-dialog').open)$('help-dialog').close();welcome.hidden=false;$('welcome-keys').replaceChildren();for(const id of ['open','navigate-right','flag-pick','flag-reject','rating-5','zoom-toggle','view-grid','palette']){const c=commands.commands.find(c=>c.id===id);$('welcome-keys').append(workspaceNode('span',c.title),workspaceNode('kbd',shortcutLabel(c)));}}
+async function dismissWelcome(){welcome.hidden=true;state.settings=await api.settings({welcomeDismissed:true});}
+$('welcome-actions').append(workspaceButton('Open folder…',async()=>{await dismissWelcome();await openFolder();},'welcome-open'),workspaceButton('Choose camera card',async()=>{await dismissWelcome();$('devices-panel').scrollIntoView();$('device-list button')?.focus();},'welcome-card'),workspaceButton('Set up an external editor',async()=>{await dismissWelcome();await openSettings('editors');}),workspaceButton('Skip',dismissWelcome,'welcome-skip'));
+void Promise.all([api.workspaceInfo(),api.settings()]).then(([info,settings])=>{if(info.welcome&&!settings.welcomeDismissed)showWelcome();}).catch(error=>toast(error.message));
+async function copyDiagnostics() {
+  const color=await api.displayColor().catch(()=>({mode:'unavailable'}));let gpu='unavailable';
+  try{const gl=document.createElement('canvas').getContext('webgl'),ext=gl?.getExtension('WEBGL_debug_renderer_info');if(ext)gpu=gl.getParameter(ext.UNMASKED_RENDERER_WEBGL);}catch{}
+  const text=await api.diagnostics({webview:navigator.userAgent,display:{width:screen.width,height:screen.height,pixelRatio:devicePixelRatio,colorDepth:screen.colorDepth,p3:matchMedia('(color-gamut: p3)').matches,color},gpu});
+  try{await navigator.clipboard.writeText(text);toast('Diagnostics copied.');}catch{const dialog=workspaceNode('dialog',null,{'aria-label':'Copy diagnostics'}),area=workspaceNode('textarea',text,{rows:'18',cols:'70','aria-label':'Diagnostics'});dialog.append(area,workspaceButton('Close',()=>{dialog.close();dialog.remove();}));document.body.append(dialog);dialog.showModal();area.focus();area.select();}
+}
+const backupDialog=workspaceNode('dialog',null,{id:'backup-dialog','aria-labelledby':'backup-title'});
+backupDialog.innerHTML='<h2 id="backup-title">Back up card or folder</h2><p>Copies every regular file, including videos and sidecars. Each file is verified with SHA-256. Existing identical copies are verified and skipped. Source files are never formatted or deleted.</p><label>Source folder<input id="backup-source" readonly></label><button id="backup-source-choose" class="button quiet">Choose card / folder…</button><label>Destination<input id="backup-destination" readonly></label><button id="backup-destination-choose" class="button quiet">Choose destination…</button><label>Folder template<input id="backup-folder-template"></label><div class="copy-actions"><button id="backup-start" class="button primary">Back up & verify</button><button id="backup-check" class="button quiet">Check verified backup</button><button id="backup-cancel" class="button quiet" hidden>Cancel backup</button><button id="backup-close" class="button quiet">Close</button></div><progress id="backup-progress" max="1" value="0" hidden></progress><p id="backup-status" role="status" aria-live="polite"></p><pre id="backup-failures"></pre>';
+document.body.append(backupDialog);let backupRunning=false;const cardStatuses=new Map();
+function openBackup(source=state.session?.deviceRoot||state.session?.folder||'') {if(document.querySelector('dialog[open]'))return;$('backup-source').value=source;$('backup-folder-template').value=state.settings.backupTemplate||'{date}-{card}';$('backup-status').textContent='';$('backup-failures').textContent='';backupDialog.showModal();}
+$('backup-source-choose').onclick=async()=>{const folder=await api.pickFolder('Choose a card or folder to back up');if(folder)$('backup-source').value=folder;};
+$('backup-destination-choose').onclick=async()=>{const folder=await api.chooseCopyDestination();if(folder)$('backup-destination').value=folder;};
+function backupStatusText(status) {return status.safe?`All ${status.total} files backed up and verified — safe to format`:`${status.verified||0} of ${status.total} files verified · ${status.missing.length} file(s) need backup or verification`;}
+function showBackupProgress(progress) {$('backup-progress').hidden=false;$('backup-progress').max=progress.total||1;$('backup-progress').value=progress.completed;$('backup-status').textContent=progress.status?backupStatusText(progress.status):`${progress.state} · ${progress.completed}/${progress.total} · ${progress.verified} verified · ${progress.skipped} identical · ${progress.file}`;$('backup-failures').textContent=[...(progress.failures||[]),...(progress.status?.missing||[])].map(f=>`${f.name}: ${f.reason}`).join('\n');}
+function setBackupBusy(value){backupRunning=value;state.busy=value;for(const id of ['backup-start','backup-check','backup-source-choose','backup-destination-choose','backup-folder-template','backup-close'])$(id).disabled=value;$('backup-cancel').hidden=!value;renderDevices();}
+api.onBackupProgress(progress=>{if(backupRunning)showBackupProgress(progress);});
+$('backup-start').onclick=async()=>{setBackupBusy(true);try{const source=$('backup-source').value,result=await api.backupStart(source,$('backup-destination').value,{template:$('backup-folder-template').value});showBackupProgress(result);if(result.status)cardStatuses.set(source,result.status);else cardStatuses.delete(source);}catch(e){$('backup-status').textContent=e.message;}finally{setBackupBusy(false);}};
+$('backup-check').onclick=async()=>{setBackupBusy(true);$('backup-status').textContent='Checking every source and destination hash…';try{const source=$('backup-source').value,status=await api.backupStatus(source);cardStatuses.set(source,status);$('backup-status').textContent=backupStatusText(status);$('backup-failures').textContent=status.missing.map(f=>`${f.name}: ${f.reason}`).join('\n');}catch(e){$('backup-status').textContent=e.message;}finally{setBackupBusy(false);}};
+$('backup-cancel').onclick=()=>api.backupCancel();$('backup-close').onclick=()=>backupDialog.close();backupDialog.addEventListener('cancel',e=>{if(backupRunning)e.preventDefault();});
+async function treatCard(){if(!state.session)return toast('Open a folder first.');receiveDevices(await api.manualCard(state.session.folder));state.session.removable=true;toast('Folder is now treated as a camera card.');}
+function deviceBackupRow(device){const row=workspaceNode('div',null,{class:'device-backup'}),status=cardStatuses.get(device.root) || device.backup;row.append(workspaceButton('Back up card…',()=>openBackup(device.root)));if(status){row.append(workspaceNode('p',backupStatusText(status),{class:status.safe?'backup-safe':'subtle small'}));if(status.missing.length){const detail=workspaceNode('details');detail.append(workspaceNode('summary','Files needing backup'),workspaceNode('pre',status.missing.map(f=>`${f.name}: ${f.reason}`).join('\n')));row.append(detail);}}return row;}
+// Add discoverable entry points alongside the existing folder controls.
+$('open-folder').after(workspaceButton('Back up…',()=>openBackup(),'backup-open'),workspaceButton('Treat folder as card',treatCard,'treat-card'));
+const verifyLabel=workspaceNode('label',null,{class:'toggle-row'});verifyLabel.innerHTML='<input id="copy-verify" type="checkbox"> Verify copied files (SHA-256)';$('copy-naming').before(verifyLabel);
+
+$('copy-verify').onchange=()=>saveCopyDefaults();

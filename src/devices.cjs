@@ -54,7 +54,7 @@ async function macRoots({ execute: run = execute, volumeRoot = '/Volumes', readD
   }
   return result;
 }
-async function discoverDevices() {
+async function discoverDevices(config = {}) {
   const opts = { windowsHide: true, timeout: 8000, maxBuffer: 1024 * 1024 };
   let roots = [];
   if (process.platform === 'win32') {
@@ -72,19 +72,30 @@ async function discoverDevices() {
       } catch { /* WSL may not expose Windows removable drives. */ }
     }
   }
-  return inspectRoots(roots);
+  return inspectRoots([...roots,...(config.manualCards || []).map(root=>({root,label:path.basename(root),removable:true,identity:'manual:'+root,manual:true}))],config);
 }
-async function inspectRoots(roots) {
+async function inspectRoots(roots, { cardFolders = ['DCIM'] } = {}) {
   const unique = new Map();
   for (const device of roots) {
     try {
       const entries = await fs.readdir(device.root, { withFileTypes: true });
-      const dcim = entries.find(e => e.isDirectory() && e.name.toUpperCase() === 'DCIM');
-      const camera = !!dcim || entries.some(e => e.isFile() && SUPPORTED.has(path.extname(e.name).toLowerCase()));
+      let cameraFolder = null;
+      for(const layout of cardFolders) {
+        let folder=device.root,found=true;
+        for(const part of layout.split(/[\\/]/)) {
+          const children=await fs.readdir(folder,{withFileTypes:true});
+          const entry=children.find(e=>e.isDirectory()&&e.name.toLowerCase()===part.toLowerCase());
+          if(!entry){found=false;break;}folder=path.join(folder,entry.name);
+        }
+        if(found){cameraFolder=folder;break;}
+      }
+      const dcim = cameraFolder;
+      const camera = !!device.manual || !!dcim || entries.some(e => e.isFile() && SUPPORTED.has(path.extname(e.name).toLowerCase()));
       if (!device.removable && !dcim) continue;
       const root = await fs.realpath(device.root);
-      unique.set(root, { id: `${root}:${device.identity}`, root, label: device.label, camera,
-        photoRoot: dcim ? path.join(root, dcim.name) : root });
+      if(device.manual && unique.has(root))continue;
+      unique.set(root, { id: `${root}:${device.identity}`, identity: String(device.identity), manual: !!device.manual, root, label: device.label, camera,
+        photoRoot: dcim || root });
     } catch { /* Empty readers, locked volumes, and unmounted drives are not cards. */ }
   }
   return [...unique.values()].sort((a, b) => a.root.localeCompare(b.root));
