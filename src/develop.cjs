@@ -97,7 +97,15 @@ async function planExport(items, { folder, naming, subfolder = '', extension, co
   subfolder = normalizeSettings({ folders: { mode: subfolder ? 'named' : 'flat', name: subfolder } }).folders.name;
   const dir = subfolder ? path.join(folder, subfolder) : folder;
   const key = file => path.resolve(file).toLowerCase();
-  const sources = new Set([...protectedPaths, ...items.flatMap(i => [i.path, i.companion, i.develop?.tiff])].filter(Boolean).map(key));
+  const sourcePaths = [...new Set([...protectedPaths, ...items.flatMap(i => [i.path, i.companion, i.develop?.tiff])].filter(Boolean))];
+  const sources = new Set(sourcePaths.map(key));
+  // Sources and destinations must use the same resolved parents (e.g. /var -> /private/var on macOS).
+  for (const file of sourcePaths) {
+    try { sources.add(key(await fs.realpath(file))); } catch (e) {
+      if (e.code !== 'ENOENT') throw e;
+      try { sources.add(key(path.join(await fs.realpath(path.dirname(file)), path.basename(file)))); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+    }
+  }
   const now = new Date(), taken = new Map(), plan = [];
   const stat = async file => fs.lstat(file).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
   // Resolve the existing parent to detect output folders aliased onto a source folder.
@@ -113,7 +121,7 @@ async function planExport(items, { folder, naming, subfolder = '', extension, co
       const captured = needsCapture(naming.template) ? await captureDate(item) : null;
       const { stem } = renderName(item.name, naming, index, { captured, now });
       let dest = path.join(dir, `${stem}.${extension}`);
-      const occupied = async file => taken.has(key(file)) || sources.has(key(path.join(realDir, path.basename(file)))) || diskNames.has(key(file)) || !!await stat(file);
+      const occupied = async file => taken.has(key(file)) || sources.has(key(file)) || sources.has(key(path.join(realDir, path.basename(file)))) || diskNames.has(key(file)) || !!await stat(file);
       if (conflict === 'unique') for (let n = 2; await occupied(dest); n++) dest = path.join(dir, `${stem}-${n}.${extension}`);
       row.dest = dest;
       if (sources.has(key(dest)) || sources.has(key(path.join(realDir, path.basename(dest))))) throw new Error('Export would replace a source image or developed TIFF. Choose another folder or name.');

@@ -79,3 +79,30 @@ test('export planner handles skip, overwrite, invalid names/dates and source pro
     assert.match((await planExport([image], { folder: alias, extension: 'jpg', conflict: 'overwrite' }))[0].error, /replace a source/);
   }
 });
+
+test('export planner protects unresolved source paths through symlinked parents', async t => {
+  const { root } = await fixture(t);
+  const folder = path.join(await fs.realpath(root), 'photos'), alias = path.join(root, 'alias');
+  await fs.mkdir(folder);
+  await fs.symlink(folder, alias, 'junction');
+  const source = path.join(alias, 'IMG.jpg');
+  const image = { id: 'a', name: 'IMG.ARW', path: path.join(alias, 'IMG.ARW') };
+  for (const exists of [false, true]) {
+    if (exists) await fs.writeFile(source, 'keep');
+    for (const [item, protectedPaths] of [
+      [{ ...image, path: source }, []],
+      [{ ...image, companion: source }, []],
+      [{ ...image, develop: { tiff: source } }, []],
+      [image, [source, path.join(root, 'missing', 'other.jpg')]],
+    ]) {
+      for (const conflict of ['overwrite', 'skip']) {
+        const [row] = await planExport([item], { folder, extension: 'jpg', conflict, protectedPaths });
+        assert.match(row.error, /replace a source/);
+      }
+      const [row] = await planExport([item], { folder, extension: 'jpg', conflict: 'unique', protectedPaths });
+      assert.equal(row.error, undefined);
+      assert.equal(path.basename(row.dest), 'IMG-2.jpg');
+    }
+  }
+  assert.equal(await fs.readFile(source, 'utf8'), 'keep');
+});
