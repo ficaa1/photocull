@@ -2,6 +2,13 @@
   "passed": true,
   "sourceHashesUnchanged": true,
   "errors": [],
+  "verification": {
+    "monotonicProgress": true,
+    "inputOrder": true,
+    "independentPerItemFailure": true,
+    "skipExisting": true,
+    "cancellation": true
+  },
   "results": [
     {
       "case": "ui-raw-batch",
@@ -16,121 +23,121 @@
       "bytes": 4232419
     },
     {
-      "ms": 4746.7,
+      "ms": 3620.3,
       "status": "exported",
       "case": "edited-1200-screen-jpeg",
       "bytes": 226133
     },
     {
-      "ms": 4260.2,
+      "ms": 3638.6,
       "status": "exported",
       "case": "edited-1200-screen-jxl-lossy",
       "bytes": 82011
     },
     {
-      "ms": 1222.1,
+      "ms": 963.6,
       "status": "exported",
       "case": "edited-1200-screen-jxl-lossless",
       "bytes": 3818906
     },
     {
-      "ms": 1384.5,
+      "ms": 953.5,
       "status": "exported",
       "case": "edited-1200-screen-tiff16",
       "bytes": 4307915
     },
     {
-      "ms": 1245.2,
+      "ms": 953.9,
       "status": "exported",
       "case": "edited-1200-screen-png16",
       "bytes": 4177719
     },
     {
-      "ms": 1825.3,
+      "ms": 1540.1,
       "status": "exported",
       "case": "edited-1200-screen-avif10",
       "bytes": 88023
     },
     {
-      "ms": 5022,
+      "ms": 3631.3,
       "status": "exported",
       "case": "edited-1200-screen-webp",
       "bytes": 61798
     },
     {
-      "ms": 4129.1,
+      "ms": 3684.7,
       "status": "exported",
       "case": "edited-1200-screen-webp-lossless",
       "bytes": 905614
     },
     {
-      "ms": 1790.2,
+      "ms": 1728.7,
       "status": "exported",
       "case": "raw-1200-screen-jpeg",
       "bytes": 222989
     },
     {
-      "ms": 1892.2,
+      "ms": 1822,
       "status": "exported",
       "case": "raw-1200-screen-jxl-lossy",
       "bytes": 109433
     },
     {
-      "ms": 1979.5,
+      "ms": 1805.2,
       "status": "exported",
       "case": "raw-1200-screen-jxl-lossless",
       "bytes": 3772355
     },
     {
-      "ms": 1824.7,
+      "ms": 1792.6,
       "status": "exported",
       "case": "raw-1200-screen-tiff16",
       "bytes": 4878948
     },
     {
-      "ms": 1948,
+      "ms": 1744.6,
       "status": "exported",
       "case": "raw-1200-screen-png16",
       "bytes": 5226806
     },
     {
-      "ms": 2106.8,
+      "ms": 1948.2,
       "status": "exported",
       "case": "raw-1200-screen-avif10",
       "bytes": 69913
     },
     {
-      "ms": 2114,
+      "ms": 1901.5,
       "status": "exported",
       "case": "raw-1200-screen-webp",
       "bytes": 76636
     },
     {
-      "ms": 2325.5,
+      "ms": 1714.6,
       "status": "exported",
       "case": "raw-1200-screen-webp-lossless",
       "bytes": 1198754
     },
     {
-      "ms": 1194.1,
+      "ms": 940.8,
       "status": "exported",
       "case": "metadata-allExceptCamera",
       "bytes": 100642
     },
     {
-      "ms": 1122.9,
+      "ms": 886.6,
       "status": "exported",
       "case": "metadata-copyright",
       "bytes": 99667
     },
     {
-      "ms": 1160.6,
+      "ms": 874.2,
       "status": "exported",
       "case": "metadata-none",
       "bytes": 98230
     },
     {
-      "ms": 915.7,
+      "ms": 1023.8,
       "status": "exported",
       "case": "nonraw-tiff",
       "bytes": 4312941

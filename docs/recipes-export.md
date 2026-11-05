@@ -56,6 +56,7 @@ user presets. Built-ins can be reset and reordered but cannot be deleted or
 renamed. The four built-ins are Full-size JPEG, Web 2048 px JPEG (sRGB and
 screen sharpening), JPEG XL and 16-bit TIFF archive. Existing last-used
 options, naming, subfolder and conflict policy migrate into My last export.
+Legacy WebP options retain lossless mode.
 Last used also remains available independently of presets.
 
 WebP offers lossy quality 1–100 and a lossless checkbox. The pinned Lightcraft
@@ -101,3 +102,43 @@ editor is launched.
 compares the previous sequential encoder defaults against bounded parallel
 export, including full decode/render/encode/write, on three full-size RAWs.
 No photo data belongs in the repository; only measured numbers are retained.
+
+## Windows measurements — 2026-11-06
+
+ThinkPad, Intel Core i7-12800H (20 logical processors), 16 GiB RAM; Windows
+Rust 1.99 debug application with optimized processing dependencies. Three
+copied full-resolution RAWs: sample-8563, sample-8565, sample-8566. One batch per case,
+warm dependencies/filesystem, sRGB, quality 90, no output sharpening. Before
+uses the pinned engine sequentially; after uses three jobs and AVIF Faster.
+Numbers include decode, render, encoding and writing; they exclude app/Node
+startup, destination planning and metadata embedding. Other overnight work
+on the same machine can affect timing. These are measurements, not a universal
+throughput guarantee.
+
+| Format | Before, 3 files | After, 3 files | Change | Before / after total bytes |
+| --- | ---: | ---: | ---: | ---: |
+| JPEG | 10.083 s | 10.794 s | 7.1% slower | 18,688,732 / 18,688,732 |
+| JPEG XL | 16.061 s | 14.388 s | 10.4% faster | 6,816,457 / 6,816,457 |
+| AVIF (speed 8 → 10) | 104.873 s | 31.456 s | 70.0% faster | 12,323,324 / 14,283,979 |
+| WebP lossless | 15.838 s | 17.382 s | 9.7% slower | 124,033,678 / 124,033,678 |
+| WebP lossy, quality 90 (new option) | — | 17.206 s | separate encoding mode | — / 10,740,088 |
+
+For sample-8563 specifically, AVIF encoding measured 33.636 s before and 10.521 s
+after (the latter while other photo jobs ran), with 6,145,511 → 7,272,593 bytes.
+Faster trades compression efficiency for encoder time; Balanced preserves
+the old speed. JPEG, JPEG XL and lossless WebP before/after outputs were
+byte-identical for all three copies. The three-job cap helps overlap codec
+work, but full-size JPEG and lossless WebP rendering can saturate memory/CPU
+already. Their regressions are retained in the table. Lossy WebP's principal
+benefit here is size, about 91% less than lossless; it does not promise a
+faster encode.
+
+[Per-file timings, encode times and sizes](measurements/recipes-export-timings.json)
+and [isolated app verification summary](measurements/export-windows-summary.json).
+The app run also checked monotonic progress, input-order results, independent
+per-item failure, skip-existing, cancellation and unchanged temporary fixture
+hashes. The original photo folders were only read to make copies. Final local
+checks: 100 Node tests passed, 2 skipped; both UI smokes passed; 9 Windows Rust
+tests and Windows build passed without warnings. macOS runtime verification
+was unavailable; bundled libwebp's build path supports MSVC and Apple Clang
+without a system library.
