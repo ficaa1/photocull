@@ -179,8 +179,14 @@ fn output_space(name: &str) -> OutputSpace {
 }
 
 fn encode_frame(img: &Rgba8) -> Result<Vec<u8>, String> {
+    // Preview pixels are sRGB, like the histogram. The webview/OS owns the
+    // display transform; embedding the source space also makes this explicit
+    // for WKWebView and WebView2 without changing any export encoding.
+    static SRGB: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    let icc = SRGB.get_or_init(|| lightcraft_codecs::icc::write_named(lightcraft_codecs::NamedSpace::Srgb));
     let e = lightcraft_codecs::EncodeImage::rgba8(img);
-    lightcraft_codecs::encode_jpeg(&e, 88, lightcraft_codecs::ChromaSubsampling::S420, &Default::default()).map_err(|e| e.to_string())
+    let meta = lightcraft_codecs::EncodeMeta { icc: Some(icc), ..Default::default() };
+    lightcraft_codecs::encode_jpeg(&e, 88, lightcraft_codecs::ChromaSubsampling::S420, &meta).map_err(|e| e.to_string())
 }
 
 /// One binary reply: a little-endian u32 header length, the JSON header, then the JPEG frame.
@@ -917,6 +923,20 @@ pub async fn download_lens_database(app: AppHandle, engine: State<'_, Arc<Engine
 #[cfg(test)]
 mod result_tests {
     use super::*;
+
+    #[test]
+    fn preview_profile_is_srgb_without_changing_encoded_pixels() {
+        let mut image = Rgba8::new(12, 8);
+        image.data.fill([114, 175, 203, 255]);
+        let tagged = encode_frame(&image).unwrap();
+        let old = lightcraft_codecs::encode_jpeg(&lightcraft_codecs::EncodeImage::rgba8(&image), 88,
+            lightcraft_codecs::ChromaSubsampling::S420, &Default::default()).unwrap();
+        let decode = |bytes: &[u8]| lightcraft_codecs::decode(bytes, Default::default()).unwrap();
+        assert_eq!(decode(&tagged).icc.unwrap(), lightcraft_codecs::icc::write_named(lightcraft_codecs::NamedSpace::Srgb));
+        // ICC APP2 metadata is the only change; JPEG quantization is identical.
+        let scan = old.windows(2).position(|m| m == [0xff, 0xda]).unwrap();
+        assert!(tagged.ends_with(&old[scan..]));
+    }
 
     #[test]
     fn known_tiff_requires_a_recorded_absolute_regular_tiff() {

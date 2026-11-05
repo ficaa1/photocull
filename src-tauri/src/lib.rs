@@ -52,6 +52,30 @@ fn open_folder(app: AppHandle, path: String) -> Result<(), String> {
 
 static FULLSCREEN: AtomicBool = AtomicBool::new(false);
 
+/// Query afresh for the window's current monitor. Source previews/cache/histograms
+/// are sRGB; WebView2 handles monitor changes and Windows ACM owns the final
+/// conversion when enabled. Applying this profile to preview pixels too would
+/// double-convert. Exposed for local display diagnostics, not as an export option.
+#[tauri::command]
+fn display_color_status(window: WebviewWindow) -> Result<Value, String> {
+    #[cfg(windows)]
+    {
+        use lightcraft_wincolor::{monitor_color, MonitorColor};
+        let mode = match monitor_color(window.hwnd().map_err(|e| e.to_string())?.0 as isize) {
+            MonitorColor::ManagedByWindows => json!({ "mode": "windows-acm", "profile": null }),
+            MonitorColor::Profile(path) => json!({ "mode": "monitor-icc", "profile": path }),
+            MonitorColor::NoProfile => json!({ "mode": "srgb", "profile": null }),
+            MonitorColor::Unknown => json!({ "mode": "unknown", "profile": null }),
+        };
+        Ok(mode)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = window;
+        Ok(json!({ "mode": "webview", "profile": null }))
+    }
+}
+
 #[tauri::command]
 fn set_fullscreen(window: WebviewWindow, value: bool) -> Result<Value, String> {
     window.set_fullscreen(value).map_err(|e| e.to_string())?;
@@ -179,7 +203,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![backend, pick_folder, pick_save_file, open_folder, set_fullscreen, delete_photos, save_manifest,
+        .invoke_handler(tauri::generate_handler![backend, pick_folder, pick_save_file, open_folder, set_fullscreen, display_color_status, delete_photos, save_manifest,
             develop::develop_result, develop::reveal_develop, develop::develop_info, develop::develop_render, develop::develop_tiffs, develop::develop_cancel, develop::dehancer_edit,
             develop::export_photos, develop::lens_database, develop::download_lens_database])
         .setup(|app| {

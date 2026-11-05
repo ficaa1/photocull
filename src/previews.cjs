@@ -59,7 +59,7 @@ class PreviewService {
     this.emit(item, { state: 'invalidated' });
   }
   baseKey(item) { return hash(`sources-v2:${item.path}:${item.fingerprint}`); }
-  key(item, kind) { return hash(`representation-v3:${this.baseKey(item)}:${kind}:${this.policy}:${this.itemRevisions.get(item.id) || 0}`); }
+  key(item, kind) { return hash(`representation-v4-srgb:${this.baseKey(item)}:${kind}:${this.policy}:${this.itemRevisions.get(item.id) || 0}`); }
   emit(item, status) { this.states.set(item.id, status); this.onState({ id: item.id, ...status }); }
   setInfo(item, kind, info) {
     this.infoByKind.set(`${item.id}:${kind}`, info);
@@ -309,7 +309,20 @@ class PreviewService {
         image = selected.info.orientation ? orient(image, selected.info.orientation) : image.autoOrient();
         if (SIZES[kind]) image = image.resize(SIZES[kind], SIZES[kind], { fit: 'inside', withoutEnlargement: true, fastShrinkOnLoad: true });
         let data;
-        try { data = await this.passThrough(kind, selected) || await image.toColourspace('srgb').jpeg({ quality: kind === 'thumb' ? 76 : 91 }).toBuffer(); }
+        // Sharp 0.35 processes RGB16 in Display P3. toColourspace('srgb') alone
+        // only changes the pixel representation; it doesn't convert P3 primaries.
+        // Convert AND tag the output, so the webview/OS can match it to the display
+        // (including Windows ACM) exactly once. Disk caches stay display-independent.
+        try {
+          data = await this.passThrough(kind, selected);
+          if (!data) {
+            const metadata = await image.metadata();
+            // Sharp also assumes P3 as the output transform's input for an
+            // untagged RGB16 file. Establish the usual sRGB assumption first.
+            if (metadata.space === 'rgb16' && !metadata.hasProfile) image = image.pipelineColourspace('srgb');
+            data = await image.withIccProfile('srgb').jpeg({ quality: kind === 'thumb' ? 76 : 91 }).toBuffer();
+          }
+        }
         catch (error) {
           if (!item.raw || TRANSIENT.has(error.code)) throw error;
           const tag = selected.info.tag;

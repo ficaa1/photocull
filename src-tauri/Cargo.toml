@@ -33,6 +33,10 @@ lightcraft-geom = { git = "https://github.com/storytold/lightcraft", rev = "d58b
 lightcraft-fetch = { git = "https://github.com/storytold/lightcraft", rev = "d58b4d67238ef1aafd8e3394a9f8428a3d91e561" }
 lightcraft-engine = { git = "https://github.com/storytold/lightcraft", rev = "d58b4d67238ef1aafd8e3394a9f8428a3d91e561" }
 
+[target.'cfg(windows)'.dependencies]
+# Reuse Lightcraft's ACM-aware monitor query for diagnostics; the webview owns presentation.
+lightcraft-wincolor = { git = "https://github.com/storytold/lightcraft", rev = "d58b4d67238ef1aafd8e3394a9f8428a3d91e561" }
+
 [profile.release]
 codegen-units = 1
 lto = true

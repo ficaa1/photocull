@@ -38,6 +38,11 @@ The native Develop engine uses Lightcraft at commit
 `d58b4d67238ef1aafd8e3394a9f8428a3d91e561`:
 https://github.com/storytold/lightcraft
 
+Preview sRGB ICC metadata uses `lightcraft-codecs`' profile writer, and Windows
+display diagnostics use the same revision's `lightcraft-wincolor` crate. Both
+are unmodified dependencies under the MIT / Apache-2.0 choice above; no source
+from their display-transform implementation is vendored.
+
 The histogram smoothing, scaling, grayscale detection and tonal-zone interaction in
 `src/renderer/histogram.js` and `develop.js` are JavaScript adaptations of
 `crates/ui-egui/src/panels/edit/hdr_flow.rs`, `panels/histogram.rs`, and

@@ -9,6 +9,51 @@ const { Library } = require('../src/library.cjs');
 const { PriorityQueue } = require('../src/queue.cjs');
 const { fixtures } = require('../scripts/fixtures.cjs');
 
+test('16-bit ICC TIFF previews retain sRGB colours at every size, including Dehancer edits', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'photocull-preview-colour-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const colors = [[114,175,203], [17,50,72], [147,185,199]];
+  const pixels = Buffer.alloc(300 * 100 * 3);
+  for (let y = 0; y < 100; y++) for (let x = 0; x < 300; x++) {
+    pixels.set(colors[Math.floor(x / 100)], (y * 300 + x) * 3);
+  }
+  const file = path.join(root, 'edit.tif');
+  await sharp(pixels, { raw: { width: 300, height: 100, channels: 3 } })
+    .withIccProfile('srgb').toColourspace('rgb16').tiff({ compression: 'none' }).toFile(file);
+  assert.equal((await sharp(file).metadata()).bitsPerSample, 16);
+  const original = await fs.readFile(file);
+  // Remove only the ICC tag from this generated little-endian TIFF, retaining
+  // 16-bit source samples to exercise the untagged-sRGB fallback too.
+  const untagged = Buffer.from(original), ifd = untagged.readUInt32LE(4);
+  for (let i = 0; i < untagged.readUInt16LE(ifd); i++) {
+    const offset = ifd + 2 + i * 12;
+    if (untagged.readUInt16LE(offset) === 34675) untagged.writeUInt16LE(65000, offset);
+  }
+  const plainFile = path.join(root, 'untagged.tif'); await fs.writeFile(plainFile, untagged);
+  assert.equal((await sharp(plainFile).metadata()).hasProfile, false);
+  const p3File = path.join(root, 'p3.tif');
+  await sharp(pixels, { raw: { width: 300, height: 100, channels: 3 } })
+    .withIccProfile('p3').toColourspace('rgb16').tiff({ compression: 'none' }).toFile(p3File);
+  const previews = new PreviewService(path.join(root, 'cache'));
+  t.after(() => previews.close());
+  const direct = { id: 'tiff', path: file, fingerprint: 'one', raw: false };
+  const edited = { id: 'raw', path: path.join(root, 'photo.ARW'), fingerprint: 'two', raw: true,
+    develop: { edited: true, tiff: file } };
+  const plain = { ...direct, id: 'untagged', path: plainFile };
+  const p3 = { ...direct, id: 'p3', path: p3File };
+  for (const item of [direct, edited, plain, p3]) for (const kind of ['thumb', 'preview', 'full']) {
+    const bytes = await previews.get(item, kind);
+    assert.ok((await sharp(bytes).metadata()).hasProfile, `${kind} must identify its source colour space`);
+    const rgb = await sharp(bytes).raw().toBuffer();
+    for (let patch = 0; patch < colors.length; patch++) {
+      const offset = (50 * 300 + patch * 100 + 50) * 3;
+      for (let c = 0; c < 3; c++) assert.ok(Math.abs(rgb[offset + c] - colors[patch][c]) <= 3,
+        `${item.id}/${kind}: patch ${patch}, channel ${c}: ${rgb[offset + c]} vs ${colors[patch][c]}`);
+    }
+  }
+  assert.deepEqual(await fs.readFile(file), original);
+});
+
 test('visible work jumps ahead of prefetch, and duplicate work shares one promise', async () => {
   const queue = new PriorityQueue(1), order = [];
   let unblock;
