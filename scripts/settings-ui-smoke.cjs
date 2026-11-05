@@ -18,7 +18,14 @@ async function main() {
   }
   try {
     await launch();
-    await page.locator('#settings-open').click();await page.locator('#auto-advance').uncheck();
+    await page.locator('#settings-open').click();
+    await page.locator('[data-settings-tab="about"]').click();
+    await page.waitForFunction(()=>document.querySelector('#about-name').textContent.includes('0.8.0'));
+    assert.match(await page.locator('[data-settings-page="about"]').textContent(),/MIT License/);
+    assert.match(await page.locator('[data-settings-page="about"]').textContent(),/RAW engine: Lightcraft/);
+    assert.match(await page.locator('#about-notices').textContent(),/LibRaw/);
+    checks.push('About shows version, MIT, engine credit and bundled local notices');
+    await page.locator('[data-settings-tab="general"]').click();await page.locator('#auto-advance').uncheck();
     await page.locator('[data-settings-tab="metadata"]').click();await page.locator('#meta-creator').fill('Test Photographer & friends');await page.locator('#meta-copyright').fill('© 2026 Test Photographer');await page.locator('#meta-keywords').fill('travel, test');
     await page.locator('[data-settings-tab="colors"]').click();await page.locator('[data-id="4"] [data-field="name"]').fill('Review');await page.locator('[data-id="4"] [data-field="label"]').fill('To edit');
     await page.screenshot({path:path.join(reports,`settings-colors-${process.platform}.png`)});
