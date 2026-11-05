@@ -1,5 +1,5 @@
 // node redesign-ui-smoke.cjs EXECUTABLE|- REPORT_FOLDER [SONY_FIXTURE_FOLDER]
-// Exercises the real Electron UI with disposable photos and isolated app state.
+// Exercises the real UI with disposable photos and isolated app state.
 const { launch: launchApp } = require('./launch.cjs');
 const fs = require('node:fs/promises');
 const path = require('node:path');

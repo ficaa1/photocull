@@ -26,5 +26,8 @@ along with Emscripten's license. The upstream build does not pin its Emscripten
 SDK/port revisions; the bundled port notices cover IJG JPEG 9f, libpng's combined
 historical license, and zlib's license. We do not claim a bit-reproducible build.
 
-Other runtime dependencies retain licenses in the packaged node_modules tree;
-Electron's own LICENSE and LICENSES.chromium.html accompany the executable.
+Other runtime dependencies retain licenses in the packaged node_modules tree.
+The bundled Node.js runtime's license, including its third-party notices, is
+copied to `Node-LICENSE.txt` at build time. The Tauri shell's Rust crate licenses
+are those of the crates listed in `src-tauri/Cargo.lock`; the system webview
+(WebView2, WKWebView or WebKitGTK) is not bundled.

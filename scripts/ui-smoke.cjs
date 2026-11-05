@@ -64,12 +64,12 @@ async function main() {
     await page.waitForFunction(() => document.querySelectorAll('.grid-card.selected').length === 2);
     await page.keyboard.press('Shift+ArrowLeft');
     await page.waitForFunction(() => document.querySelectorAll('.grid-card.selected').length === 1);
-    await cards.nth(6).click({ modifiers: ['Control'] });
+    await cards.nth(6).click({ modifiers: ['ControlOrMeta'] });
     await page.waitForFunction(() => document.querySelectorAll('.grid-card.selected').length === 2);
-    await cards.nth(6).click({ modifiers: ['Control'] });
+    await cards.nth(6).click({ modifiers: ['ControlOrMeta'] });
     await page.waitForFunction(() => document.querySelectorAll('.grid-card.selected').length === 1);
     const current = page.locator('.grid-card.current'), currentName = await current.getAttribute('aria-label');
-    await current.click({ modifiers: ['Control'] });
+    await current.click({ modifiers: ['ControlOrMeta'] });
     await page.waitForFunction(() => document.querySelectorAll('.grid-card.selected').length === 0);
     assert.equal(await page.locator('#photo-name').textContent(), currentName, 'unmarking the last photo preserves review focus');
     await page.keyboard.press('Control+a');

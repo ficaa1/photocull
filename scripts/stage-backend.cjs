@@ -33,6 +33,13 @@ async function main() {
   const node = path.join(binaries, `node-${triple}${suffix}`);
   await fs.copyFile(process.execPath, node);
   await fs.chmod(node, 0o755);
+  // Node's MIT license and bundled third-party notices must ship with the binary.
+  // Official builds keep LICENSE next to node.exe (Windows) or one level above bin/node.
+  const nodeDir = path.dirname(await fs.realpath(process.execPath));
+  const license = [path.join(nodeDir, 'LICENSE'), path.join(nodeDir, '..', 'LICENSE')];
+  const found = (await Promise.all(license.map(file => fs.access(file).then(() => file, () => null)))).find(Boolean);
+  if (!found) throw new Error(`Node's LICENSE was not found next to ${process.execPath}; use an official Node build.`);
+  await fs.copyFile(found, path.join(backend, 'third-party', 'Node-LICENSE.txt'));
   console.log(`Staged backend (${backend}) and Node ${process.version} (${node}).`);
 }
 

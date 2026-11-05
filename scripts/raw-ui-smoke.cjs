@@ -1,5 +1,5 @@
 // node raw-ui-smoke.cjs EXECUTABLE CASE_FOLDER REPORT_FOLDER
-// EXECUTABLE may be '-' for this development checkout's Electron.
+// EXECUTABLE may be '-' for this development checkout (web mode).
 const { launch: launchApp } = require('./launch.cjs');
 const fs = require('node:fs/promises');
 const path = require('node:path');

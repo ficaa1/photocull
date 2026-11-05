@@ -3,7 +3,7 @@
 // cannot drive the Tauri webviews (WebKitGTK, WKWebView), so the tests drive
 // the same renderer and backend through Chromium instead.
 //
-// Returns the subset of Playwright's Electron app object the scripts used:
+// Returns the subset of Playwright's former Electron app object the scripts used:
 // { firstWindow(), process(), close() }.
 const { chromium } = require('playwright-core');
 const { spawn } = require('node:child_process');

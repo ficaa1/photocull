@@ -41,7 +41,10 @@ function selection() { return state.marked.size > 1 ? filtered().filter(i => sta
 function resetSelection() { state.marked = new Set(state.selected ? [state.selected] : []); state.anchor = state.selected; }
 function viewKey() { return JSON.stringify([state.filter, state.query, state.colorFilter]); }
 function sameIds(ids, items = selection()) { const marked = new Set(ids); return ids.length === items.length && items.every(item => marked.has(item.id)); }
-function additive(event) { return api.platform === 'darwin' ? event.metaKey : event.ctrlKey; }
+function additive(event) {
+  if (api.platform === 'darwin') return event.metaKey;
+  return api.platform === 'web' ? event.ctrlKey || event.metaKey : event.ctrlKey; // web: tests run on macOS, where Ctrl+click is a right-click
+}
 function reviewed(item) { return item.flag !== 'none' || item.rating > 0 || !!item.color; }
 function filtered() {
   return (state.session?.items ?? []).filter(item => {
