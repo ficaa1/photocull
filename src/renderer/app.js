@@ -5,6 +5,8 @@ const state = { deleting: false, session: null, selected: null, marked: new Set(
 let toastTimer, metadataTimer, framePending = false, handoffUsageKey = '', handoffUsageGeneration = 0;
 const gridNodes = new Map(), filmNodes = new Map();
 let filmSignature = '';
+const culling = { metadata:new Map(), jobs:new Map(), scores:new Map(), bursts:[], byId:new Map(), expanded:new Set(), epoch:0, paused:false, running:false };
+let survey, burstPrompt=null;
 let layoutPrefs = { sources: true, details: true, gridSize: 205 };
 try { const saved = JSON.parse(localStorage.getItem('photocull-layout') || '{}'); layoutPrefs = { sources: saved.sources !== false, details: saved.details !== false, gridSize: Math.min(320, Math.max(160, Number(saved.gridSize) || 205)) }; } catch {}
 const glyph = paths => `<svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
@@ -98,6 +100,7 @@ async function openFolder() {
 }
 
 function loadSession(session) {
+  cancelCulling();culling.metadata.clear();culling.jobs.clear();culling.scores.clear();culling.expanded.clear();culling.bursts=[];culling.byId.clear();
   state.session = session; state.selected = session.items[0]?.id ?? null;
   resetSelection();
   state.showOriginal = false; state.filter = 'all'; state.colorFilter = ''; $('color-filter').value = ''; state.query = ''; state.saveError = false; loupe.reset();
@@ -110,7 +113,7 @@ function loadSession(session) {
   $('export').disabled = !session.items.length;
   gridNodes.clear(); filmNodes.clear(); filmSignature = ''; $('grid-content').replaceChildren();
   render(); renderDevices();
-  setStatus('Saved');
+  setStatus('Saved');void analyzeCulling();
   if (session.warnings.length) toast(`${session.warnings.length} file or sidecar warning(s): ${session.warnings[0]}`);
   const missingHandoffs = session.items.filter(i => i.handoffMissing).length;
   if (missingHandoffs) toast(`${missingHandoffs} external edit(s) missing. Showing original photos; copy the hand-off folder alongside the photos.`);
@@ -182,6 +185,8 @@ function render(reset = false) {
   if (hadMarked && state.selected) state.marked.add(state.selected);
   if (reset) resetSelection();
   if (!visible.has(state.anchor)) state.anchor = state.selected;
+  survey?.sync(state.mode==='compare');
+  $('compare-mode').setAttribute('aria-pressed',String(state.mode==='compare'));
   const loaded = !!state.session?.items.length;
   $('empty').hidden = loaded;
   $('no-matches').hidden = !loaded || !!items.length;
@@ -204,6 +209,7 @@ function render(reset = false) {
   $('trash-restore').disabled = $('empty-trash').disabled = locked;
   if (deletePrompt && (state.session?.id !== deletePrompt.session || viewKey() !== deletePrompt.view || !sameIds(deletePrompt.ids))) hideDeletePrompt();
   renderSelection();
+  renderCulling();
   if (state.mode === 'grid') requestGrid();
 }
 
@@ -214,11 +220,12 @@ function renderSelection() {
   if (!item) { state.generation++; loupe.clear(); if (state.fullscreen) void setFullscreen(false); return; }
   const items = filtered(), index = items.findIndex(i => i.id === item.id);
   // Keeps the photo on screen and those prepared ahead in the direction of travel; cancels obsolete work.
-  void api.focus(state.session.id, [item.id, ...loupe.select(items, index)]).catch(() => {});
+  if(state.mode!=='compare')void api.focus(state.session.id, [item.id, ...loupe.select(items, index)]).catch(() => {});
   $('photo-name').textContent = item.externalEdit && !state.showOriginal ? `Edited in ${editorName(item.editedBy)} · ${item.name}` : item.name;
   $('photo-size').textContent = `${fileSize(item.size)}${item.paired ? ' · RAW + JPEG pair' : ''}`;
   $('format-badge').textContent = item.raw ? item.paired ? 'RAW + JPEG' : 'RAW' : item.name.split('.').pop().toUpperCase();
   $('image-position').textContent = `${index + 1} / ${items.length}`;
+  renderCulling();
   $('previous').disabled = index <= 0; $('next').disabled = index >= items.length - 1;
   $('detail-name').textContent = item.name;
   $('detail-result').querySelector('.sidebar-label').textContent = `Edited in ${editorName(item.editedBy)}`; $('detail-result-edit').textContent = `Edit in ${editorName(item.editedBy)} again`;
@@ -288,7 +295,7 @@ async function loadMetadata(item) {
     $('metadata').textContent = 'Loading…';
   }
   try {
-    const metadata = await api.metadata(sessionId, imageId, loupe.kind());
+    const metadata = await cullingMetadata(item.id,sessionId);
     if (state.selected !== imageId || state.session.id !== sessionId || state.generation !== generation) return;
     const rows = [['Camera', metadata.camera], ['Lens', metadata.lens], ['Exposure', [metadata.shutter ? `${metadata.shutter} s` : '', metadata.aperture, metadata.iso ? `ISO ${metadata.iso}` : ''].filter(Boolean).join(' · ')],
       ['Captured', formatCaptureDate(metadata.captured)], ['Preview', metadata.width && metadata.height ? `${metadata.width} × ${metadata.height}` : ''], ['Source', metadata.source], ['Develop', item.externalEdit ? `Edited in ${editorName(item.editedBy)} · open Develop to view` : item.developed ? 'Developed hand-off' : item.adjusted ? 'RAW adjustments' : '']];
@@ -297,10 +304,12 @@ async function loadMetadata(item) {
       dt.textContent = name; dd.textContent = value || '—'; return [dt, dd];
     }));
     $('preview-source').textContent = metadata.source || item.source;
+    applyFocus();
   } catch { if (state.selected === imageId) $('metadata').textContent = 'Metadata unavailable'; }
 }
 
 function renderFilmstrip(items, index) {
+  items=stackItems(items);index=items.findIndex(i=>i.id===state.selected);
   const start = Math.max(0, index - 3), nearby = items.slice(start, Math.min(items.length, index + 5));
   if (state.mode === 'review') void api.visible(state.session.id, nearby.map(i => i.id)).catch(() => {});
   const signature = `${state.session.id}:${state.previewRevision}:${nearby.map(item => item.id).join(':')}`;
@@ -316,7 +325,7 @@ function renderFilmstrip(items, index) {
     }
     button.classList.toggle('selected', state.marked.has(item.id)); button.classList.toggle('current', item.id === state.selected); button.setAttribute('aria-current', String(item.id === state.selected));
     button.querySelector('.film-label').textContent = String(start + i + 1).padStart(2, '0');
-    button.querySelectorAll('.mini-flag, .mini-color, .develop-badges').forEach(node => node.remove()); addFlag(button, item); return button;
+    button.querySelectorAll('.mini-flag, .mini-color, .develop-badges, .burst-badge, .sharpest-badge').forEach(node => node.remove()); addFlag(button, item); return button;
   });
   if (signature !== filmSignature) { $('filmstrip').replaceChildren(...nodes); filmSignature = signature; }
   const retained = new Set(nearby.map(item => item.id)); for (const id of filmNodes.keys()) if (!retained.has(id)) filmNodes.delete(id);
@@ -324,6 +333,7 @@ function renderFilmstrip(items, index) {
 }
 
 function addFlag(node, item) {
+  addBurstBadges(node,item);
   const marks = [item.adjusted && 'Adjusted', item.developed && 'Hand-off', item.externalEdit && `Edited in ${editorName(item.editedBy)}`].filter(Boolean);
   if (marks.length) { const badge = document.createElement('span'); badge.className = 'develop-badges'; badge.textContent = marks.map(m => m === 'Adjusted' ? '±' : m === 'Hand-off' ? 'H' : 'E').join(' '); badge.title = marks.join(' · '); node.append(badge); }
   const color = state.settings.colors.find(c => c.id === colorOf(item));
@@ -346,14 +356,14 @@ function gridLayout() {
 }
 function renderGrid() {
   if (state.mode !== 'grid' || $('grid').hidden) return;
-  const viewport = $('grid'), container = $('grid-content'), items = filtered();
+  const viewport = $('grid'), container = $('grid-content'), items = stackItems(filtered());
   const { columns, width, rowHeight } = gridLayout();
   container.style.height = `${Math.ceil(items.length / columns) * rowHeight}px`;
   const first = Math.max(0, Math.floor(viewport.scrollTop / rowHeight) - 1) * columns;
   const last = Math.min(items.length, (Math.ceil((viewport.scrollTop + viewport.clientHeight) / rowHeight) + 1) * columns);
   const retained = new Set();
   for (let i = first; i < last; i++) {
-    const item = items[i], signature = `${item.id}:${item.flag}:${item.rating}:${item.color}:${item.adjusted}:${item.developed}:${item.externalEdit}:${item.editedBy}:${item.developRevision}:${state.previewRevision}`;
+    const item = items[i], signature = `${burstSignature(item)}:${item.id}:${item.flag}:${item.rating}:${item.color}:${item.adjusted}:${item.developed}:${item.externalEdit}:${item.editedBy}:${item.developRevision}:${state.previewRevision}`;
     retained.add(item.id);
     let node = gridNodes.get(item.id);
     if (!node || node.dataset.signature !== signature) {
@@ -400,7 +410,7 @@ function updateMarquee() {
   const y = Math.max(0, Math.min(viewport.clientHeight, drag.clientY - bounds.top)) + viewport.scrollTop;
   const left = Math.min(drag.startX, x), top = Math.min(drag.startY, y), right = Math.max(drag.startX, x), bottom = Math.max(drag.startY, y);
   Object.assign(drag.node.style, { left: `${left}px`, top: `${top}px`, width: `${right - left}px`, height: `${bottom - top}px` });
-  const { columns, width, rowHeight } = gridLayout(), items = filtered(), marked = new Set(drag.base);
+  const { columns, width, rowHeight } = gridLayout(), items = stackItems(filtered()), marked = new Set(drag.base);
   let current = null;
   // Hit-test layout coordinates: most of the intersecting cards may not be mounted.
   const first = Math.max(0, Math.floor(top / rowHeight)) * columns;
@@ -465,7 +475,7 @@ function select(id, event = {}) {
   // Plain navigation stays on the cheap path; only selection-size changes need the full render.
   if (wasMulti || state.marked.size > 1 || deletePrompt) render(); else renderSelection();
   if (state.mode === 'grid') {
-    const items = filtered(), index = items.findIndex(i => i.id === id);
+    const items = stackItems(filtered()), index = items.findIndex(i => i.id === id);
     const { columns, rowHeight } = gridLayout();
     const y = Math.floor(index / columns) * rowHeight;
     if (y < $('grid').scrollTop) $('grid').scrollTop = y;
@@ -474,11 +484,11 @@ function select(id, event = {}) {
   }
 }
 function navigate(delta, extend = false) {
-  const items = filtered(), index = items.findIndex(i => i.id === state.selected);
+  const items = state.mode==='grid' ? stackItems(filtered()) : filtered(), index = items.findIndex(i => i.id === state.selected);
   const next = items[Math.max(0, Math.min(items.length - 1, index + delta))];
   if (next) select(next.id, { shiftKey: extend });
 }
-function setMode(mode) { if (mode !== 'review' && state.fullscreen) void setFullscreen(false); loupe.cancelHand(); state.generation++; state.mode = mode; render(); }
+function setMode(mode) { if(mode==='compare' && state.mode!=='compare' && !survey.open(selection().map(i=>i.id),filtered()))return toast('Select at least two photos to compare.'); if (mode !== 'review' && state.fullscreen) void setFullscreen(false); loupe.cancelHand(); state.generation++; state.mode = mode; render(); }
 
 function nextSurvivor(items, ids) {
   let last = -1;
@@ -859,8 +869,9 @@ window.addEventListener('blur', () => loupe.cancelHand());
 function option(value, label) { const node = document.createElement('option'); node.value = value; node.textContent = label; return node; }
 function syncSettings(value) {
   state.settings = value; state.settingsReady = true;
-  loupe.setClickPercent(value.zoomPercent);
+  loupe.setClickPercent(value.zoomPercent);regroupBursts();applyFocus();
   $('default-recipe').value = value.defaultRecipe || 'neutral';
+  $('focus-preference').checked=!!value.focusOverlay;$('burst-gap').value=value.burstGap || 1;
   $('auto-advance').checked = value.autoAdvance; $('recursive').checked = value.recursive; $('write-sidecars').value = value.writeSidecars; $('raw-rendering').value = value.rawRendering;
   $('copy-verify').checked = value.copyVerify; $('copy-jpeg').checked = value.copyJpeg; $('copy-xmp').checked = value.copyXmp; $('copy-metadata').checked = value.copyMetadata; fillFolders('copy', value.folders);
   $('copy-preset').replaceChildren(...value.presets.map(p => option(p.id, p.name))); $('copy-preset').value = value.activePreset;
@@ -932,6 +943,7 @@ async function saveCopyDefaults() {
 function fillSettings(value) {
   fillEditors(value);
   $('default-recipe').value = value.defaultRecipe || 'neutral';
+  $('focus-preference').checked=!!value.focusOverlay;$('burst-gap').value=value.burstGap || 1;
   $('auto-advance').checked = value.autoAdvance; $('recursive').checked = value.recursive; $('auto-open-cards').checked = value.autoOpenCards; $('zoom-click-center').checked = value.zoomClickCenter;
   $('preview-cache-limit').value = String(value.previewCacheGB); void showCacheUsage();
   $('write-sidecars').value = value.writeSidecars; $('raw-rendering').value = value.rawRendering; $('default-jpeg').checked = value.copyJpeg; $('default-xmp').checked = value.copyXmp; $('default-metadata').checked = value.copyMetadata; fillFolders('settings', value.folders);
@@ -955,6 +967,7 @@ function fillSettings(value) {
 function readSettings() {
   const value = clone(settingsDraft);
   readEditors(value); value.defaultRecipe = $('default-recipe').value;
+  value.focusOverlay=$('focus-preference').checked;value.burstGap=Number($('burst-gap').value);
   value.autoAdvance = $('auto-advance').checked; value.recursive = $('recursive').checked; value.autoOpenCards = $('auto-open-cards').checked; value.zoomClickCenter = $('zoom-click-center').checked;
   value.previewCacheGB = Number($('preview-cache-limit').value);
   value.writeSidecars = $('write-sidecars').value; value.rawRendering = $('raw-rendering').value; value.copyJpeg = $('default-jpeg').checked; value.copyXmp = $('default-xmp').checked; value.copyMetadata = $('default-metadata').checked; value.folders = readFolders('settings');
@@ -1233,3 +1246,119 @@ $('open-folder').after(workspaceButton('Back up…',()=>openBackup(),'backup-ope
 const verifyLabel=workspaceNode('label',null,{class:'toggle-row'});verifyLabel.innerHTML='<input id="copy-verify" type="checkbox"> Verify copied files (SHA-256)';$('copy-naming').before(verifyLabel);
 
 $('copy-verify').onchange=()=>saveCopyDefaults();
+
+// Culling shortcut bindings: keep together for the shared shortcut registry.
+const CULLING_SHORTCUTS = Object.freeze({ overlay:'a', zoomFocus:'shift+a', stacks:'s', compare:'c', wipe:'shift+\\' });
+function handleCullingKey(event) {
+  if(event.ctrlKey || event.metaKey || event.altKey)return state.mode==='compare' && survey.key(event);
+  const key=event.key.toLowerCase();
+  if(event.shiftKey && (event.code==='Backslash' || key==='\\' || key==='|') && state.mode==='develop'){event.preventDefault();if(!event.repeat)developView.toggleSplit();return true;}
+  if(key===CULLING_SHORTCUTS.overlay) {event.preventDefault();if(!event.repeat){if(event.shiftKey)void zoomFocus();else void toggleFocus();}return true;}
+  if(key===CULLING_SHORTCUTS.stacks) {event.preventDefault();if(!event.repeat)toggleBurst();return true;}
+  if(key===CULLING_SHORTCUTS.compare) {event.preventDefault();if(!event.repeat)setMode(state.mode==='compare'?'review':'compare');return true;}
+  if(state.mode==='compare' && event.key==='Escape'){event.preventDefault();setMode('review');return true;}
+  return state.mode==='compare' && survey.key(event);
+}
+async function cullingMetadata(id,session=state.session?.id) {
+  if(!session)return null;
+  if(culling.metadata.has(id))return culling.metadata.get(id);
+  if(culling.jobs.has(id))return culling.jobs.get(id);
+  const job=api.metadata(session,id,'preview').then(metadata=>{if(state.session?.id===session){culling.metadata.set(id,metadata);if(state.selected===id)applyFocus();}return metadata;}).finally(()=>{if(culling.jobs.get(id)===job)culling.jobs.delete(id);});
+  culling.jobs.set(id,job);return job;
+}
+function focusOf(id) {return culling.metadata.get(id)?.focus || null;}
+function applyFocus() {
+  const enabled=!!state.settings.focusOverlay;
+  $('focus-toggle').setAttribute('aria-pressed',String(enabled));
+  loupe.view.setFocus(focusOf(state.selected),enabled);
+  developView.setFocus(focusOf(state.selected),enabled);survey?.refresh();
+}
+async function toggleFocus() {
+  const previous=!!state.settings.focusOverlay;state.settings.focusOverlay=!previous;applyFocus();
+  try{state.settings=await api.settings({focusOverlay:!previous});$('focus-preference').checked=!!state.settings.focusOverlay;applyFocus();if(state.selected && !focusOf(state.selected)){await cullingMetadata(state.selected);if(!focusOf(state.selected))toast('This photo has no recorded AF coordinates.');}}
+  catch(error){state.settings.focusOverlay=previous;applyFocus();toast(error.message);}
+}
+async function zoomFocus() {
+  if(!photo())return;
+  const id=state.selected;await cullingMetadata(id);if(id!==state.selected)return;
+  const focus=focusOf(id);if(!focus)return toast('This photo has no recorded AF coordinates.');
+  if(state.mode==='compare')survey.zoomFocus(focus);
+  else {if(state.mode!=='review')setMode('review');loupe.view.set({mode:'ratio',percent:100},{centerOn:focus,animate:true});}
+}
+function regroupBursts() {
+  culling.bursts=PhotoCullCulling.groupBursts((state.session?.items || []).map(item=>({id:item.id,...culling.metadata.get(item.id)})),state.settings.burstGap || 1);
+  culling.byId.clear();for(const burst of culling.bursts)for(const id of burst.ids)culling.byId.set(id,burst);
+}
+function stackItems(items) {
+  const allowed=new Set(items.map(i=>i.id)),seen=new Set();
+  return items.filter(item=>{const b=culling.byId.get(item.id);if(!b || culling.expanded.has(b.id))return true;if(seen.has(b.id))return false;
+    const representative=b.ids.includes(state.selected) && allowed.has(state.selected) ? state.selected : b.ids.find(id=>allowed.has(id));
+    if(item.id!==representative)return false;seen.add(b.id);return true;});
+}
+function bestIn(burst) {return burst && PhotoCullCulling.sharpest(burst.ids,culling.scores);}
+function burstSignature(item) {const b=culling.byId.get(item.id);return b ? `${b.id}:${b.ids.length}:${culling.expanded.has(b.id)}:${bestIn(b)}` : '';}
+function addBurstBadges(node,item) {
+  const b=culling.byId.get(item.id);if(!b)return;
+  const badge=document.createElement('span');badge.className='burst-badge';badge.textContent=`${culling.expanded.has(b.id)?'▾':'▸'} ${b.ids.length}`;badge.title='Burst · S to expand or collapse';node.append(badge);
+  if(bestIn(b)===item.id){const star=document.createElement('span');star.className='sharpest-badge';star.textContent='◆ Sharpest';star.title='Highest preview sharpness in this burst';node.append(star);}
+}
+function renderCulling() {
+  const burst=culling.byId.get(state.selected),available=!!burst;
+  $('burst-context').hidden=!available;$('burst-context').textContent=available?`${burst.ids.indexOf(state.selected)+1}/${burst.ids.length} in burst${bestIn(burst)===state.selected?' · sharpest':''}`:'';
+  $('burst-stack').hidden=$('burst-keep').hidden=!available;
+  $('burst-stack').textContent=available && culling.expanded.has(burst.id)?'Collapse burst':'Expand burst';
+  $('burst-keep').disabled=!bestIn(burst) || state.busy || state.deleting || !!state.pendingSaves;
+  applyFocus();
+}
+function toggleBurst() {
+  const burst=culling.byId.get(state.selected);if(!burst)return toast('This photo is not part of a detected burst.');
+  if(culling.expanded.has(burst.id))culling.expanded.delete(burst.id);else culling.expanded.add(burst.id);
+  filmSignature='';render();
+}
+function cancelCulling() {culling.epoch++;culling.running=false;void api.cancelSharpness().catch(()=>{});}
+async function analyzeCulling() {
+  cancelCulling();culling.paused=false;culling.running=true;const epoch=culling.epoch,session=state.session?.id,items=[...(state.session?.items || [])];
+  $('analysis-pause').hidden=!items.length;$('analysis-pause').textContent='Pause analysis';
+  const current=()=>epoch===culling.epoch && session===state.session?.id && !culling.paused;
+  const yieldUI=()=>new Promise(resolve=>setTimeout(resolve,35));let failures=0;
+  try {
+    for(const [index,item] of items.entries()) {
+      if(!current())return;try{await cullingMetadata(item.id,session);}catch{failures++;}
+      if(!current())return;
+      if(index%8===0 || index===items.length-1){regroupBursts();filmSignature='';render();$('analysis-status').textContent=`Metadata ${index+1}/${items.length}`;}
+      await yieldUI();
+    }
+    if(api.canAnalyze) {
+      const burstIds=new Set(culling.byId.keys()),order=[...items.filter(i=>burstIds.has(i.id)),...items.filter(i=>!burstIds.has(i.id))];
+      for(const item of order) {
+        if(!current())return;if(culling.scores.has(item.id))continue;
+        try{const score=await api.sharpness(session,item.id);if(!current())return;if(Number.isFinite(score))culling.scores.set(item.id,score);}catch{if(current())failures++;}
+        if(!current())return;
+        $('analysis-status').textContent=`Focus ${culling.scores.size}/${items.length}`;filmSignature='';render();await yieldUI();
+      }
+    }
+    if(current()){$('analysis-status').textContent=failures?`${failures} unavailable`:api.canAnalyze?'Focus ready':'Desktop scores';$('analysis-pause').hidden=!failures;$('analysis-pause').textContent='Retry analysis';}
+  }finally{if(epoch===culling.epoch)culling.running=false;}
+}
+function promptKeepSharpest() {
+  const burst=culling.byId.get(state.selected),best=bestIn(burst);if(!best || state.busy || state.deleting || state.pendingSaves)return;
+  burstPrompt={session:state.session.id,ids:[...burst.ids],best};
+  const items=burst.ids.map(id=>state.session.items.find(i=>i.id===id)),changes=items.filter(i=>i.flag!==(i.id===best?'pick':'reject'));
+  $('burst-summary').textContent=`Pick ${items.find(i=>i.id===best).name} and reject the other ${items.length-1} frame${items.length===2?'':'s'}. ${changes.length} flag${changes.length===1?'':'s'} will change.`;
+  $('burst-changes').textContent=items.map(i=>`${i.name}: ${i.flag} → ${i.id===best?'pick':'reject'}`).join('\n');$('burst-dialog').showModal();
+}
+$('focus-toggle').onclick=()=>void toggleFocus();$('compare-mode').onclick=()=>setMode(state.mode==='compare'?'review':'compare');
+$('burst-stack').onclick=toggleBurst;$('burst-keep').onclick=promptKeepSharpest;
+$('analysis-pause').onclick=()=>{if(culling.running){cancelCulling();culling.paused=true;$('analysis-status').textContent='Analysis paused';$('analysis-pause').textContent='Resume analysis';}else void analyzeCulling();};
+$('burst-cancel').onclick=()=>{$('burst-dialog').close();burstPrompt=null;};
+$('burst-dialog').addEventListener('cancel',()=>{burstPrompt=null;});
+$('burst-confirm').onclick=async()=>{
+  const prompt=burstPrompt;if(!prompt || prompt.session!==state.session?.id)return;$('burst-confirm').disabled=true;
+  try {const result=await api.keepSharpest(prompt.session,prompt.ids);if(state.session?.id===prompt.session){for(const patch of result.items)Object.assign(state.session.items.find(i=>i.id===patch.id),patch);state.selected=result.best;resetSelection();render();toast('Kept the sharpest frame · Undo restores the whole burst');}$('burst-dialog').close();burstPrompt=null;}
+  catch(error){toast(error.message);}finally{$('burst-confirm').disabled=false;}
+};
+survey=PhotoCullSurvey.create({api,session:()=>state.session?.id,revision:()=>`${state.previewRevision}:${state.showOriginal}`,items:filtered,item:id=>state.session?.items.find(i=>i.id===id),url:imageUrl,metadata:cullingMetadata,focus:focusOf,overlay:()=>!!state.settings.focusOverlay,
+  activate:id=>{if(state.selected!==id){state.selected=id;renderSelection();}},
+  decide:async(id,patch)=>{if(state.busy || state.deleting)return;const session=state.session.id;try{const result=await api.decide(session,id,patch);if(state.session?.id===session){Object.assign(state.session.items.find(i=>i.id===id),result);render();}}catch(error){toast(error.message);}}
+});
+window.addEventListener('pagehide',cancelCulling);

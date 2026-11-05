@@ -6,6 +6,7 @@ const { PriorityQueue } = require('./queue.cjs');
 const { hash } = require('./library.cjs');
 const { atomicWrite } = require('./xmp.cjs');
 const { RawRenderCache } = require('./raw-cache.cjs');
+const { normalizeFocus, captureTime } = require('./renderer/culling.js');
 
 sharp.concurrency(1);
 sharp.cache({ memory: 48, files: 24, items: 64 });
@@ -374,11 +375,17 @@ class PreviewService {
   metadata(item, kind = 'preview') {
     const key = this.baseKey(item);
     if (!this.metadataJobs.has(key)) {
-      const job = this.exif.readRaw(item.path, { readArgs: ['-fast', '-Make', '-Model', '-LensModel', '-FNumber', '-ExposureTime', '-ISO', '-DateTimeOriginal', '-ImageWidth', '-ImageHeight'] }).then(tags => ({
-        camera: [tags.Make, tags.Model].filter(Boolean).join(' '), lens: tags.LensModel || '',
-        aperture: tags.FNumber ? `f/${tags.FNumber}` : '', shutter: String(tags.ExposureTime || ''), iso: tags.ISO || '',
-        captured: String(tags.DateTimeOriginal || ''), width: tags.ImageWidth || null, height: tags.ImageHeight || null,
-        source: item.raw ? 'Finding RAW preview' : 'Original image' }));
+      const job = (async () => {
+        const file=path.join(this.cacheDir,key+'.metadata-v2.json');
+        try { return JSON.parse(await fs.readFile(file,'utf8')); } catch {}
+        const tags=await this.exif.readRaw(item.path, { readArgs: ['-fast', '-Make', '-Model', '-SerialNumber', '-InternalSerialNumber', '-LensModel', '-FNumber', '-ExposureTime', '-ISO', '-DateTimeOriginal', '-SubSecTimeOriginal', '-OffsetTimeOriginal', '-ImageWidth', '-ImageHeight', '-ExifImageWidth', '-ExifImageHeight', '-Orientation#', '-DefaultCropOrigin', '-DefaultCropSize', '-FocusLocation', '-FocusLocation2', '-FocusFrameSize#', '-FocalPlaneAFPoint*', '-AFPointsUsed', '-AFCoordinatesAvailable#', '-AFImageWidth', '-AFImageHeight', '-AFAreaXPosition*', '-AFAreaYPosition*', '-AFAreaWidth*', '-AFAreaHeight*', '-AFPointsInFocus', '-FocusPixel', '-AFPointSelected#', '-AFPointPosition#'] });
+        const data={camera:[tags.Make,tags.Model].filter(Boolean).join(' '),cameraKey:[tags.Make,tags.Model,tags.SerialNumber || tags.InternalSerialNumber].filter(Boolean).join(':'),lens:tags.LensModel || '',
+          aperture:tags.FNumber ? `f/${tags.FNumber}` : '',shutter:String(tags.ExposureTime || ''),iso:tags.ISO || '',
+          captured:String(tags.DateTimeOriginal || ''),captureTime:captureTime(tags.DateTimeOriginal,tags.SubSecTimeOriginal),subsec:String(tags.SubSecTimeOriginal || ''),focus:normalizeFocus(tags),
+          width:Number(tags.ExifImageWidth || tags.ImageWidth) || null,height:Number(tags.ExifImageHeight || tags.ImageHeight) || null,orientation:Number(tags.Orientation) || 1,
+          source:item.raw ? 'Finding RAW preview' : 'Original image'};
+        await fs.mkdir(this.cacheDir,{recursive:true});await atomicWrite(file,JSON.stringify(data));return data;
+      })();
       this.metadataJobs.set(key, job); job.catch(() => this.metadataJobs.delete(key));
       if (this.metadataJobs.size > 200) this.metadataJobs.delete(this.metadataJobs.keys().next().value);
     }

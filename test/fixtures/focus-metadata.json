@@ -1,0 +1,10 @@
+[
+  {"name":"Sony cropped JPEG space","tags":{"Make":"SONY","FocusLocation":"6000 4000 4500 1000","FocusFrameSize":"120 80 257","ImageWidth":6144,"ImageHeight":4096,"ExifImageWidth":6000,"ExifImageHeight":4000,"DefaultCropOrigin":"72 48","DefaultCropSize":"6000 4000","Orientation":1},"expected":{"x":0.75,"y":0.25,"width":0.02,"height":0.02}},
+  {"name":"Sony portrait","tags":{"Make":"SONY","FocusLocation":"6000 4000 4500 1000","FocusFrameSize":"120 80 257","Orientation":6},"expected":{"x":0.75,"y":0.75,"width":0.02,"height":0.02}},
+  {"name":"Sony focal plane fallback","tags":{"Make":"Sony","FocalPlaneAFPointArea":"640 428","FocalPlaneAFPointLocation1":"320 107"},"expected":{"x":0.5,"y":0.25,"width":0.025,"height":0.025}},
+  {"name":"Nikon area","tags":{"Make":"NIKON","AFImageWidth":6000,"AFImageHeight":4000,"AFAreaXPosition":1500,"AFAreaYPosition":3000,"AFAreaWidth":600,"AFAreaHeight":200},"expected":{"x":0.25,"y":0.75,"width":0.1,"height":0.05}},
+  {"name":"Canon EOS in-focus geometry","tags":{"Make":"Canon","Model":"EOS R6","AFImageWidth":6000,"AFImageHeight":4000,"AFAreaXPositions":"-1500 1500","AFAreaYPositions":"1000 -1000","AFAreaWidths":"120 240","AFAreaHeights":"80 160","AFPointsInFocus":"0,1"},"expected":{"x":0.25,"y":0.25,"width":0.02,"height":0.02},"count":2},
+  {"name":"Fujifilm pixel","tags":{"Make":"FUJIFILM","ImageWidth":6000,"ImageHeight":4000,"FocusPixel":"3000 1000"},"expected":{"x":0.5,"y":0.25,"width":0.025,"height":0.025}},
+  {"name":"Olympus corners","tags":{"Make":"OLYMPUS","AFPointSelected":"0.2 0.3 0.4 0.5"},"expected":{"x":0.3,"y":0.4,"width":0.2,"height":0.2}},
+  {"name":"Panasonic normalized","tags":{"Make":"Panasonic","AFPointPosition":"0.7 0.3"},"expected":{"x":0.7,"y":0.3,"width":0.025,"height":0.025}}
+]

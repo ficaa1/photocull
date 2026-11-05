@@ -38,10 +38,23 @@
       this.stage = node('div',{class:'develop-stage'});
       this.image = node('img',{id:'develop-image',alt:'Developed RAW preview',draggable:'false'});
       this.overlay = node('canvas',{id:'develop-clipping','aria-hidden':'true',hidden:''});
+      this.split=false;this.splitPosition=50;this.wipeEpoch=0;
       this.frameBox = node('div',{class:'develop-frame'},[this.image,this.overlay]);
+      this.focusOverlay=new PhotoCullView.FocusOverlay(this.frameBox);
+      this.wipeImage=node('img',{id:'develop-wipe-image',alt:'Before preview',hidden:'',draggable:'false'});
+      this.wipe=node('div',{id:'develop-wipe',role:'slider',tabindex:0,'aria-label':'Before / after split','aria-valuemin':0,'aria-valuemax':100,'aria-valuenow':50,hidden:''});
+      this.wipeBefore=node('span',{class:'develop-wipe-label before',text:'Before',hidden:''});this.wipeAfter=node('span',{class:'develop-wipe-label after',text:'After',hidden:''});
+      this.frameBox.append(this.wipeImage,this.wipe,this.wipeBefore,this.wipeAfter);
+      const move=e=>{const r=this.image.getBoundingClientRect();this.setSplit((e.clientX-r.left)/r.width*100);};
+      this.wipe.addEventListener('pointerdown',e=>{if(e.button!==0)return;e.preventDefault();this.wipe.focus();this.wipe.setPointerCapture(e.pointerId);move(e);});
+      this.wipe.addEventListener('pointermove',e=>{if(this.wipe.hasPointerCapture(e.pointerId))move(e);});
+      this.wipe.addEventListener('pointerup',e=>{if(this.wipe.hasPointerCapture(e.pointerId))this.wipe.releasePointerCapture(e.pointerId);});
+      this.wipe.onkeydown=e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();e.stopPropagation();this.setSplit(e.key==='Home'?0:e.key==='End'?100:this.splitPosition+(e.key==='ArrowLeft'?-1:1)*(e.shiftKey?10:1));}};
+      new ResizeObserver(()=>this.drawFocus()).observe(this.image);
       this.notice = node('p',{id:'develop-message',class:'develop-message',role:'status'});
       this.timing = node('span',{id:'develop-timing',class:'develop-timing'});
       this.beforeButton = button('Before / after (\\)', () => this.toggleBefore(), {id:'develop-before','aria-pressed':'false'});
+      this.splitButton=button('Split view (Shift+\\)',()=>this.toggleSplit(),{id:'develop-split','aria-pressed':'false'});
       this.photoTitle=node('span',{id:'develop-photo-name'});
       this.resultToggle=button('External edit',()=>this.toggleResult(),{id:'develop-result-toggle',hidden:'','aria-pressed':'true'});
       this.resultPanel=node('div',{id:'develop-result-panel',hidden:''});
@@ -49,7 +62,7 @@
       this.editWarning=node('p',{id:'develop-edit-warning',class:'subtle small',text:'Re-developing replaces your external edit. RAW adjustments are saved separately until you choose to replace the hand-off file.'});
       this.editAgain=button('Edit again',()=>this.reedit(),{id:'develop-edit-again'});
       this.resultPanel.append(this.resultPath,node('div',{class:'develop-actions'},[button('Show in folder',()=>this.api.revealDevelop(this.context.session.id,this.context.photo.id),{id:'develop-result-reveal'}),this.editAgain]),this.editWarning);
-      this.stage.append(node('div',{class:'develop-topline'},[this.photoTitle,this.resultToggle]),this.frameBox,this.notice,node('div',{class:'develop-image-bar'},[this.beforeButton,this.timing]));
+      this.stage.append(node('div',{class:'develop-topline'},[this.photoTitle,this.resultToggle]),this.frameBox,this.notice,node('div',{class:'develop-image-bar'},[this.beforeButton,this.splitButton,this.timing]));
       this.panel = node('aside',{class:'develop-panel','aria-label':'Develop controls'});
       this.plot = node('canvas',{id:'develop-histogram',width:560,height:220,'aria-label':'Histogram: drag tonal zones to adjust',tabindex:0});
       this.low = button('▲', () => this.toggleClipping(), {id:'develop-shadow-clip','aria-label':'Shadow clipping overlay','aria-pressed':'false'});
@@ -133,7 +146,7 @@
       document.body.classList.toggle('develop-active',this.active);
       const key=this.active && context.photo ? `${context.session.id}:${context.photo.id}:${!!context.photo.externalEdit}` : '';
       if (key === this.key) return;
-      void this.flush(); this.key=key; const token=++this.token; this.queue.invalidate(); this.info=null; this.resultFrame=null; this.resultPanel.hidden=this.resultToggle.hidden=true; this.controls.disabled=true; this.before=false;
+      void this.flush(); this.key=key; const token=++this.token; this.queue.invalidate(); this.info=null; this.resultFrame=null;this.clearWipe(); this.resultPanel.hidden=this.resultToggle.hidden=true; this.controls.disabled=true; this.before=false;
       this.beforeButton.setAttribute('aria-pressed','false'); this.beforeButton.disabled=true; this.releaseFrame(); this.hist=null; this.drawHistogram();
       if (!key) return;
       this.photoTitle.textContent=context.photo.name;
@@ -154,6 +167,7 @@
         void this.lensState(token);
         void this.api.metadata(context.session.id,context.photo.id,'preview').then(meta=> {
           if (token!==this.token) return;
+          this.setFocus(meta.focus,!!this.host.settings().focusOverlay);
           this.exif=[info.camera,meta.shutter ? `${meta.shutter} s` : '',meta.aperture,meta.iso ? `ISO ${meta.iso}` : ''].filter(Boolean).join(' · '); this.readout.textContent=this.exif;
         }).catch(()=>{});
       } catch(e) { if (token===this.token) this.message(e.message); }
@@ -201,7 +215,7 @@
     }
     render() {
       if (!this.info || !this.active) return;
-      const result=!!this.saved?.edited && this.showResult && !this.before;
+      const result=!!this.saved?.edited && (this.split || this.showResult) && !this.before;
       this.photoTitle.textContent=result ? `Edited in ${this.host.editorName(this.saved?.editedBy)} · ${(this.saved.tiff || '').split(/[\\/]/).pop()}` : this.context.photo.name;
       this.image.alt=result ? 'External edit' : 'Developed RAW preview';
       this.resultToggle.textContent=this.showResult ? 'RAW develop' : `Edited in ${this.host.editorName(this.saved?.editedBy)}`;
@@ -216,10 +230,36 @@
       this.hist=frame.histogram; this.drawHistogram(); this.message('');
       this.timing.textContent=`${job.value.result ? `Edited in ${this.host.editorName(this.saved?.editedBy)}` : job.value.before ? 'Before · recipe' : 'After'} · ${job.settled ? 'settled' : 'draft'} ${Math.round(frame.renderMs)} ms · load ${Math.round(frame.loadMs)} ms`;
       this.root.dispatchEvent(new CustomEvent('develop-frame',{detail:{...frame,blob:undefined,settled:job.settled,before:job.value.before}}));
-      this.maskImage=loaded; this.drawOverlay(); if (old) URL.revokeObjectURL(old);
+      this.maskImage=loaded; this.drawOverlay();this.drawFocus(); if (old) URL.revokeObjectURL(old);
+      if(this.split && job.settled)void this.updateWipe();
     }
-    releaseFrame() { this.image.hidden=true; this.image.removeAttribute('src'); this.overlay.hidden=true; this.maskImage=null; if (this.url) URL.revokeObjectURL(this.url); this.url=null; }
-    toggleBefore() { if (!this.info) return; if(this.saved?.edited){this.toggleResult();return;} this.queue.invalidate(); this.before=!this.before; this.beforeButton.setAttribute('aria-pressed',String(this.before)); this.render(); }
+    releaseFrame() { this.clearWipe(); this.image.hidden=true; this.image.removeAttribute('src'); this.overlay.hidden=true; this.maskImage=null; if (this.url) URL.revokeObjectURL(this.url); this.url=null; }
+    toggleBefore() { if (!this.info) return;if(this.split){this.split=false;this.splitButton.setAttribute('aria-pressed','false');this.clearWipe();} if(this.saved?.edited){this.toggleResult();return;} this.queue.invalidate(); this.before=!this.before; this.beforeButton.setAttribute('aria-pressed',String(this.before)); this.render(); }
+    setFocus(focus,enabled) {this.focusOverlay.set(focus,enabled);this.drawFocus();}
+    drawFocus() {
+      const r=this.image.getBoundingClientRect(),b=this.frameBox.getBoundingClientRect();
+      this.focusOverlay.draw({left:r.left-b.left,top:r.top-b.top,width:r.width,height:r.height},!this.image.hidden && this.active);
+    }
+    setSplit(value) {this.splitPosition=Math.min(100,Math.max(0,value));this.wipe.style.left=`${this.splitPosition}%`;this.wipe.setAttribute('aria-valuenow',String(Math.round(this.splitPosition)));this.wipeImage.style.clipPath=`inset(0 ${100-this.splitPosition}% 0 0)`;}
+    toggleSplit() {
+      if(!this.info)return;
+      this.split=!this.split;this.before=false;this.beforeButton.setAttribute('aria-pressed','false');this.splitButton.setAttribute('aria-pressed',String(this.split));this.clearWipe();this.queue.invalidate();this.render();
+    }
+    clearWipe() {this.wipeEpoch++;this.wipeKey='';this.wipeImage.hidden=this.wipe.hidden=this.wipeBefore.hidden=this.wipeAfter.hidden=true;this.wipeImage.removeAttribute('src');if(this.wipeUrl)URL.revokeObjectURL(this.wipeUrl);this.wipeUrl=null;}
+    async updateWipe() {
+      if(!this.split || !this.active || !this.info)return;
+      const settings=clone(this.saved?.edited ? this.own : this.recipeSettings),key=JSON.stringify([this.token,settings]);
+      if(key===this.wipeKey)return;this.wipeKey=key;const token=this.token,epoch=++this.wipeEpoch;
+      try {
+        const frame=await this.api.developRender(this.context.session.id,this.context.photo.id,settings,true);
+        if(epoch!==this.wipeEpoch || token!==this.token || !this.split || !this.active)return;
+        const url=URL.createObjectURL(frame.blob),probe=new Image();probe.src=url;
+        try{await probe.decode();}catch(error){URL.revokeObjectURL(url);throw error;}
+        if(epoch!==this.wipeEpoch || token!==this.token || !this.split || !this.active){URL.revokeObjectURL(url);return;}
+        const old=this.wipeUrl;this.wipeUrl=url;this.wipeImage.src=url;this.wipeImage.hidden=this.wipe.hidden=this.wipeBefore.hidden=this.wipeAfter.hidden=false;
+        this.wipeBefore.textContent=this.saved?.edited?'RAW develop':'Before · recipe';this.wipeAfter.textContent=this.saved?.edited?'External edit':'After';this.setSplit(this.splitPosition);if(old)URL.revokeObjectURL(old);
+      }catch(error){if(epoch===this.wipeEpoch){this.wipeKey='';this.host.toast(`Split preview unavailable: ${error.message}`);}}
+    }
     toggleClipping() { this.clipping=!this.clipping; for (const b of [this.low,this.high]) b.setAttribute('aria-pressed',String(this.clipping)); this.drawOverlay(); }
     drawOverlay() {
       this.overlay.hidden=!this.clipping || !this.maskImage; if (this.overlay.hidden) return;

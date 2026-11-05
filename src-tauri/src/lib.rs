@@ -7,6 +7,7 @@ mod logs;
 mod develop;
 pub mod export_encode;
 mod external;
+mod sharpness;
 
 use backend::Backend;
 use serde::Serialize;
@@ -23,7 +24,7 @@ use tauri_plugin_opener::OpenerExt;
 const RENDERER_METHODS: &[&str] = &[
     "workspace-info", "settings-bundle-export", "settings-bundle-preview", "settings-bundle-apply", "diagnostics", "log-folder", "manual-card", "backup-start", "backup-status", "backup-cancel",
     "scan", "devices", "open-device", "test-destination", "copy-picks", "naming-preview", "cancel-copy", "decide", "decide-many",
-    "app-info", "history", "metadata", "preview-status", "settings", "save-preset", "delete-preset", "settings-folder",
+    "app-info", "keep-sharpest", "history", "metadata", "preview-status", "settings", "save-preset", "delete-preset", "settings-folder",
     "preview-settings", "preview-cache", "clear-preview-cache", "retry-preview", "focus", "visible", "export-xmp", "session-folder", "stats",
     "recipes", "save-recipe", "delete-recipe", "duplicate-recipe", "import-recipes", "export-recipes", "develop-get", "develop-set", "develop-folder", "develop-folder-check", "editor-preset", "editor-test", "handoff-usage", "develop-plan", "make-folder", "export-plan",
 ];
@@ -232,7 +233,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![backend, pick_folder, pick_editor, pick_save_file, pick_recipe_file, open_folder, open_project_link, set_fullscreen, display_color_status, delete_photos, save_manifest,
-            develop::develop_result, develop::reveal_develop, develop::develop_info, develop::develop_render, develop::develop_tiffs, develop::develop_cancel, develop::edit_external, develop::clean_handoffs,
+            sharpness::sharpness_score, sharpness::sharpness_cancel, develop::develop_result, develop::reveal_develop, develop::develop_info, develop::develop_render, develop::develop_tiffs, develop::develop_cancel, develop::edit_external, develop::clean_handoffs,
             develop::export_photos, develop::lens_database, develop::download_lens_database])
         .setup(|app| {
             let handle = app.handle().clone();

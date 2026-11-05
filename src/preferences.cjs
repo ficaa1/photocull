@@ -9,7 +9,7 @@ const NAMING = { template: '{filename}', text: '', start: 1 };
 const FOLDERS = { mode: 'flat', name: '' };
 const exportLogic = require('./renderer/export.js');
 const EXPORT_PRESETS = exportLogic.PRESETS.map(p => ({ ...p, options: exportLogic.options(p.options), naming: NAMING, subfolder: '', conflict: 'unique' }));
-const DEFAULTS = { version: 1, zoomPercent: 100, zoomClickCenter: false, rawRendering: 'missing', previewCacheGB: 2, autoAdvance: true, recursive: false, autoOpenCards: true, deleteMode: 'trash',
+const DEFAULTS = { version: 1, zoomPercent: 100, zoomClickCenter: false, focusOverlay: false, burstGap: 1, rawRendering: 'missing', previewCacheGB: 2, autoAdvance: true, recursive: false, autoOpenCards: true, deleteMode: 'trash',
   shortcuts: {}, welcomeDismissed: false, cardFolders: ['DCIM'], manualCards: [], backupTemplate: '{date}-{card}', copyVerify: false, copyJpeg: false, copyXmp: false, copyMetadata: false, writeSidecars: 'except-cards', folders: FOLDERS,
   editors: [dehancerPreset()], defaultEditor: 'dehancer', handoffFolder: '', handoffSubfolder: '_develop', handoffAlways: false, deleteHandoffsAfterExport: false, defaultRecipe: 'neutral', exportOptions: { format: 'jpeg', quality: 90, colorSpace: 'srgb' }, exportSubfolder: '', exportConflict: 'unique', exportPresets: EXPORT_PRESETS, activePreset: 'standard', naming: NAMING, metadata: METADATA, colors: COLORS };
 const BUILTINS = [
@@ -25,7 +25,7 @@ function text(value, limit) {
 function normalizeSettings(value = {}, base = DEFAULTS) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid settings.');
   const result = clone(base);
-  for (const key of ['autoAdvance', 'recursive', 'autoOpenCards', 'zoomClickCenter', 'copyJpeg', 'copyXmp', 'copyMetadata']) if (key in value) {
+  for (const key of ['focusOverlay', 'autoAdvance', 'recursive', 'autoOpenCards', 'zoomClickCenter', 'copyJpeg', 'copyXmp', 'copyMetadata']) if (key in value) {
     if (typeof value[key] !== 'boolean') throw new Error('Invalid setting: ' + key);
     result[key] = value[key];
   }
@@ -45,6 +45,10 @@ function normalizeSettings(value = {}, base = DEFAULTS) {
   if ('writeSidecars' in value) {
     if (!['always', 'except-cards', 'never'].includes(value.writeSidecars)) throw new Error('Invalid XMP sidecar policy.');
     result.writeSidecars = value.writeSidecars;
+  }
+  if ('burstGap' in value) {
+    if (!Number.isFinite(value.burstGap) || value.burstGap < .1 || value.burstGap > 10) throw new Error('Burst gap must be between 0.1 and 10 seconds.');
+    result.burstGap=value.burstGap;
   }
   if ('zoomPercent' in value) {
     if (!Number.isFinite(value.zoomPercent) || value.zoomPercent < 5 || value.zoomPercent > 1600) throw new Error('Zoom must be between 5% and 1600%.');

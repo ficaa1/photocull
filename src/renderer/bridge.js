@@ -89,6 +89,10 @@
     backupCancel: () => backend('backup-cancel'),
     onBackupProgress: callback => subscribe('backup-progress',callback),
     canDevelop: !!tauri,
+    canAnalyze: !!tauri,
+    sharpness: (session,id) => shell('sharpness_score',{session,id}),
+    cancelSharpness: () => tauri ? shell('sharpness_cancel',{}) : Promise.resolve(),
+    keepSharpest: (session,ids) => backend('keep-sharpest',session,ids),
     // Recipes and per-photo develop state (Node backend).
     recipes: () => backend('recipes'),
     saveRecipe: recipe => backend('save-recipe', recipe),

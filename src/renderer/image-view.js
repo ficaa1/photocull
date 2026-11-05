@@ -103,17 +103,34 @@
   const ease = t => 1 - (1 - t) ** 3;
   const mix = (a, b, t) => ({ width: a.width + (b.width - a.width) * t, height: a.height + (b.height - a.height) * t, left: a.left + (b.left - a.left) * t, top: a.top + (b.top - a.top) * t });
 
+  class FocusOverlay {
+    constructor(viewport) {
+      this.layer=document.createElement('div');this.layer.className='focus-overlay';this.layer.setAttribute('aria-hidden','true');viewport.append(this.layer);this.focus=null;this.enabled=false;
+    }
+    set(focus,enabled) {
+      if(this.focus!==focus) {this.focus=focus;this.layer.replaceChildren(...(focus?.points || (focus ? [focus] : [])).map(()=>{const mark=document.createElement('span');mark.className='focus-box';return mark;}));}
+      this.enabled=enabled;this.layer.hidden=!enabled || !focus;
+    }
+    draw(box,visible=true) {
+      this.layer.hidden=!this.enabled || !this.focus || !visible || !box?.width;
+      if(this.layer.hidden)return;
+      const points=this.focus.points || [this.focus];
+      [...this.layer.children].forEach((mark,i)=>{const p=points[i],w=Math.max(12,p.width*box.width),h=Math.max(12,p.height*box.height);Object.assign(mark.style,{left:`${box.left+p.x*box.width-w/2}px`,top:`${box.top+p.y*box.height-h/2}px`,width:`${w}px`,height:`${h}px`});});
+    }
+  }
+
   class ImageView {
     // onClick({ position, inside }) for a press released without dragging;
     // onChange() after any zoom/pan; onHandUse() when the Space hand is used.
     constructor(viewport, image, { onClick = () => {}, onChange = () => {}, onHandUse = () => {} } = {}) {
       this.viewport = viewport; this.image = image;
+      this.focusOverlay = new FocusOverlay(viewport);
       this.onClick = onClick; this.onChange = onChange; this.onHandUse = onHandUse;
       this.zoom = { mode: 'fit', percent: 100 }; this.center = { x: .5, y: .5 };
       this.source = null; this.exact = false; this.visible = false;
       this.pointer = null; this.hover = null; this.hand = false; this.animation = null; this.drawn = null;
       this.reduced = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : { matches: true };
-      new ResizeObserver(() => { this.apply(); this.onChange(); }).observe(viewport);
+      this.resizeObserver=new ResizeObserver(() => { this.apply(); this.onChange(); });this.resizeObserver.observe(viewport);
       viewport.addEventListener('pointerdown', event => this.down(event));
       viewport.addEventListener('pointermove', event => this.move(event));
       viewport.addEventListener('pointerup', event => this.up(event));
@@ -131,6 +148,8 @@
       });
       viewport.addEventListener('gestureend', () => { this.gesture = null; });
     }
+    destroy() { this.finish();this.cancel();this.resizeObserver.disconnect(); }
+    setFocus(focus,enabled) { this.focusOverlay.set(focus,enabled); this.focusOverlay.draw(this.drawn, this.visible); }
     dpr() { return (typeof devicePixelRatio === 'number' && devicePixelRatio > 0) ? devicePixelRatio : 1; }
     size() { return { width: this.viewport.clientWidth, height: this.viewport.clientHeight }; }
     scale(zoom = this.zoom) { return scaleFor(zoom, this.source, this.size(), this.dpr(), this.exact); }
@@ -179,7 +198,7 @@
       const zoomed = this.zoomed;
       this.viewport.classList.toggle('zoomed', zoomed);
       this.viewport.classList.toggle('pannable', this.pannable());
-      if (!this.visible || !box.width) { this.image.style.visibility = 'hidden'; this.drawn = null; return; }
+      if (!this.visible || !box.width) { this.image.style.visibility = 'hidden'; this.drawn = null; this.focusOverlay.draw(null,false); return; }
       if (from && !this.reduced.matches && (Math.abs(from.width - box.width) > 1 || Math.abs(from.left - box.left) > 1 || Math.abs(from.top - box.top) > 1)) this.animate(from, box);
       else this.draw(box);
     }
@@ -192,6 +211,7 @@
       const scale = frame === box ? '' : ` scale(${frame.width / box.width}, ${frame.height / box.height})`;
       style.transform = `translate(${frame.left}px, ${frame.top}px)${scale}`;
       this.drawn = frame;
+      this.focusOverlay.draw(frame,this.visible);
     }
     animate(from, to) {
       const start = performance.now();
@@ -263,7 +283,7 @@
   }
 
   const api = { MAX_PERCENT, ZOOM_LEVELS, CLICK_ZOOMS, DRAG_THRESHOLD, ANIMATION_MS, fitScale, fillScale, scaleFor, percentOf, place, layout, centerOf, clampCenter,
-    pointAt, pointInImage, inside, zoomAround, centerOn, panCenter, isDrag, stepPercent, wheelDelta, wheelPercent, visibleRect, ImageView };
+    pointAt, pointInImage, inside, zoomAround, centerOn, panCenter, isDrag, stepPercent, wheelDelta, wheelPercent, visibleRect, FocusOverlay, ImageView };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.PhotoCullView = api;
 })(globalThis);

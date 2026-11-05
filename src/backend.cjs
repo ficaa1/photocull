@@ -25,6 +25,7 @@ const { Library } = require('./library.cjs');
 const { RecipeStore, planExport } = require('./develop.cjs');
 const { planTiffs, writableFolder } = require('./develop-plan.cjs');
 const { PreviewService } = require('./previews.cjs');
+const { CullingService } = require('./culling.cjs');
 const { TransferService } = require('./transfer.cjs');
 const { BackupService } = require('./backup.cjs');
 const { SettingsBundles } = require('./settings-bundle.cjs');
@@ -42,7 +43,7 @@ console.log = console.info = console.debug = console.error;
 const rendererDir = path.join(__dirname, 'renderer');
 const RENDERER_FILES = new Map([['index.html', 'text/html'], ['styles.css', 'text/css'], ['app.js', 'text/javascript'],
   ['commands.js', 'text/javascript'], ['histogram.js', 'text/javascript'], ['develop.js', 'text/javascript'], ['export.js', 'text/javascript'],
-  ['naming.js', 'text/javascript'], ['image-view.js', 'text/javascript'], ['loupe.js', 'text/javascript'], ['bridge.js', 'text/javascript']]);
+  ['naming.js', 'text/javascript'], ['image-view.js', 'text/javascript'], ['loupe.js', 'text/javascript'], ['culling.js', 'text/javascript'], ['survey.js', 'text/javascript'], ['bridge.js', 'text/javascript']]);
 const inside = (parent, child) => { const rel = path.relative(parent, child); return rel === '' || !!rel && !rel.startsWith('..') && !path.isAbsolute(rel); };
 
 function defaultDataDir() {
@@ -80,6 +81,7 @@ async function start() {
   const GB = 1024 ** 3;
   previews = new PreviewService(path.join(dataDir, 'previews'), { rendering: settings.value.rawRendering, maxDiskBytes: settings.value.previewCacheGB * GB, onState: status => send('preview-state', status) });
 
+  const culling = new CullingService(library,previews,() => settings.value);
   const onCard = async folder => {
     const real = await fs.realpath(folder);
     return devices.devices.some(device => inside(device.root, real));
@@ -221,6 +223,9 @@ async function start() {
     'cancel-copy': () => transfers.cancel(),
     'decide': (session, id, patch) => library.decide(session, id, patch),
     'decide-many': (session, ids, patch) => library.decideMany(session, ids, patch),
+    'analysis-source': (session,id) => culling.source(session,id),
+    'analysis-store': (session,id,key,score) => culling.store(session,id,key,score),
+    'keep-sharpest': (session,ids) => deleting ? Promise.reject(new Error('Wait for the deletion to finish.')) : culling.keep(session,ids),
     'history': (session, direction) => library.history(session, direction),
     'metadata': (session, id, kind = 'preview') => previews.metadata(previewPhoto(library.item(session, id)), kind),
     // size: the photo's real oriented pixel size (or null), for loupe zoom percentages.
