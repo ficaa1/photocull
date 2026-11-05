@@ -48,6 +48,15 @@ if (args.includes('--refresh') || args.includes('--metadata')) {
 }
 const snapshot = json(snapshotFile);
 if (snapshot.cargoLock !== digest(read('src-tauri/Cargo.lock'))) throw new Error('Cargo.lock changed: refresh reviewed Cargo license metadata.');
+for (const p of snapshot.packages.filter(p => p.license === 'MPL-2.0')) {
+  const archive = `third-party/sources/${p.name}-${p.version}.crate`;
+  if (!fs.existsSync(path.join(root, archive))) throw new Error(`Missing MPL corresponding source: ${archive}`);
+  const blocks = read('src-tauri/Cargo.lock').split('[[package]]');
+  const block = blocks.find(b => b.includes(`name = "${p.name}"`) && b.includes(`version = "${p.version}"`));
+  const checksum = /checksum = "([a-f0-9]+)"/.exec(block || '')?.[1];
+  const actual = createHash('sha256').update(fs.readFileSync(path.join(root, archive))).digest('hex');
+  if (actual !== checksum) throw new Error(`MPL source does not match Cargo.lock: ${archive}`);
+}
 const npm = Object.entries(json('package-lock.json').packages).filter(([name]) => name).map(([location, p]) => {
   if (!p.license) throw new Error(`No SPDX license in package-lock.json: ${location}`);
   return { name: location.split('node_modules/').at(-1), ...p };

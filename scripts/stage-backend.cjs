@@ -41,6 +41,7 @@ async function main() {
   const found = (await Promise.all(license.map(file => fs.access(file).then(() => file, () => null)))).find(Boolean);
   if (!found) throw new Error(`Node's LICENSE was not found next to ${process.execPath}; use an official Node build.`);
   await fs.copyFile(found, path.join(backend, 'third-party', 'Node-LICENSE.txt'));
+  await fs.writeFile(path.join(backend, 'third-party', 'Node-VERSION.txt'), process.version + '\n');
   console.log(`Staged backend (${backend}) and Node ${process.version} (${node}).`);
 }
 

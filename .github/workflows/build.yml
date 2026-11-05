@@ -3,6 +3,11 @@ permissions:
   contents: read
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing v-prefixed tag to build and attach installers to
+        required: true
+        type: string
   push:
     branches: [main]
     tags: ['v*']
@@ -23,6 +28,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -49,6 +56,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
       # The staged sidecar is this exact Node binary, so use the official build.
       - uses: actions/setup-node@v4
         with:
@@ -75,7 +84,7 @@ jobs:
 
   release:
     needs: build
-    if: ${{ !github.event.repository.private && startsWith(github.ref, 'refs/tags/v') }}
+    if: ${{ !github.event.repository.private && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && startsWith(inputs.release_tag, 'v'))) }}
     runs-on: windows-latest
     permissions:
       contents: write
@@ -87,9 +96,12 @@ jobs:
           merge-multiple: true
       - name: Release title
         shell: bash
-        run: echo "RELEASE_NAME=PhotoCull ${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: echo "RELEASE_NAME=PhotoCull ${RELEASE_TAG#v}" >> "$GITHUB_ENV"
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
           name: ${{ env.RELEASE_NAME }}
           generate_release_notes: true
           draft: false

@@ -14,6 +14,7 @@ Reproduce offline with `node scripts/notices.cjs`. Inventory covers all lockfile
 | Little CMS | 2.19.1 in WASM | MIT | Static WASM; notice supplied |
 | Emscripten JPEG/PNG/zlib ports | SDK port revisions not pinned upstream | IJG / libpng / Zlib; Emscripten MIT and University of Illinois/NCSA | Port notices supplied; see third-party/README.md for reproducibility limits |
 | Lightcraft | d58b4d67238ef1aafd8e3394a9f8428a3d91e561 | MIT OR Apache-2.0 | MIT selected; native Rust crates and adapted histogram UI; notices supplied |
+| Camera spectral matrices in Lightcraft | rawtoaces-data v1.1.0 / CIE 1931 | Apache-2.0 / CC-BY-4.0 | Derived by Lightcraft contributors (2026) from Weta Digital, scitech and National Physical Laboratory measurements; no raw measurements redistributed; see lightcraft-NOTICE.txt |
 | Lensfun database | Latest data downloaded only on request | CC-BY-SA-3.0 | Not bundled; copyright Lensfun contributors; https://lensfun.github.io/ and https://creativecommons.org/licenses/by-sa/3.0/; no data modifications by PhotoCull |
 | System webview | WebView2 / WKWebView / WebKitGTK | Operating-system/distributor terms | Not part of PhotoCull's bundled runtime |
 

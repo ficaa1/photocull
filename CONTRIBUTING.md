@@ -47,3 +47,7 @@ Write every comment about the code as it stands. Explain a non-obvious reason or
 When updating dependencies, refresh the reviewed license metadata and bundled texts with `node scripts/notices.cjs --refresh` after Cargo sources are cached, then run the offline generator. See [third-party licensing](docs/licensing.md) for redistribution requirements.
 
 Contributions are distributed under the project's MIT license; retain upstream notices for reused code.
+
+## Build workflow
+
+The build workflow stays disabled on GitHub while the repository is private, and every job checks repository visibility. After publication, the maintainer can run `gh workflow enable build.yml`. Public pull requests/main pushes run Windows and macOS tests; `v*` tags and manual dispatch build installers. Manual dispatch requires an existing release tag and attaches its installers to that release.
