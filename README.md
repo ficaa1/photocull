@@ -6,28 +6,36 @@ A local desktop MVP for quickly reviewing camera RAW files and JPEGs. Connect a 
 
 ## Run
 
-The ready-to-run Windows copy on this machine is `C:\Users\alex\Downloads\PhotoCull-MVP-0.2.0\PhotoCull.exe`. The project build is also at `release/PhotoCull-win32-x64/PhotoCull.exe`. Copy **the entire folder** when moving it; the executable needs its adjacent resources. Run from a local Windows drive, since Chromium subprocesses failed when launched from the WSL UNC share during validation. This is an unsigned development build.
+Use Node.js 24, npm, Rust stable and the native Tauri build prerequisites for your OS. On macOS, install the Xcode command-line tools; on Windows, install the MSVC C++ build tools and WebView2. Linux needs WebKitGTK 4.1 and the other development packages listed in [.github/workflows/build.yml](.github/workflows/build.yml).
 
-For development, use Node.js 24.22.2 or newer and npm:
+For desktop development:
 
 ```sh
 npm ci
 npm start
 ```
 
-If your npm configuration disables install scripts, also run `node node_modules/electron/install.js` once to download Electron. On this WSL installation, load the installed Linux runtime first:
+`npm start` runs `tauri dev`, using `node` on PATH and the checkout’s `src/` directory. The Tauri 2 Rust shell handles the window, native dialogs, fullscreen, Mac menus and deletion. Photo scanning, previews, decisions and copying run in a Node sidecar over JSON-lines RPC on stdio. Images are served from a token-protected HTTP server on `127.0.0.1`; `src/renderer/bridge.js` provides the shared UI API.
+
+To build an installable bundle:
 
 ```sh
-source ~/.nvm/nvm.sh
-nvm use 24.22.2
-npm start
+npm run build
 ```
 
-The WSL app uses WSLg. Windows folders are accessible under `/mnt/c/`. Native Windows development uses the same `npm ci` / `npm start` commands in PowerShell, with a Windows Node.js installation.
+This stages `src/` and production dependencies in `src-tauri/backend/`, copies the running Node binary to `src-tauri/binaries/node-<triple>`, and runs Tauri with `src-tauri/tauri.bundle.conf.json`. Build natively on each target OS because sharp and ExifTool contain platform-specific binaries. Use an official Node build: Homebrew Node is not relocatable. Bundles are written under `src-tauri/target/release/bundle/` and are unsigned and not notarized.
+
+For the UI in a normal browser:
+
+```sh
+npm run web
+```
+
+Open the token-bearing URL printed by the backend on port 5173. This runs `src/backend.cjs --web`; folder selection uses a path prompt and Move to Trash is unavailable. Browser-mode deletion is permanent.
 
 ## macOS
 
-Apple Silicon and Intel development archives are produced by `npm run pack:mac -- all` as `release/PhotoCull-macOS-arm64.zip` and `release/PhotoCull-macOS-x64.zip`. The app supports Mac menus/Command shortcuts, window reopening, and camera volumes under `/Volumes`. See [macOS setup and validation limits](docs/macos.md). The bundles were cross-built and inspected on Linux; native Mac launch has not been verified in this session. These are development builds without Developer ID notarization.
+Build on an Apple Silicon or Intel Mac with `npm run build`. The `.app` and `.dmg` are under `src-tauri/target/release/bundle/macos/` and `dmg/`. Native Mac launch has not been verified yet. See [macOS setup and validation limits](docs/macos.md) for unsigned-app opening, permissions and Command shortcuts.
 
 ## Workflow
 
@@ -36,11 +44,15 @@ Apple Silicon and Intel development archives are produced by `npm run pack:mac -
 3. Press `G` for the virtualized contact sheet and `E` for review (`Ctrl+Tab` also toggles views). `Tab` and `Shift+Tab` move keyboard focus through controls. Use `B`/`I` or the pane buttons to hide sources/details; the contact-sheet slider adjusts thumbnail size. Layout choices persist locally. Click the image or press `Space` to toggle Fit and the chosen zoom percentage. Use the percentage menu to zoom from 12.5% to 1600%, then drag to pan; a click without dragging returns to Fit. Percentages refer to the actual loaded representation pixels. The selected percentage persists between launches; new photos open at Fit. The inspector identifies whether those pixels come from an embedded image or RAW development. A small embedded preview still limits focus assessment; choose “Missing or small previews” in Settings to request RAW development when needed.
 4. Press `F`/`F11` or click the fullscreen icon for native fullscreen review. Zoom, panning, navigation and culling shortcuts work there too. Move to the bottom edge to reveal the filmstrip and decision controls; they hide when the pointer leaves. `Esc` exits fullscreen while keeping the zoom, and a second `Esc` returns to Fit. `G` switches to the contact sheet and leaves fullscreen.
 5. `Ctrl+Z` undoes a decision; `Ctrl+Shift+Z` redoes it. Search, picks, rejects, rated, and unreviewed filters are available. A rated or flagged image counts as reviewed.
-6. Click **Copy picks**, choose your SSD/folder, and copy the picked originals. RAW + JPEG pairs copy just the RAW by default; companion JPEGs and XMP sidecars are optional. Standalone JPEG/image picks copy their original files. All picks in the session are included regardless of the current view/filter; ratings alone do not select a file for copying. Import the copied folder into Lightroom on iPad to avoid importing rejected/unreviewed frames.
+6. In Rejects, click **Delete N rejects** to choose **Move to Trash** or **Delete permanently** and confirm. The choice is remembered as `deleteMode`. Camera-card sessions, including folders under a detected card root, only allow permanent deletion because cards have no Trash; the desktop shell also refuses Trash for those sessions.
+7. In Picks, press `Del`/`⌫` (Delete or Backspace) to show a small deletion prompt. `Enter` confirms; any other key cancels without applying that key’s action. This uses the remembered deletion mode, with permanent deletion required for card sessions and browser mode.
+8. Click **Copy picks**, choose your SSD/folder, and copy the picked originals. RAW + JPEG pairs copy just the RAW by default; companion JPEGs and XMP sidecars are optional. Standalone JPEG/image picks copy their original files. All picks in the session are included regardless of the current view/filter; ratings alone do not select a file for copying. Import the copied folder into Lightroom on iPad to avoid importing rejected/unreviewed frames.
+
+Deletion removes the image, its paired JPEG and its XMP sidecar. The image is removed first; if that fails, its companion and sidecar are left alone. A sidecar shared by same-stem RAWs is removed only after all of them are deleted. Each file is checked against the folder scan first; photos that changed since (for example a different card in the same reader) are skipped, and a replaced folder is refused until it is opened again. Copying and deleting never run at the same time. Deleted photos leave undo history and saved decisions. PhotoCull cannot undo deletion; files moved to Trash can be restored there.
 
 The copy dialog’s **Folder** menu defaults to **No subfolder**, which copies files directly into the chosen destination. **Named subfolder** creates the name you enter and puts the picks there. **Keep source folders** retains paths such as `100MSDCF`. The layout and folder name persist and are included in export presets. Flattened filename collisions are reported; a sequence filename template can make names unique. Existing files cause that photo group to be skipped rather than overwritten. A conflicting companion or sidecar also skips the group. Repeated same-stem RAW sidecars are reported as conflicts. Source changes, card removal, destination failures, and cancellation are reported; cancellation removes the current incomplete photo group and keeps completed groups. Only one copy can run at once. A size check and disk flush verify each completed file; this is not a full destination checksum pass.
 
-Optional XMP is generated **only in the destination**, preserving unrelated source-sidecar metadata and adding current ratings/labels. No XMP is needed to make the selection: the destination contains only keepers. Direct iPad XMP import is not verified, so treat XMP as optional metadata for compatible desktop workflows. Source images are never modified or deleted, and copy export does not write to the source/card. Decisions autosave locally.
+Optional XMP is generated **only in the destination**, preserving unrelated source-sidecar metadata and adding current ratings/labels. No XMP is needed to make the selection: the destination contains only keepers. Direct iPad XMP import is not verified, so treat XMP as optional metadata for compatible desktop workflows. Source image bytes are never modified; source images are deleted only when you explicitly use the delete actions. Copy export does not write to the source/card. Decisions autosave locally.
 
 Settings → Metadata → **Export metadata** retains explicit source-folder XMP writing and JSON decisions export. These do not copy photos. Writing sidecars there does modify source-folder XMP files; it is separate from the primary copy workflow.
 
@@ -50,7 +62,7 @@ Unrelated existing XMP metadata is preserved. The first existing sidecar is copi
 
 ## Settings, presets and filenames
 
-**Settings** contains General, Metadata, Colors, and File naming tabs. General controls auto advance, subfolder scanning, card auto-open, RAW rendering and copy defaults. Changes apply with Save; Cancel discards the draft. Settings and saved presets live in `%APPDATA%/photocull/settings/` on Windows (`settings.json` plus `presets/<id>.json`), accessible through **Open settings folder**. The old top-level `settings.json` is migrated on first launch; sessions and caches are retained. Manual file edits are loaded on restart.
+**Settings** contains General, Metadata, Colors, and File naming tabs. General controls auto advance, subfolder scanning, card auto-open, RAW rendering and copy defaults. Changes apply with Save; Cancel discards the draft. Settings and saved presets live in `%APPDATA%/PhotoCull/settings/` on Windows (`settings.json` plus `presets/<id>.json`), accessible through **Open settings folder**. The old top-level `settings.json` is migrated on first launch; sessions and caches are retained. Manual file edits are loaded on restart.
 
 Built-in export presets are Standard, Ratings only and Labels only. Use **Save as** in Metadata for a named custom preset. Presets include metadata rules, eight color definitions and filename naming rules. Creator, copyright, title and caption replace only the nonempty fields you supply; blank fields preserve existing metadata. Keywords merge with existing keywords. Disabled rating/label writes preserve existing values. Source image bytes are always unchanged; optional embedding modifies only destination copies. Pick/reject state remains a local culling decision; a color label is not a universal Lightroom pick flag.
 
@@ -89,7 +101,7 @@ Existing exports are skipped by the normal no-overwrite rule, so enabling embedd
 
 On Windows, card discovery queries mounted removable/fixed volumes, then checks removable roots and DCIM folders. This also accommodates USB readers reported as fixed drives. On macOS, external mounted volumes under `/Volumes` are identified with `diskutil`; internal volumes and disk images are excluded. On Linux, mounted removable/USB/MMC partitions are discovered via `lsblk`; WSL additionally checks accessible Windows drive mounts. Empty/unmounted readers and phones exposed only through MTP are not supported. Discovery only reads directory information; automatic formatting/ejection is not implemented. A disconnected-card notice preserves the current decisions.
 
-App state lives in Electron’s per-user application-data directory (`%APPDATA%/photocull` on Windows, `~/.config/photocull` on Linux). `sessions/` contains autosaved decisions; `previews/` contains disposable image caches. External XMP is read for files without matching saved decisions. An existing local decision takes precedence; automatic detection of later external sidecar edits is not implemented. Reopening the folder rescans source identities.
+App state keeps the same per-user data directory as before the Tauri port (`%APPDATA%/PhotoCull` on Windows, `~/Library/Application Support/PhotoCull` on macOS, `~/.config/PhotoCull` on Linux), so existing settings and sessions carry over. `sessions/` contains autosaved decisions; `previews/` contains disposable image caches. External XMP is read for files without matching saved decisions. An existing local decision takes precedence; automatic detection of later external sidecar edits is not implemented. Reopening the folder rescans source identities.
 
 ## Validation and packaging
 
@@ -97,10 +109,10 @@ App state lives in Electron’s per-user application-data directory (`%APPDATA%/
 npm test
 npm run test:ui
 npm run benchmark
-npm run pack:win
+npm run build
 ```
 
-`npm test` checks pairing, autosave/undo, sidecar preservation, scheduling, orientation, candidate selection, render gates, cache recovery, failure persistence, retry and cancellation. Set `PHOTOCULL_RAW_FIXTURE` to a real RAW file to enable its source-checksum and embedded-preview test. `scripts/ui-smoke.cjs` launches the actual Electron app with isolated test state and generated photos; if `artifacts/fixtures/iss030e122639.NEF` exists it also exercises RAW display. For the user-authorized Sony test copies, reproduce preview stripping and real GUI checks with:
+`npm test` checks pairing, deletion planning and decision cleanup, autosave/undo, sidecar preservation, scheduling, orientation, candidate selection, render gates, cache recovery, failure persistence, retry and cancellation. Set `PHOTOCULL_RAW_FIXTURE` to a real RAW file to enable its source-checksum and embedded-preview test. `scripts/ui-smoke.cjs` uses `scripts/launch.cjs` to start the backend in browser mode and headless system Chromium with isolated test state and generated photos; if `artifacts/fixtures/iss030e122639.NEF` exists it also exercises RAW display. Set `CHROMIUM_PATH` to override the Chromium executable. Playwright cannot drive Tauri webviews, so these checks do not cover native dialogs, menus, Trash or real desktop fullscreen. For the user-authorized Sony test copies, reproduce preview stripping and browser UI checks with:
 
 ```sh
 node scripts/prepare-raw-cases.cjs /mnt/c/Users/alex/Pictures/photo-samples
@@ -108,19 +120,11 @@ PHOTOCULL_RAW_CASES=/mnt/c/Users/alex/Pictures/photo-samples/photocull-cases npm
 node scripts/raw-ui-smoke.cjs - /mnt/c/Users/alex/Pictures/photo-samples/photocull-cases artifacts/raw-validation
 ```
 
-The preparation script expects the specific Sony `sample-8563.ARW` and verifies preview ranges do not overlap its sensor strip before zeroing JPEG payloads in new copies. It is a test helper, not a general RAW editor. `raw-ui-smoke.cjs` also accepts a packaged executable as its first argument when run with Windows Node.js. Test photos, screenshots and reports are ignored by Git.
+The preparation script expects the specific Sony `sample-8563.ARW` and verifies preview ranges do not overlap its sensor strip before zeroing JPEG payloads in new copies. It is a test helper, not a general RAW editor. The first `raw-ui-smoke.cjs` argument is retained for compatibility; the launcher always uses browser mode. Test photos, screenshots and reports are ignored by Git.
 
 The benchmark reports scan, cold decode, memory-cache and disk-cache timings for generated JPEGs, or a supplied folder (`npm run benchmark -- /path/to/photos`). These are backend measurements, not a Photo Mechanic comparison or a measurement of screen presentation latency. See [validation notes](docs/validation.md) and the [measured performance audit](docs/performance.md).
 
-For code-only updates with unchanged runtime dependencies, reuse the existing portable folder:
-
-```sh
-npm run update:win -- /mnt/c/Users/alex/Downloads/PhotoCull-MVP-0.2.0
-```
-
-This replaces application resources and version information without duplicating the Electron runtime or stopping a running instance. Restart PhotoCull to load the update. The existing folder name does not need to match the version inside it. If dependencies change, rebuild first and replace the same installation folder once the app is closed.
-
-`pack:win` stages Windows-only production dependencies independently of the Linux development installation. It produces a portable Windows x64 folder with Electron, sharp, ExifTool and the WASM RAW decoder. Decoder licenses, source and build references are bundled under `resources/app/third-party/`. The UI and code are deliberately small, but Electron adds a substantial runtime footprint; this is not a tiny native executable. Packaging requires network access to download the Windows Electron distribution. No code signing or installer is included.
+[Build CI](.github/workflows/build.yml) runs `npm test`, `npm run test:ui` and `npm run build` on Ubuntu 22.04, macOS 15 (Apple Silicon and Intel) and Windows. It uploads `.deb`, `.AppImage`, `.rpm`, `.dmg`, `.msi` and `-setup.exe` bundles. The Tauri shell uses the system webview, while the bundled Node sidecar, sharp, ExifTool and WASM RAW decoder still add distribution size. Bundles are unsigned and not notarized.
 
 ## Research and REA
 

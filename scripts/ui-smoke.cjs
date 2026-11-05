@@ -1,4 +1,4 @@
-const { _electron: electron } = require('playwright-core');
+const { launch } = require('./launch.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -17,9 +17,7 @@ async function main() {
   let app;
   const errors = [];
   try {
-    const env = { ...process.env, PHOTOCULL_SMOKE_TEST: '1', PHOTOCULL_DATA_DIR: data };
-    delete env.ELECTRON_RUN_AS_NODE;
-    app = await electron.launch({ args: [root, '--disable-gpu'], env });
+    app = await launch({ env: { ...process.env, PHOTOCULL_DATA_DIR: data } });
     app.process().stderr.on('data', chunk => { if (process.env.DEBUG_UI) process.stderr.write(chunk); });
     const page = await app.firstWindow();
     page.on('pageerror', e => errors.push(e.message));
@@ -64,6 +62,40 @@ async function main() {
     await page.evaluate(folder => window.loadTestFolder(folder), photos);
     assert.equal(await page.locator('#count-pick').textContent(), '1');
     assert.equal(await page.locator('#count-reject').textContent(), '1');
+    // Deleting rejects: browser mode has no Trash, so only permanent delete is offered.
+    const total = Number(await page.locator('#count-all').textContent());
+    await page.locator('[data-filter="reject"]').click();
+    await page.locator('#delete-rejects:not([hidden])').waitFor();
+    assert.match(await page.locator('#delete-rejects').textContent(), /Delete 1 reject$/);
+    const rejected = await page.locator('#photo-name').textContent();
+    await page.locator('#delete-rejects').click();
+    assert.equal(await page.locator('#delete-mode-trash').isDisabled(), true);
+    assert.equal(await page.locator('#delete-mode-permanent').isChecked(), true);
+    await page.locator('#delete-confirm').click();
+    await page.waitForFunction(() => document.querySelector('#count-reject').textContent === '0');
+    assert.equal(await page.locator('#delete-dialog').isVisible(), false);
+    assert.equal(Number(await page.locator('#count-all').textContent()), total - 1);
+    await assert.rejects(fs.access(path.join(photos, rejected)), 'the rejected file is removed from disk');
+    assert.equal(await page.locator('#delete-rejects').isVisible(), false);
+    // Deleting a pick: Del asks, any other key cancels without acting, Enter confirms.
+    await page.locator('[data-filter="pick"]').click();
+    const picked = await page.locator('#photo-name').textContent();
+    await page.keyboard.press('Delete');
+    await page.locator('#delete-prompt:not([hidden])').waitFor();
+    assert.match(await page.locator('#delete-prompt-text').textContent(), new RegExp(`Permanently delete ${picked.replace('.', '\\.')}`));
+    await page.keyboard.press('x');
+    assert.equal(await page.locator('#delete-prompt').isVisible(), false);
+    assert.equal(await page.locator('#count-pick').textContent(), '1', 'the cancelling key is not applied');
+    assert.equal(await page.locator('#count-reject').textContent(), '0');
+    await page.keyboard.press('Backspace');
+    await page.locator('#delete-prompt:not([hidden])').waitFor();
+    await page.screenshot({ path: path.join(screenshots, 'photocull-delete-prompt.png') });
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.querySelector('#count-pick').textContent === '0');
+    await assert.rejects(fs.access(path.join(photos, picked)), 'the picked file is removed from disk');
+    assert.equal(Number(await page.locator('#count-all').textContent()), total - 2);
+    await page.evaluate(folder => window.loadTestFolder(folder), photos);
+    assert.equal(Number(await page.locator('#count-all').textContent()), total - 2, 'deleted photos stay gone after reopening');
     await page.locator('#search').fill('nothing-matches-this');
     assert.equal(await page.locator('#no-matches').isVisible(), true);
     await page.locator('#reset-filter').click();
@@ -72,7 +104,7 @@ async function main() {
     assert.deepEqual(errors, []);
     const stats = await page.evaluate(() => window.photocull.stats());
     const report = { passed: true, imageCount: Number(await page.locator('#count-all').textContent()), renderedGridCards: cardCount,
-      checks: ['RAW preview display', 'keyboard picks and ratings', 'auto advance', 'undo/redo', 'reject', '100% zoom toggle', 'virtual grid', 'pick filter', 'XMP export', 'reopen persistence', 'search empty state', 'shortcut help'], stats, errors };
+      checks: ['RAW preview display', 'keyboard picks and ratings', 'auto advance', 'undo/redo', 'reject', '100% zoom toggle', 'virtual grid', 'pick filter', 'XMP export', 'reopen persistence', 'delete rejects', 'delete pick prompt', 'search empty state', 'shortcut help'], stats, errors };
     await fs.writeFile(path.join(screenshots, 'ui-smoke.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report, null, 2));
   } finally {

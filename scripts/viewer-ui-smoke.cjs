@@ -1,5 +1,5 @@
 // node viewer-ui-smoke.cjs EXECUTABLE|- REPORT_FOLDER [SONY_FIXTURE_FOLDER]
-const { _electron:electron }=require('playwright-core');
+const { launch: launchApp } = require('./launch.cjs');
 const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),assert=require('node:assert/strict'),{createRequire}=require('node:module');
 async function main(){
  const exe=process.argv[2],reports=path.resolve(process.argv[3]),root=await fs.mkdtemp(path.join(os.tmpdir(),'photocull-viewer-'));await fs.mkdir(reports,{recursive:true});
@@ -10,7 +10,7 @@ async function main(){
  await sharp({create:{width:120,height:80,channels:3,background:'#987c54'}}).jpeg().toFile(path.join(photos,'03_small.jpg'));
  if(process.argv[4])await fs.copyFile(path.join(process.argv[4],'sample-8563.ARW'),path.join(photos,'04_camera.ARW'));
  let app,page;const errors=[],checks=[];
- async function launch(){const env={...process.env,PHOTOCULL_SMOKE_TEST:'1',PHOTOCULL_DATA_DIR:data};delete env.ELECTRON_RUN_AS_NODE;app=await electron.launch({...(exe==='-'?{args:[path.resolve(__dirname,'..'),'--disable-gpu']}:{executablePath:path.resolve(exe),args:['--disable-gpu'],cwd:path.dirname(path.resolve(exe))}),env,timeout:30000});page=await app.firstWindow();page.on('pageerror',e=>errors.push(e.message));await page.locator('#empty-open').waitFor();await page.evaluate(folder=>window.loadTestFolder(folder),photos);await complete();}
+ async function launch(){const env={...process.env,PHOTOCULL_SMOKE_TEST:'1',PHOTOCULL_DATA_DIR:data};app=await launchApp({ env });page=await app.firstWindow();page.on('pageerror',e=>errors.push(e.message));await page.locator('#empty-open').waitFor();await page.evaluate(folder=>window.loadTestFolder(folder),photos);await complete();}
  async function complete(){await page.waitForFunction(()=>document.querySelector('#review-image').dataset.complete==='yes',null,{timeout:60000});}
  async function fit(){await page.waitForFunction(()=>!document.querySelector('#image-viewport').classList.contains('zoomed'));}
  async function zoomed(){return page.locator('#image-viewport').evaluate(node=>node.classList.contains('zoomed'));}
@@ -22,7 +22,7 @@ async function main(){
  await page.locator('#zoom-percent').selectOption('200');g=await geometry();assert.equal(g.width,7200);assert.equal(g.height,4800);checks.push('percentage selector scales relative to actual pixels');
  await clickImage();await fit();await complete();checks.push('click without dragging returns to fit');
  await clickImage();await complete();assert.equal(await zoomed(),true);assert.equal(await page.locator('#zoom-percent').inputValue(),'200');await page.keyboard.press('Space');await fit();checks.push('click remembers zoom percentage and Space toggles fit');
- await page.locator('#fullscreen').click();await page.waitForFunction(()=>document.body.classList.contains('fullscreen-review'));await page.waitForFunction(()=>!document.body.classList.contains('filmstrip-visible'),null,{timeout:6000});assert.ok(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isFullScreen()));
+ await page.locator('#fullscreen').click();await page.waitForFunction(()=>document.body.classList.contains('fullscreen-review'));await page.waitForFunction(()=>!document.body.classList.contains('filmstrip-visible'),null,{timeout:6000});assert.ok(await page.evaluate(()=>!!document.fullscreenElement));
  let bounds=await page.locator('#image-stage').boundingBox();const size=page.viewportSize()||await page.evaluate(()=>({width:innerWidth,height:innerHeight}));assert.ok(Math.abs(bounds.width-size.width)<3);assert.ok(Math.abs(bounds.height-size.height)<3);
  await page.mouse.move(size.width/2,size.height-4);await page.waitForFunction(()=>document.body.classList.contains('filmstrip-visible'));await page.waitForTimeout(700);assert.equal(await page.locator('#filmstrip').isVisible(),true);checks.push('native fullscreen fills the display and reveals carousel at bottom edge');
  await page.locator('.film-card').nth(1).click();await complete();assert.equal(await page.locator('#photo-name').textContent(),'02_portrait.jpg');assert.equal(await zoomed(),false);
@@ -35,6 +35,6 @@ async function main(){
  if(process.argv[4]){await page.keyboard.press('ArrowRight');await complete();await page.locator('#zoom-percent').selectOption('100');await complete();g=await geometry();assert.ok(g.natural>6000);checks.push('real Sony RAW zoom selects a full-size representation');}
  await page.locator('#zoom-percent').selectOption('200');await app.close();app=null;await launch();assert.equal(await page.locator('#zoom-percent').inputValue(),'200');assert.equal(await zoomed(),false);checks.push('zoom percentage persists while new photos open at fit');
  assert.deepEqual(errors,[]);const report={passed:true,platform:process.platform,checks,errors};await fs.writeFile(path.join(reports,`viewer-ui-${process.platform}.json`),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));
- }catch(error){console.error({checks,errors,dom:await page?.evaluate(()=>({classes:document.body.className,focus:document.activeElement?.id})),native:await app?.evaluate(({BrowserWindow})=>({fullscreen:BrowserWindow.getAllWindows()[0].isFullScreen()}))});throw error;}finally{if(app)await app.close();await fs.rm(root,{recursive:true,force:true});}
+ }catch(error){console.error({checks,errors,dom:await page?.evaluate(()=>({classes:document.body.className,focus:document.activeElement?.id})),native:await page?.evaluate(()=>({fullscreen:!!document.fullscreenElement}))});throw error;}finally{if(app)await app.close();await fs.rm(root,{recursive:true,force:true});}
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});

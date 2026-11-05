@@ -1,6 +1,6 @@
 // node culling-ui-smoke.cjs EXECUTABLE|- REPORT_FOLDER [SONY_FIXTURE_FOLDER]
 // All copies/card events use isolated disposable fixtures, never a real SD card.
-const { _electron: electron } = require('playwright-core');
+const { launch: launchApp } = require('./launch.cjs');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
@@ -21,8 +21,8 @@ async function main() {
       await fs.copyFile(path.join(fixtureRoot, 'sample-8565.ARW'), path.join(photos, '001.ARW'));
     } else throw new Error('Supply the authorized Sony fixture directory.');
     const before = await digest(path.join(photos, '000.ARW'));
-    const env = { ...process.env, PHOTOCULL_SMOKE_TEST: '1', PHOTOCULL_DATA_DIR: path.join(root, 'state'), PHOTOCULL_TEST_DEVICES: deviceFile, PHOTOCULL_TEST_DESTINATION: destination }; delete env.ELECTRON_RUN_AS_NODE;
-    app = await electron.launch({ ...(executable === '-' ? { args: [path.resolve(__dirname, '..'), '--disable-gpu'] } : { executablePath: path.resolve(executable), args: ['--disable-gpu'], cwd: path.dirname(path.resolve(executable)) }), env, timeout: 30000 });
+    const env = { ...process.env, PHOTOCULL_SMOKE_TEST: '1', PHOTOCULL_DATA_DIR: path.join(root, 'state'), PHOTOCULL_TEST_DEVICES: deviceFile, PHOTOCULL_TEST_DESTINATION: destination }; 
+    app = await launchApp({ env });
     const page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message));
     await page.locator('#empty-open').waitFor();
     const device = { id: 'test-card:ABC', root: card, label: 'SONY SD', camera: true, photoRoot: path.join(card, 'DCIM') };

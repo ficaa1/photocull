@@ -2,6 +2,22 @@
 
 Local tests use generated photos, public test fixtures, or the user-authorized disposable Sony test copies; the proprietary executable is only a research input. Generated images, source fixtures, reports, screenshots and portable builds are ignored by Git.
 
+## 0.7.0 — Tauri port and deletion (2026-11-05)
+
+Unit tests passed 54/54: 52 existing tests plus two new deletion tests. Browser-mode ui-smoke passed, including the delete-rejects and delete-pick-prompt flows. Viewer smoke passed.
+
+The desktop shell now uses Tauri 2 with a bundled Node sidecar. UI smoke tests run the shared renderer and backend in headless system Chromium through `scripts/launch.cjs`; they do not cover native dialogs, menus, Trash or real desktop fullscreen.
+
+Native Tauri launch (Linux x86_64, Ubuntu host, Xvfb, 2026-11-05):
+
+- `npm run build` produced `PhotoCull_0.7.0_amd64.deb` (70 MB) and an `.rpm`. AppImage bundling failed in `linuxdeploy` on that host (probably no FUSE); not yet confirmed in CI.
+- The installed `.deb` starts, spawns the bundled Node backend and renders previews from the 127.0.0.1 image server.
+- Ctrl+O opens the GTK folder dialog; scanning and keyboard culling (P/X) work.
+- Rejects → "Delete 2 rejects" → Move to Trash moved both files into the freedesktop Trash with `.trashinfo` entries; counts updated.
+- Picks → Delete shows the confirm prompt; Enter moved the pick to Trash.
+- With `PHOTOCULL_NODE=/bin/false` the app shows a "PhotoCull could not start" error dialog and exits with code 1 after OK.
+- Not yet run natively: macOS, Windows, and permanent deletion from a camera card.
+
 ## Checked behavior
 
 - Unit/integration tests cover RAW/JPEG pairing, natural sorting, source-identity invalidation, local decision persistence, undo/redo, optional recursion and symlink avoidance.
@@ -92,7 +108,7 @@ Local RAW checks used files from the [rawpy test directory](https://github.com/l
 ## Current limits
 
 - RAW development uses a fast LibRaw configuration rather than an editor-quality pipeline. First renders are slower and use more memory than embedded previews. Camera support, colors and lens corrections vary. The fixture coverage does not certify every recognized RAW extension.
-- No destructive file operations, ingestion, catalog, compare view, automatic duplicate detection, AI scoring, GPU decode optimization, or live folder watcher.
+- Explicit deletion is supported; PhotoCull cannot undo it. No ingestion, catalog, compare view, automatic duplicate detection, AI scoring, GPU decode optimization, or live folder watcher.
 - The disk-cache limit is soft; Chromium's decoded/GPU image memory is additional to the application caches.
 - No verified speed comparison with Photo Mechanic. Larger shoots, unusual RAW formats, network storage and external XMP edits need further testing.
-- The portable Windows build is unsigned. Electron makes the distribution substantially larger than a native application with equivalent functionality.
+- Bundles are unsigned and not notarized. Tauri uses the system webview, but the bundled Node sidecar and native image-processing dependencies still add substantial distribution size.

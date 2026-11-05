@@ -108,3 +108,67 @@ test('burst decisions share queued durable writes and every decision survives re
   const reopened=await new Library(path.join(root,'state')).scan(photos);
   assert.ok(reopened.items.every(item=>item.flag==='pick'&&item.rating===4));
 });
+
+test('a deletion plan lists images with companions, and sidecars with all their owners', async t => {
+  const root = await temp(t), photos = path.join(root, 'photos');
+  await fs.mkdir(photos);
+  for (const name of ['A.NEF', 'A.JPG', 'A.xmp', 'B.JPG', 'C.CR2', 'C.DNG']) await fs.writeFile(path.join(photos, name), 'fixture');
+  await fs.writeFile(path.join(photos, 'C.xmp'), 'shared');
+  const library = new Library(path.join(root, 'state'));
+  const s = await library.scan(photos);
+  const id = name => s.items.find(i => i.name === name).id;
+  const plan = await library.deletionPlan(s.id, [id('A.NEF'), id('B.JPG'), id('C.CR2')]);
+  const files = Object.fromEntries(plan.photos.map(p => [p.name, p.files.map(f => path.basename(f))]));
+  assert.deepEqual(files['A.NEF'], ['A.NEF', 'A.JPG']);
+  assert.deepEqual(files['B.JPG'], ['B.JPG']);
+  assert.deepEqual(files['C.CR2'], ['C.CR2']);
+  assert.deepEqual(plan.sidecars.map(x => [path.basename(x.file), x.owners]), [['A.xmp', [id('A.NEF')]]],
+    'a missing sidecar is not listed, and C.xmp stays while C.DNG uses it');
+  assert.deepEqual(plan.skipped, []);
+  assert.equal(plan.removable, false);
+  const both = await library.deletionPlan(s.id, [id('C.CR2'), id('C.DNG')]);
+  assert.deepEqual(both.sidecars.map(x => [path.basename(x.file), x.owners.sort()]), [['C.xmp', [id('C.CR2'), id('C.DNG')].sort()]],
+    'a shared sidecar is listed once, owned by both photos');
+  await assert.rejects(library.deletionPlan(s.id, []), /Choose photos/);
+  await assert.rejects(library.deletionPlan(s.id, ['missing']), /not in this folder session/);
+});
+
+test('a deletion plan skips photos that changed since the scan and refuses a replaced folder', async t => {
+  const root = await temp(t), photos = path.join(root, 'photos');
+  await fs.mkdir(photos);
+  for (const name of ['A.JPG', 'B.JPG', 'C.JPG']) await fs.writeFile(path.join(photos, name), 'fixture');
+  const library = new Library(path.join(root, 'state'));
+  const s = await library.scan(photos);
+  const id = name => s.items.find(i => i.name === name).id;
+  await fs.writeFile(path.join(photos, 'B.JPG'), 'another card');
+  await fs.rm(path.join(photos, 'C.JPG')); await fs.writeFile(path.join(photos, 'C.JPG'), 'fixture');
+  const plan = await library.deletionPlan(s.id, [id('A.JPG'), id('B.JPG'), id('C.JPG')]);
+  assert.deepEqual(plan.photos.map(p => p.name), ['A.JPG']);
+  assert.deepEqual(plan.skipped.map(p => p.name).sort(), ['B.JPG', 'C.JPG'], 'rewritten and replaced files are skipped');
+  // A different folder (or card) mounted at the same path.
+  await fs.rename(photos, path.join(root, 'old'));
+  await fs.mkdir(photos); await fs.writeFile(path.join(photos, 'A.JPG'), 'fixture');
+  await assert.rejects(library.deletionPlan(s.id, [id('A.JPG')]), /folder has changed/);
+  // The folder replaced by a symlink to another one.
+  await fs.rm(photos, { recursive: true }); await fs.symlink(path.join(root, 'old'), photos);
+  await assert.rejects(library.deletionPlan(s.id, [id('A.JPG')]), /folder has changed/);
+});
+
+test('forgetting deleted photos drops them from the session, history and saved decisions', async t => {
+  const root = await temp(t), photos = path.join(root, 'photos');
+  await fs.mkdir(photos);
+  for (const name of ['a.jpg', 'b.jpg']) await fs.writeFile(path.join(photos, name), 'fixture');
+  const library = new Library(path.join(root, 'state'));
+  const s = await library.scan(photos, false, { removable: true });
+  assert.equal(s.removable, true);
+  const [a, b] = s.items;
+  await library.decide(s.id, a.id, { flag: 'reject' });
+  await library.decide(s.id, b.id, { flag: 'pick' });
+  await library.forget(s.id, [a.id]);
+  assert.deepEqual(library.get(s.id).items.map(i => i.id), [b.id]);
+  assert.throws(() => library.item(s.id, a.id), /not in this folder session/);
+  assert.equal((await library.history(s.id, 'undo')).id, b.id);
+  assert.equal(await library.history(s.id, 'undo'), null, 'undo skips the deleted photo');
+  const saved = JSON.parse(await fs.readFile(library.get(s.id).store, 'utf8'));
+  assert.deepEqual(Object.keys(saved.decisions), [b.id]);
+});

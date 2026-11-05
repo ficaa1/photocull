@@ -54,7 +54,7 @@ class Library {
     this.pendingSaves = new Map(); this.stats = { sessionWrites: 0 };
   }
 
-  async scan(folder, recursive = false) {
+  async scan(folder, recursive = false, { removable = false } = {}) {
     const generation = ++this.scanGeneration;
     folder = await fs.realpath(folder);
     if (!(await fs.stat(folder)).isDirectory()) throw new Error('Choose a folder of images.');
@@ -75,7 +75,7 @@ class Library {
     };
     await visit(folder);
     const stats = await mapLimit(files, 8, async f => {
-      try { const s = await fs.stat(f.path); return { ...f, size: s.size, mtimeMs: s.mtimeMs }; }
+      try { const s = await fs.stat(f.path); return { ...f, size: s.size, mtimeMs: s.mtimeMs, fileId: `${s.dev}:${s.ino}` }; }
       catch (e) { warnings.push(`${f.name}: ${e.message}`); return null; }
     });
     const items = groupFiles(stats.filter(Boolean));
@@ -95,7 +95,8 @@ class Library {
       }
     });
     if (generation !== this.scanGeneration) throw new Error('Folder scan was superseded.');
-    const session = { id: randomUUID(), folder, items, byId: new Map(items.map(item => [item.id,item])), store, warnings, recursive, undo: [], redo: [] };
+    const root = await fs.stat(folder);
+    const session = { id: randomUUID(), folder, folderId: `${root.dev}:${root.ino}`, items, byId: new Map(items.map(item => [item.id,item])), store, warnings, recursive, removable: !!removable, undo: [], redo: [] };
     // Image jobs already in flight retain their own file references.
     this.sessions.clear();
     this.sessions.set(session.id, session);
@@ -104,7 +105,7 @@ class Library {
 
   publicSession(s) {
     return { id: s.id, folder: s.folder, items: s.items.map(({ id, name, size, raw, companion, flag, rating, color, source, edited }) =>
-      ({ id, name, size, raw, paired: !!companion, flag, rating, color, source, edited })), warnings: s.warnings, recursive: s.recursive };
+      ({ id, name, size, raw, paired: !!companion, flag, rating, color, source, edited })), warnings: s.warnings, recursive: s.recursive, removable: s.removable };
   }
 
   get(id) {
@@ -178,6 +179,62 @@ class Library {
       } catch (e) { failures.push({ name: item.name, reason: e.message }); }
     });
     return { written, failures };
+  }
+
+  // Lists the files to delete for each photo, image first, so a failure there
+  // leaves its companion untouched. Every file is checked against what the
+  // scan saw: a swapped card or a folder replaced by a symlink must not let a
+  // stale session delete files the user never reviewed. Changed photos are
+  // returned in `skipped` and nothing of theirs is deleted.
+  // XMP sidecars are listed separately with their owners, because same-stem
+  // RAWs share one; delete a sidecar only once all its owners are gone.
+  async deletionPlan(sessionId, ids) {
+    const s = this.get(sessionId);
+    if (!Array.isArray(ids) || !ids.length || ids.length > 100_000) throw new Error('Choose photos to delete.');
+    const changed = 'Changed since the folder was opened; open the folder again.';
+    let root;
+    try { root = await fs.stat(s.folder); if (await fs.realpath(s.folder) !== s.folder) root = null; } catch { root = null; }
+    if (!root || `${root.dev}:${root.ino}` !== s.folderId) throw new Error('The photo folder has changed or is no longer available. Open it again.');
+    const lstat = async file => { try { const stat = await fs.lstat(file); return stat.isFile() ? stat : null; } catch { return null; } };
+    const unchanged = async item => {
+      const dir = path.dirname(item.path);
+      try { if (await fs.realpath(dir) !== dir) return false; } catch { return false; }
+      const image = await lstat(item.path);
+      if (!image || `${image.dev}:${image.ino}` !== item.fileId || image.size !== item.size || image.mtimeMs !== item.mtimeMs) return false;
+      if (!item.companion) return true;
+      const companion = await lstat(item.companion);
+      return !companion || companion.size === item.companionSize && companion.mtimeMs === item.companionMtimeMs;
+    };
+    const doomed = [...new Set(ids)].map(id => this.item(sessionId, id));
+    const checked = await mapLimit(doomed, 8, async item => ({ item, ok: await unchanged(item) }));
+    const photos = [], skipped = [], deleting = new Set();
+    for (const { item, ok } of checked) {
+      if (!ok) { skipped.push({ id: item.id, name: item.name, reason: changed }); continue; }
+      deleting.add(item.id);
+      photos.push({ id: item.id, name: item.name, files: [item.path, ...(item.companion && await lstat(item.companion) ? [item.companion] : [])] });
+    }
+    const owners = new Map();
+    for (const item of s.items) {
+      if (!owners.has(item.sidecar)) owners.set(item.sidecar, []);
+      owners.get(item.sidecar).push(item.id);
+    }
+    const sidecars = [];
+    for (const [file, ids] of owners) {
+      // A sidecar still used by a photo that stays (or was skipped) is kept.
+      if (ids.every(id => deleting.has(id)) && await lstat(file)) sidecars.push({ file, owners: ids });
+    }
+    return { folder: s.folder, removable: !!s.removable, photos, sidecars, skipped };
+  }
+
+  // Drops deleted photos from the session, its undo history and its saved decisions.
+  async forget(sessionId, ids) {
+    const s = this.get(sessionId), gone = new Set(ids);
+    s.items = s.items.filter(item => !gone.has(item.id));
+    for (const id of gone) s.byId.delete(id);
+    s.undo = s.undo.filter(action => !gone.has(action.id));
+    s.redo = s.redo.filter(action => !gone.has(action.id));
+    await this.save(s);
+    return { removed: [...gone] };
   }
 
   manifest(sessionId) {

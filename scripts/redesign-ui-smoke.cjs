@@ -1,6 +1,6 @@
 // node redesign-ui-smoke.cjs EXECUTABLE|- REPORT_FOLDER [SONY_FIXTURE_FOLDER]
 // Exercises the real Electron UI with disposable photos and isolated app state.
-const { _electron: electron } = require('playwright-core');
+const { launch: launchApp } = require('./launch.cjs');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
@@ -23,8 +23,8 @@ async function main() {
   const errors = [], checks = [];
   let app, page;
   async function launch() {
-    const env = { ...process.env, PHOTOCULL_SMOKE_TEST: '1', PHOTOCULL_DATA_DIR: data }; delete env.ELECTRON_RUN_AS_NODE;
-    app = await electron.launch({ ...(executable === '-' ? { args: [root, '--disable-gpu'] } : { executablePath: executable, args: ['--disable-gpu'], cwd: path.dirname(executable) }), env, timeout: 30000 });
+    const env = { ...process.env, PHOTOCULL_SMOKE_TEST: '1', PHOTOCULL_DATA_DIR: data }; 
+    app = await launchApp({ env });
     page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message));
     await page.locator('#empty-open').waitFor();
     await page.evaluate(folder => window.loadTestFolder(folder), photos);
@@ -55,7 +55,7 @@ async function main() {
     await page.locator('#grid-size').fill('300'); await page.locator('#grid-size').dispatchEvent('input');
     await page.waitForFunction(previous => document.querySelectorAll('.grid-card').length < previous, count);
     checks.push('thumbnail size changes contact-sheet density while preserving virtualization');
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1024, 700));
+    await page.setViewportSize({ width: 1024, height: 700 });
     await page.waitForTimeout(150); await screenshot('compact-grid');
     await page.locator('#review-mode').click(); await page.waitForFunction(() => document.querySelector('#review-image').dataset.complete === 'yes');
     await screenshot('compact-review');

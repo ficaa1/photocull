@@ -281,3 +281,27 @@ dialog::backdrop { background: #0a1015b0; }
   .color-setting input[type=color] { width: 30px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
+
+/* Deletion */
+.button.danger { background: #b4544f; border-color: #b4544f; color: #fff4f2; }
+.button.danger:hover:not(:disabled) { background: #c45f59; border-color: #c45f59; }
+.button.danger-quiet { background: transparent; border-color: #6d4644; color: var(--red); padding: 5px 10px; }
+.button.danger-quiet:hover:not(:disabled) { background: #3a2827; border-color: #8a5552; }
+#delete-dialog { max-width: 420px; }
+#delete-scope { font-size: 12px; margin: 0 0 16px; color: #a9b6bf; }
+.delete-mode { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid #4a565e; border-radius: 6px; overflow: hidden; }
+.delete-mode label { position: relative; display: flex; justify-content: center; padding: 9px 10px; font-size: 12px; cursor: pointer; color: #b6c2cb; }
+.delete-mode label + label { border-left: 1px solid #4a565e; }
+.delete-mode input { position: absolute; opacity: 0; pointer-events: none; }
+.delete-mode label:has(input:checked) { background: #3b4850; color: #eef3f6; }
+.delete-mode label:has(input[value=permanent]:checked) { background: #4a2f2e; color: #ffd9d6; }
+.delete-mode label:has(input:disabled) { cursor: default; opacity: .4; }
+.delete-mode label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
+#delete-note { margin: 10px 0 0; min-height: 1em; }
+#delete-status:empty, #delete-note:empty { display: none; }
+#delete-results { font-family: inherit; white-space: pre-wrap; font-size: 11px; max-height: 130px; overflow: auto; color: #c3cdd4; line-height: 1.6; }
+.delete-prompt { position: fixed; bottom: 96px; left: 50%; transform: translateX(-50%); z-index: 40; display: flex; align-items: center; gap: 14px;
+  border: 1px solid #8a5552; border-radius: 6px; background: #3a2827; padding: 10px 14px; color: #ffe3e0; font-size: 12px; box-shadow: 0 10px 34px #0007; max-width: min(80vw, 640px); }
+.delete-prompt #delete-prompt-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.delete-prompt-keys { color: #d4aaa6; white-space: nowrap; }
+.delete-prompt kbd { color: #ffe3e0; border-color: #8a5552; font-size: 10px; }

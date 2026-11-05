@@ -1,19 +1,19 @@
 {
   "name": "photocull",
   "productName": "PhotoCull",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "description": "A local, preview-first RAW and JPEG culling desktop app",
-  "main": "src/main.cjs",
   "scripts": {
-    "start": "electron .",
+    "start": "tauri dev",
+    "web": "node src/backend.cjs --web --port 5173",
     "test": "node --test test/*.test.cjs",
     "test:ui": "node scripts/ui-smoke.cjs",
     "benchmark": "node scripts/benchmark.cjs",
-    "pack:win": "node scripts/package-windows.cjs",
-    "update:win": "node scripts/update-windows.cjs",
-    "pack:mac": "node scripts/package-macos.cjs",
-    "perf:audit": "node scripts/performance-audit.cjs"
+    "stage": "node scripts/stage-backend.cjs",
+    "build": "node scripts/stage-backend.cjs && tauri build --config src-tauri/tauri.bundle.conf.json",
+    "perf:audit": "node scripts/performance-audit.cjs",
+    "tauri": "tauri"
   },
   "dependencies": {
     "@xmldom/xmldom": "^0.9.10",
@@ -22,8 +22,7 @@
     "sharp": "^0.35.5"
   },
   "devDependencies": {
-    "@electron/packager": "^20.3.0",
-    "electron": "^45.1.0",
+    "@tauri-apps/cli": "^2.12.4",
     "playwright-core": "^1.58.2"
   }
 }

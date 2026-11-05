@@ -1,6 +1,6 @@
 const api = window.photocull;
 const $ = id => document.getElementById(id);
-const state = { session: null, selected: null, filter: 'all', query: '', mode: 'review', zoom: false, zoomPercent: 100, fullscreen: false,
+const state = { deleting: false, session: null, selected: null, filter: 'all', query: '', mode: 'review', zoom: false, zoomPercent: 100, fullscreen: false,
   generation: 0, previewRevision: 0, prefetched: [], pendingSaves: 0, saveError: false, busy: false, settings: { autoAdvance: true, recursive: false, autoOpenCards: true, colors: [], naming: { template: '{filename}', text: '', start: 1 } }, settingsReady: false, colorFilter: '', devices: [], deviceError: '', autoOpened: new Set(), copy: { running: false, destination: null, copiedTo: null } };
 let toastTimer, metadataTimer, framePending = false;
 const gridNodes = new Map(), filmNodes = new Map();
@@ -44,7 +44,7 @@ function filtered() {
   });
 }
 function imageUrl(item, kind = 'thumb', prefetch = false) {
-  return `photocull://image/${state.session.id}/${item.id}/${kind}?v=${state.previewRevision}${prefetch ? '&prefetch=1' : ''}`;
+  return api.imageUrl(state.session.id, item.id, kind, `&v=${state.previewRevision}${prefetch ? '&prefetch=1' : ''}`);
 }
 function fileSize(bytes) { return `${(bytes / 1024 ** 2).toFixed(1)} MB`; }
 function setStatus(text, error = false) {
@@ -53,7 +53,7 @@ function setStatus(text, error = false) {
 }
 
 async function openFolder() {
-  if (state.busy || state.copy.running) return;
+  if (state.busy || state.copy.running || state.deleting) return;
   state.busy = true;
   $('open-folder').disabled = true; $('empty-open').disabled = true;
   setStatus('Reading folder…');
@@ -89,14 +89,14 @@ function renderDevices() {
     const button = document.createElement('button'); button.className = 'device-button';
     button.textContent = `${device.label} · ${device.root}`;
     button.title = device.photoRoot;
-    button.disabled = state.busy || state.copy.running;
+    button.disabled = state.busy || state.copy.running || state.deleting;
     button.onclick = () => openDevice(device);
     return button;
   }));
   $('device-status').textContent = removed ? 'Card disconnected' : state.deviceError || '';
 }
 async function openDevice(device) {
-  if (state.busy || state.copy.running) return;
+  if (state.busy || state.copy.running || state.deleting) return;
   state.busy = true; $('open-folder').disabled = true; $('empty-open').disabled = true; renderDevices();
   setStatus('Reading camera card…');
   try { loadSession(await api.openDevice(device.id)); }
@@ -144,6 +144,11 @@ function render() {
   const titles = { all: 'Photos', unreviewed: 'Unreviewed', pick: 'Picks', reject: 'Rejects', rated: 'Rated' };
   $('view-title').textContent = loaded ? titles[state.filter] : 'Photos';
   $('view-count').textContent = loaded ? `${items.length}` : '';
+  const rejects = state.session?.items.filter(i => i.flag === 'reject').length ?? 0;
+  $('delete-rejects').hidden = !loaded || state.filter !== 'reject' || !rejects;
+  $('delete-rejects').disabled = state.busy || state.copy.running || state.deleting;
+  $('delete-rejects').querySelector('span').textContent = `Delete ${rejects} reject${rejects === 1 ? '' : 's'}`;
+  if (state.filter !== 'pick') hideDeletePrompt();
   renderSelection();
   if (state.mode === 'grid') requestGrid();
 }
@@ -417,8 +422,11 @@ async function history(direction) {
   } catch (e) { toast(e.message); }
 }
 
+api.onEdit(() => hideDeletePrompt());
 api.onEdit(direction => { if (['INPUT','TEXTAREA'].includes(document.activeElement?.tagName)) document.execCommand(direction); else if (!document.querySelector('dialog[open]')) void history(direction); });
+api.onOpenFolder(() => hideDeletePrompt());
 api.onOpenFolder(() => { if (!document.querySelector('dialog[open]')) void openFolder(); });
+api.onSettings(() => hideDeletePrompt());
 api.onSettings(() => { if (!document.querySelector('dialog[open]')) void openSettings(); });
 document.body.classList.toggle('platform-mac', api.platform === 'darwin');
 if (api.platform === 'darwin') document.querySelectorAll('#help-dialog kbd').forEach(key => { key.textContent = key.textContent.replaceAll('Ctrl', '⌘').replaceAll('Alt', '⌥'); });
@@ -486,6 +494,7 @@ async function setFullscreen(value = !state.fullscreen) {
 $('fullscreen').innerHTML = fullscreenIcons.enter;
 $('fullscreen').onclick = () => { $('fullscreen').blur(); void setFullscreen(); };
 api.onFullscreen(status => applyFullscreen(status.fullscreen));
+api.onFullscreenToggle(() => hideDeletePrompt());
 api.onFullscreenToggle(() => { if (!document.querySelector('dialog[open]')) void setFullscreen(); });
 $('shortcuts').onclick = () => $('help-dialog').showModal();
 $('export').onclick = () => {
@@ -499,7 +508,7 @@ function renderCopyOptions() {
   const picks = state.session?.items.filter(i => i.flag === 'pick') || [];
   const total = picks.reduce((bytes, i) => bytes + i.size, 0);
   $('copy-scope').textContent = `${picks.length} pick${picks.length === 1 ? '' : 's'} · ${fileSize(total)}${$('copy-jpeg').checked ? ' + JPEGs' : ''}`;
-  $('copy-start').disabled = state.copy.running || state.pendingSaves > 0 || !picks.length || !state.copy.destination || $('copy-folder-mode').value === 'named' && !$('copy-folder-name').value.trim();
+  $('copy-start').disabled = state.copy.running || state.deleting || state.pendingSaves > 0 || !picks.length || !state.copy.destination || $('copy-folder-mode').value === 'named' && !$('copy-folder-name').value.trim();
   $('copy-destination').disabled = state.copy.running;
   $('copy-jpeg').disabled = state.copy.running;
   $('copy-xmp').disabled = state.copy.running;
@@ -535,7 +544,7 @@ function showCopyProgress(progress) {
 }
 api.onCopyProgress(progress => { if (state.copy.running) showCopyProgress(progress); });
 $('copy-start').onclick = async () => {
-  if (state.copy.running || state.pendingSaves) return;
+  if (state.copy.running || state.pendingSaves || state.deleting) return;
   state.copy.running = true; state.copy.copiedTo = null;
   $('export-results').hidden = true;
   $('copy-status').textContent = 'Checking picked originals…';
@@ -576,8 +585,19 @@ $('export-json').onclick = async () => {
 $('grid').onscroll = requestGrid;
 new ResizeObserver(requestGrid).observe($('grid'));
 document.addEventListener('keydown', event => {
+  // A dialog opened over the prompt (e.g. from a native menu) owns the keyboard.
+  if (deletePrompt && document.querySelector('dialog[open]')) hideDeletePrompt();
+  if (deletePrompt) {
+    // Enter confirms; any other key cancels and is otherwise ignored, so a
+    // stray P or X does not change the photo the prompt was about.
+    if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(event.key)) return;
+    event.preventDefault(); event.stopPropagation();
+    if (event.key === 'Enter' && !event.repeat) void confirmDeletePrompt(); else hideDeletePrompt();
+    return;
+  }
   const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
   if (document.querySelector('dialog[open]')) return;
+  if ((event.ctrlKey || event.metaKey) && event.key === ',') { event.preventDefault(); void openSettings(); return; }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') { event.preventDefault(); void openFolder(); return; }
   if (event.key === 'F11') { event.preventDefault(); void setFullscreen(); return; }
   if (event.key === 'Tab' && event.ctrlKey) { event.preventDefault(); setMode(state.mode === 'review' ? 'grid' : 'review'); return; }
@@ -588,6 +608,7 @@ document.addEventListener('keydown', event => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); void history(event.shiftKey ? 'redo' : 'undo'); return; }
   if (event.altKey && /^[0-8]$/.test(event.key)) { event.preventDefault(); void decide({ color: event.key === '0' ? '' : event.key }); return; }
   if (event.ctrlKey || event.metaKey || event.altKey) return;
+  if ((event.key === 'Delete' || event.key === 'Backspace') && state.filter === 'pick') { event.preventDefault(); showDeletePrompt(); return; }
   if (event.key.toLowerCase() === 'b') { event.preventDefault(); togglePane('sources'); return; }
   if (event.key.toLowerCase() === 'i') { event.preventDefault(); togglePane('details'); return; }
   if (event.key === 'ArrowLeft') { event.preventDefault(); navigate(-1); }
@@ -610,6 +631,104 @@ document.addEventListener('keydown', event => {
   else if (event.key.toLowerCase() === 'e') { event.preventDefault(); setMode('review'); }
   else if (event.key === '?') { event.preventDefault(); $('help-dialog').showModal(); }
 });
+
+// Deletion. Camera cards have no trash, so photos there are always deleted
+// permanently; elsewhere the user's last choice is remembered in settings.
+let deletePrompt = null;
+function trashAvailable() { return api.canTrash && !state.session?.removable; }
+function deleteMode() { return trashAvailable() ? state.settings.deleteMode || 'trash' : 'permanent'; }
+function plural(count, word) { return `${count} ${word}${count === 1 ? '' : 's'}`; }
+async function deletePhotos(ids, mode) {
+  if (!state.session || !ids.length || state.deleting || state.copy.running || state.busy) return null;
+  const sessionId = state.session.id;
+  // Copying or opening another folder mid-deletion is refused here and in the backend.
+  state.deleting = true; setDeleting(true); setStatus(mode === 'trash' ? 'Moving to Trash…' : 'Deleting…');
+  try {
+    const result = await api.deletePhotos(sessionId, ids, mode);
+    if (state.session?.id !== sessionId) return result;
+    removeFromSession(result.deleted);
+    const done = mode === 'trash' ? `Moved ${plural(result.deleted.length, 'photo')} to Trash` : `Deleted ${plural(result.deleted.length, 'photo')}`;
+    toast(result.warning ? `${done}. ${result.warning}` : result.failures.length ? `${done}; ${result.failures.length} failed: ${result.failures[0].name}: ${result.failures[0].reason}` : done);
+    setStatus(result.warning ? 'Session not saved' : 'Saved', !!result.warning);
+    return result;
+  } catch (error) { toast(error.message); setStatus('Delete failed', true); return null; }
+  finally { state.deleting = false; setDeleting(false); }
+}
+function setDeleting(value) {
+  $('open-folder').disabled = value; $('empty-open').disabled = value; $('export').disabled = value || !state.session?.items.length;
+  render(); renderDevices(); renderCopyOptions();
+}
+function removeFromSession(ids) {
+  if (!ids.length) return;
+  const gone = new Set(ids), before = filtered(), index = before.findIndex(i => i.id === state.selected);
+  if (gone.has(state.selected)) {
+    // Keep the reviewer's place: select the next surviving photo, else the previous one.
+    const next = before.slice(index + 1).find(i => !gone.has(i.id)) ?? before.slice(0, Math.max(0, index)).reverse().find(i => !gone.has(i.id));
+    state.selected = next?.id ?? null;
+  }
+  state.session.items = state.session.items.filter(i => !gone.has(i.id));
+  for (const id of gone) { gridNodes.get(id)?.remove(); gridNodes.delete(id); filmNodes.delete(id); }
+  filmSignature = ''; $('review-image').dataset.itemId = ''; $('review-image').dataset.stamp = '';
+  $('folder-detail').textContent = `${state.session.items.length} photos`;
+  $('export').disabled = !state.session.items.length;
+}
+function showDeletePrompt() {
+  const item = photo();
+  if (!item || item.flag !== 'pick' || state.deleting || state.copy.running || state.busy) return;
+  const mode = deleteMode();
+  deletePrompt = { id: item.id, mode, session: state.session.id };
+  $('delete-prompt-text').textContent = `${mode === 'trash' ? 'Move' : 'Permanently delete'} ${item.name}${item.paired ? ' + JPEG' : ''}${mode === 'trash' ? ' to Trash' : ''}?`;
+  $('delete-prompt').hidden = false;
+}
+function hideDeletePrompt() { deletePrompt = null; $('delete-prompt').hidden = true; }
+async function confirmDeletePrompt() {
+  const { id, mode, session } = deletePrompt; hideDeletePrompt();
+  // Only delete the photo the prompt named, and only while it is still a pick.
+  const item = state.session?.id === session && state.filter === 'pick' ? state.session.items.find(i => i.id === id) : null;
+  if (!item || item.flag !== 'pick' || document.querySelector('dialog[open]')) return;
+  await deletePhotos([id], mode);
+}
+document.addEventListener('pointerdown', () => { if (deletePrompt) hideDeletePrompt(); }, true);
+// The dialog's selection is its own state: saving the preference happens in
+// the background and its replies must not change what the user sees chosen.
+let deleteChoice = 'trash', deleteSaves = 0;
+function renderDeleteMode() {
+  const trash = trashAvailable(), mode = trash ? deleteChoice : 'permanent';
+  $('delete-mode-trash').disabled = !trash;
+  $('delete-mode-trash').checked = mode === 'trash'; $('delete-mode-permanent').checked = mode === 'permanent';
+  $('delete-note').textContent = !api.canTrash ? 'The Trash is only available in the desktop app. Files are deleted permanently.'
+    : state.session?.removable ? 'Camera cards have no Trash, so these files are deleted permanently.'
+    : mode === 'permanent' ? 'Files are deleted immediately and cannot be recovered.' : 'You can restore them from the Trash.';
+  $('delete-confirm').textContent = mode === 'trash' ? 'Move to Trash' : 'Delete permanently';
+}
+$('delete-rejects').onclick = () => {
+  const rejects = state.session?.items.filter(i => i.flag === 'reject') ?? [];
+  if (!rejects.length) return;
+  const bytes = rejects.reduce((total, i) => total + i.size, 0), pairs = rejects.filter(i => i.paired).length;
+  $('delete-title').textContent = `Delete ${plural(rejects.length, 'rejected photo')}`;
+  $('delete-scope').textContent = `${fileSize(bytes)}${pairs ? ` · ${plural(pairs, 'RAW + JPEG pair')}` : ''}. Companion JPEGs and XMP sidecars are deleted with them.`;
+  $('delete-status').textContent = ''; $('delete-results').hidden = true; $('delete-confirm').disabled = false;
+  deleteChoice = deleteMode(); renderDeleteMode(); $('delete-dialog').showModal(); $('delete-cancel').focus();
+};
+for (const input of document.querySelectorAll('input[name=delete-mode]')) input.onchange = async () => {
+  deleteChoice = input.value; renderDeleteMode();
+  state.settings = { ...state.settings, deleteMode: input.value };
+  const save = ++deleteSaves;
+  try { const saved = await api.settings({ deleteMode: input.value }); if (save === deleteSaves) state.settings = saved; } catch (error) { toast(error.message); }
+};
+$('delete-cancel').onclick = () => $('delete-dialog').close();
+$('delete-confirm').onclick = async () => {
+  // Re-read the rejects at confirm time; flags may have changed since the dialog opened.
+  const ids = state.session?.items.filter(i => i.flag === 'reject').map(i => i.id) ?? [];
+  const mode = trashAvailable() ? deleteChoice : 'permanent';
+  $('delete-confirm').disabled = true; $('delete-status').textContent = mode === 'trash' ? 'Moving to Trash…' : 'Deleting…';
+  const result = await deletePhotos(ids, mode);
+  if (result && !result.failures.length && !result.warning) { $('delete-dialog').close(); return; }
+  $('delete-status').textContent = result ? `${result.deleted.length} deleted · ${result.failures.length} failed${result.warning ? ` · ${result.warning}` : ''}` : 'Nothing was deleted.';
+  if (result?.failures.length) { $('delete-results').hidden = false; $('delete-results').textContent = result.failures.map(f => `${f.name}: ${f.reason}`).join('\n'); }
+  $('delete-confirm').disabled = false;
+};
+$('delete-dialog').addEventListener('cancel', event => { if (state.deleting) event.preventDefault(); });
 
 let settingsDraft = null, namingTimer, namingGeneration = 0;
 const clone = value => structuredClone(value);
@@ -773,6 +892,6 @@ $('copy-preset').onchange = async () => {
 $('export-dialog').addEventListener('close', () => { $('copy-progress').hidden = true; $('copy-status').textContent = ''; });
 void api.settings().then(syncSettings).catch(error => toast(error.message));
 
-// Exposed only inside the renderer for the Electron integration check.
-if (api.testOpenFolder) window.loadTestFolder = async (folder, recursive) => loadSession(await api.testOpenFolder(folder, recursive));
+// Browser mode lets smoke tests open a folder without a native dialog.
+if (api.platform === 'web') window.loadTestFolder = async (folder, recursive) => loadSession(await api.openPath(folder, recursive));
 render();

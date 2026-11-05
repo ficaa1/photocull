@@ -1,5 +1,5 @@
 // node settings-ui-smoke.cjs EXECUTABLE|- REPORT_FOLDER SONY_FIXTURE_FOLDER
-const { _electron: electron } = require('playwright-core');
+const { launch: launchApp } = require('./launch.cjs');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
@@ -11,8 +11,8 @@ async function main() {
   await fs.copyFile(path.join(fixture,'sample-8563.ARW'),path.join(photos,'a.ARW'));await fs.copyFile(path.join(fixture,'sample-8563.JPG'),path.join(photos,'a.JPG'));await fs.copyFile(path.join(fixture,'sample-8565.JPG'),path.join(photos,'b.JPG'));
   const errors=[], checks=[]; let app,page;
   async function launch() {
-    const env={...process.env,PHOTOCULL_SMOKE_TEST:'1',PHOTOCULL_DATA_DIR:data,PHOTOCULL_TEST_DESTINATION:destination};delete env.ELECTRON_RUN_AS_NODE;
-    app=await electron.launch({...(executable==='-'?{args:[path.resolve(__dirname,'..'),'--disable-gpu']}:{executablePath:path.resolve(executable),args:['--disable-gpu'],cwd:path.dirname(path.resolve(executable))}),env,timeout:30000});
+    const env={...process.env,PHOTOCULL_SMOKE_TEST:'1',PHOTOCULL_DATA_DIR:data,PHOTOCULL_TEST_DESTINATION:destination};
+    app=await launchApp({ env });
     page=await app.firstWindow();page.on('pageerror',error=>errors.push(error.message));await page.locator('#settings-open').waitFor();
     await page.evaluate(folder=>window.loadTestFolder(folder),photos);await page.waitForFunction(()=>document.querySelector('#review-image').dataset.complete==='yes',null,{timeout:60000});
   }

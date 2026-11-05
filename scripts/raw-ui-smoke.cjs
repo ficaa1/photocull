@@ -1,6 +1,6 @@
 // node raw-ui-smoke.cjs EXECUTABLE CASE_FOLDER REPORT_FOLDER
 // EXECUTABLE may be '-' for this development checkout's Electron.
-const { _electron: electron } = require('playwright-core');
+const { launch: launchApp } = require('./launch.cjs');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
@@ -11,8 +11,8 @@ async function main() {
   const data = await fs.mkdtemp(path.join(os.tmpdir(), 'photocull-raw-ui-'));
   const errors = []; const checks = []; let app, page;
   async function launch() {
-    const env = { ...process.env, PHOTOCULL_SMOKE_TEST: '1', PHOTOCULL_DATA_DIR: data }; delete env.ELECTRON_RUN_AS_NODE;
-    app = await electron.launch({ ...(executable === '-' ? { args: [path.resolve(__dirname, '..'), '--disable-gpu'] } : { executablePath: path.resolve(executable), args: ['--disable-gpu'], cwd: path.dirname(path.resolve(executable)) }), env, timeout: 30000 });
+    const env = { ...process.env, PHOTOCULL_SMOKE_TEST: '1', PHOTOCULL_DATA_DIR: data }; 
+    app = await launchApp({ env });
     page = await app.firstWindow(); page.on('pageerror', e => errors.push(e.message));
     await page.locator('#settings-open').waitFor();
   }
