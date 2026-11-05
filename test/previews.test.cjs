@@ -101,3 +101,32 @@ test('validated RAW ranges avoid an extraction subprocess; invalid offsets retai
   const fast=new PreviewService(path.join(root,'fast'),{exif});t.after(()=>fast.close());await fast.get(item,'preview');assert.equal(calls,0);assert.equal(fast.stats.directExtractions,1);
   const fallback=new PreviewService(path.join(root,'fallback'),{exif:{...exif,async readRaw(){return{JpgFromRaw:'binary',JpgFromRawStart:1,JpgFromRawLength:bytes.length};}}});t.after(()=>fallback.close());await fallback.get(item,'preview');assert.equal(calls,1);
 });
+
+test('the disk cache prunes least recently used previews, honours its limit and can be cleared', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'photocull-cache-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  await fixtures(path.join(root, 'photos'), 3);
+  const library = new Library(path.join(root, 'state')), s = await library.scan(path.join(root, 'photos'));
+  const cache = path.join(root, 'cache'), items = s.items.map(i => library.item(s.id, i.id));
+  const first = new PreviewService(cache); t.after(() => first.close());
+  for (const item of items) await first.get(item, 'thumb');
+  const files = item => [first.key(item, 'thumb') + '.jpg', first.key(item, 'thumb') + '.jpg.json'].map(name => path.join(cache, name));
+  // Everything was made an hour ago, the oldest first.
+  for (const [index, item] of items.entries()) {
+    const then = new Date(Date.now() - 3600_000 + index * 1000);
+    for (const file of files(item)) await fs.utimes(file, then, then);
+  }
+  // Reading the oldest preview from disk marks it as used.
+  const second = new PreviewService(cache); t.after(() => second.close());
+  await second.get(items[0], 'thumb'); await new Promise(resolve => setTimeout(resolve, 50));
+  const sizes = await Promise.all(items.map(async item => (await Promise.all(files(item).map(f => fs.stat(f)))).reduce((n, st) => n + st.size, 0)));
+  await second.setDiskLimit(sizes[0] + 1);
+  const exists = file => fs.access(file).then(() => true, () => false);
+  assert.deepEqual(await Promise.all(files(items[0]).map(exists)), [true, true], 'the recently used preview is kept');
+  assert.deepEqual(await Promise.all([...files(items[1]), ...files(items[2])].map(exists)), [false, false, false, false]);
+  assert.equal((await second.diskUsage()).limit, sizes[0] + 1);
+  await assert.rejects(second.setDiskLimit(0), /Invalid preview cache size/);
+  const cleared = await second.clearDisk();
+  assert.ok(cleared.freed >= sizes[0]); assert.equal(cleared.bytes, 0);
+  assert.equal((await second.get(items[0], 'thumb')).length > 0, true, 'previews regenerate after clearing');
+});

@@ -99,6 +99,8 @@
     previewStatus: (session, id, kind) => backend('preview-status', session, id, kind),
     previewSettings: value => backend('preview-settings', value),
     retryPreview: (session, id) => backend('retry-preview', session, id),
+    previewCache: () => backend('preview-cache'),
+    clearPreviewCache: () => backend('clear-preview-cache'),
     focus: (session, ids) => backend('focus', session, ids),
     visible: (session, ids) => backend('visible', session, ids),
     exportXmp: (session, profile) => backend('export-xmp', session, profile),

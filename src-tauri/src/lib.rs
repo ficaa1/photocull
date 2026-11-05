@@ -19,7 +19,7 @@ use tauri_plugin_opener::OpenerExt;
 const RENDERER_METHODS: &[&str] = &[
     "scan", "devices", "open-device", "test-destination", "copy-picks", "naming-preview", "cancel-copy", "decide", "decide-many",
     "history", "metadata", "preview-status", "settings", "save-preset", "delete-preset", "settings-folder",
-    "preview-settings", "retry-preview", "focus", "visible", "export-xmp", "session-folder", "stats",
+    "preview-settings", "preview-cache", "clear-preview-cache", "retry-preview", "focus", "visible", "export-xmp", "session-folder", "stats",
 ];
 
 #[tauri::command]

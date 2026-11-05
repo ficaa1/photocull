@@ -27,6 +27,9 @@ class RawRenderCache {
       try {
         const [info, stat] = await Promise.all([fs.readFile(files.info, 'utf8').then(JSON.parse), fs.stat(files.file)]);
         if (stat.size === 0) continue;
+        // Mark as used so least-recently-used pruning keeps renders in use.
+        const now = new Date();
+        for (const file of [files.file, files.info]) void fs.utimes(file, now, now).catch(() => {});
         return { file: files.file, info: { ...info, cached: true } };
       } catch (e) { if (!['ENOENT', 'ENOTDIR'].includes(e.code) && !(e instanceof SyntaxError)) throw e; }
     }

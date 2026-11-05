@@ -6,7 +6,7 @@ const METADATA = { writeRatings: true, writeLabels: true, rejectRating: true, pi
   creator: '', copyright: '', title: '', caption: '', keywords: [] };
 const NAMING = { template: '{filename}', text: '', start: 1 };
 const FOLDERS = { mode: 'flat', name: '' };
-const DEFAULTS = { version: 1, zoomPercent: 100, rawRendering: 'missing', autoAdvance: true, recursive: false, autoOpenCards: true, deleteMode: 'trash',
+const DEFAULTS = { version: 1, zoomPercent: 100, rawRendering: 'missing', previewCacheGB: 2, autoAdvance: true, recursive: false, autoOpenCards: true, deleteMode: 'trash',
   copyJpeg: false, copyXmp: false, copyMetadata: false, folders: FOLDERS, activePreset: 'standard', naming: NAMING, metadata: METADATA, colors: COLORS };
 const BUILTINS = [
   { id: 'standard', name: 'Standard', metadata: METADATA, naming: NAMING, folders: FOLDERS, colors: COLORS },
@@ -32,6 +32,10 @@ function normalizeSettings(value = {}, base = DEFAULTS) {
   if ('rawRendering' in value) {
     if (!['off', 'missing', 'small'].includes(value.rawRendering)) throw new Error('Invalid RAW rendering option.');
     result.rawRendering = value.rawRendering;
+  }
+  if ('previewCacheGB' in value) {
+    if (![1, 2, 5, 10].includes(value.previewCacheGB)) throw new Error('Invalid preview cache size.');
+    result.previewCacheGB = value.previewCacheGB;
   }
   if ('deleteMode' in value) {
     if (!['trash', 'permanent'].includes(value.deleteMode)) throw new Error('Invalid delete mode.');

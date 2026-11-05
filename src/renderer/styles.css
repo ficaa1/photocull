@@ -193,6 +193,7 @@ dialog::backdrop { background: #0a1015b0; }
 .field-row { display: flex; align-items: center; gap: 12px; margin: 14px 0; }
 .field-row > label { font-size: 12px; min-width: 75px; color: #b6c2cb; }
 .field-row > select, .field-row > input { flex: 1; width: 0; }
+.cache-row { justify-content: space-between; margin-top: -4px; font-size: 12px; }
 .field-row select { font-size: 12px; }
 #copy-naming summary, #metadata-export summary { cursor: pointer; color: #abbcc9; font-size: 12px; padding: 5px 0; }
 .name-preview { color: #9db2c0; font-size: 11px; overflow-wrap: anywhere; margin: 13px 0; }

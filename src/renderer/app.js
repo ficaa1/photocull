@@ -54,7 +54,7 @@ function filtered() {
 function imageUrl(item, kind = 'thumb', prefetch = false) {
   return api.imageUrl(state.session.id, item.id, kind, `&v=${state.previewRevision}${prefetch ? '&prefetch=1' : ''}`);
 }
-function fileSize(bytes) { return `${(bytes / 1024 ** 2).toFixed(1)} MB`; }
+function fileSize(bytes) { return bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`; }
 function setStatus(text, error = false) {
   $('save-status').textContent = text;
   $('save-status').style.color = error ? '#e99787' : '';
@@ -969,6 +969,7 @@ async function saveCopyDefaults() {
 }
 function fillSettings(value) {
   $('auto-advance').checked = value.autoAdvance; $('recursive').checked = value.recursive; $('auto-open-cards').checked = value.autoOpenCards;
+  $('preview-cache-limit').value = String(value.previewCacheGB); void showCacheUsage();
   $('raw-rendering').value = value.rawRendering; $('default-jpeg').checked = value.copyJpeg; $('default-xmp').checked = value.copyXmp; $('default-metadata').checked = value.copyMetadata; fillFolders('settings', value.folders);
   $('metadata-preset').replaceChildren(...state.settings.presets.map(p => option(p.id, p.name))); $('metadata-preset').value = value.activePreset;
   $('preset-delete').disabled = !/^[\da-f-]{36}$/i.test(value.activePreset);
@@ -989,6 +990,7 @@ function fillSettings(value) {
 function readSettings() {
   const value = clone(settingsDraft);
   value.autoAdvance = $('auto-advance').checked; value.recursive = $('recursive').checked; value.autoOpenCards = $('auto-open-cards').checked;
+  value.previewCacheGB = Number($('preview-cache-limit').value);
   value.rawRendering = $('raw-rendering').value; value.copyJpeg = $('default-jpeg').checked; value.copyXmp = $('default-xmp').checked; value.copyMetadata = $('default-metadata').checked; value.folders = readFolders('settings');
   value.activePreset = $('metadata-preset').value;
   for (const [id,key] of [['write-ratings','writeRatings'],['write-labels','writeLabels'],['reject-rating','rejectRating']]) value.metadata[key] = $(id).checked;
@@ -1003,6 +1005,17 @@ async function openSettings(tab = 'general') {
   try { const value = await api.settings(); state.settings = value; settingsDraft = clone(value); fillSettings(settingsDraft); setSettingsTab(tab); $('settings-status').textContent = value.warning || ''; $('settings-dialog').showModal(); }
   catch (error) { toast(error.message); }
 }
+// The preview cache is disposable: clearing only costs regenerating previews.
+async function showCacheUsage() {
+  try { const usage = await api.previewCache(); $('preview-cache-usage').textContent = `Using ${fileSize(usage.bytes)}`; }
+  catch (error) { $('preview-cache-usage').textContent = error.message; }
+}
+$('preview-cache-clear').onclick = async () => {
+  $('preview-cache-clear').disabled = true;
+  try { const result = await api.clearPreviewCache(); $('preview-cache-usage').textContent = `Cleared ${fileSize(result.freed)} · using ${fileSize(result.bytes)}`; }
+  catch (error) { $('preview-cache-usage').textContent = error.message; }
+  finally { $('preview-cache-clear').disabled = false; }
+};
 $('settings-open').onclick = () => openSettings();
 $('copy-settings').onclick = () => openSettings('metadata');
 $('settings-folder').onclick = () => { void api.settingsFolder().catch(error => { $('settings-status').textContent = error.message; }); };

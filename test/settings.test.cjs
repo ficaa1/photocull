@@ -86,3 +86,9 @@ test('unreadable settings are retained and a deleted active preset does not lock
   const recovered=new SettingsStore(dir);await recovered.init();assert.equal(recovered.value.activePreset,'standard');assert.ok(recovered.warning);
   await recovered.update({copyXmp:true});assert.equal(recovered.value.copyXmp,true);
 });
+
+test('preview cache size defaults to 2 GB and only accepts the offered sizes', () => {
+  assert.equal(normalizeSettings({}).previewCacheGB, 2);
+  assert.equal(normalizeSettings({ previewCacheGB: 10 }).previewCacheGB, 10);
+  for (const value of [0, 3, '5', -1]) assert.throws(() => normalizeSettings({ previewCacheGB: value }), /Invalid preview cache size/);
+});

@@ -110,6 +110,12 @@ async function main() {
     await page.locator('#metadata-results:not([hidden])').waitFor();
     assert.match(await page.locator('#metadata-results').textContent(), /written/);
     assert.doesNotMatch(await page.locator('#metadata-results').textContent(), /Could not write/);
+    // The preview cache reports its size and can be cleared from Settings.
+    await page.locator('[data-settings-tab="general"]').click();
+    await page.waitForFunction(() => /^Using \d/.test(document.querySelector('#preview-cache-usage').textContent));
+    assert.equal(await page.locator('#preview-cache-limit').inputValue(), '2');
+    await page.locator('#preview-cache-clear').click();
+    await page.waitForFunction(() => /^Cleared \d/.test(document.querySelector('#preview-cache-usage').textContent));
     await page.locator('#settings-dialog .close-dialog').click();
     await page.evaluate(folder => window.loadTestFolder(folder), photos);
     assert.equal(await page.locator('#count-pick').textContent(), '1');
@@ -177,7 +183,7 @@ async function main() {
     assert.deepEqual(errors, []);
     const stats = await page.evaluate(() => window.photocull.stats());
     const report = { passed: true, imageCount: Number(await page.locator('#count-all').textContent()), renderedGridCards: cardCount,
-      checks: ['RAW preview display', 'keyboard picks and ratings', 'auto advance', 'undo/redo', 'reject', '100% zoom toggle', 'virtual grid', 'shift-click and batch undo', 'keyboard range, toggle and select all', 'marquee selection', 'batch trash, restore and delete prompt', 'pick filter', 'XMP export', 'reopen persistence', 'delete rejects', 'trash, restore and undo', 'permanent delete prompt', 'search empty state', 'shortcut help'], stats, errors };
+      checks: ['RAW preview display', 'keyboard picks and ratings', 'auto advance', 'undo/redo', 'reject', '100% zoom toggle', 'virtual grid', 'shift-click and batch undo', 'keyboard range, toggle and select all', 'marquee selection', 'batch trash, restore and delete prompt', 'pick filter', 'XMP export', 'reopen persistence', 'delete rejects', 'trash, restore and undo', 'permanent delete prompt', 'search empty state', 'shortcut help', 'preview cache usage and clear'], stats, errors };
     await fs.writeFile(path.join(screenshots, 'ui-smoke.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report, null, 2));
   } finally {

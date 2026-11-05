@@ -19,6 +19,10 @@ function orient(image, orientation) {
   if ([2, 4, 5, 7].includes(orientation)) image = image.flop();
   return angle ? image.rotate(angle) : image;
 }
+function touch(...files) {
+  const now = new Date();
+  for (const file of files) void fs.utimes(file, now, now).catch(() => {});
+}
 function chooseCandidate(candidates, edge) {
   const sorted = candidates.toSorted((a, b) => Math.max(a.width, a.height) - Math.max(b.width, b.height));
   return sorted.find(c => Math.max(c.width, c.height) >= edge) || sorted.at(-1) || null;
@@ -228,6 +232,8 @@ class PreviewService {
       try {
         const [data, info] = await Promise.all([fs.readFile(file), fs.readFile(infoFile, 'utf8').then(JSON.parse)]);
         await sharp(data).metadata();
+        // Pruning removes the oldest mtimes first; touching on use makes it least-recently-used.
+        touch(file, infoFile);
         this.remember(key, data, info); if (revision === this.revision) this.setInfo(item, kind, info); this.stats.diskHits++; return data;
       } catch (e) { if (TRANSIENT.has(e.code) && e.code !== 'ENOENT') throw e; }
       const rejected = new Set(); let regeneratedRender = false;
@@ -293,14 +299,36 @@ class PreviewService {
     }
     return this.metadataJobs.get(key).then(data => ({ ...data, ...this.info(item, kind) }));
   }
-  async prune() {
-    const now = Date.now(); if (now - this.lastPrune < 60000) return; this.lastPrune = now;
-    const names = await fs.readdir(this.cacheDir);
-    const entries = await Promise.all(names.filter(n => !n.endsWith('.tmp') && !n.endsWith('.failure.json')).map(async name => {
+  async cacheFiles({ failures = false } = {}) {
+    const names = await fs.readdir(this.cacheDir).catch(error => { if (error.code === 'ENOENT') return []; throw error; });
+    const entries = await Promise.all(names.filter(n => !n.endsWith('.tmp') && (failures || !n.endsWith('.failure.json'))).map(async name => {
       const file = path.join(this.cacheDir, name), info = await fs.stat(file).catch(() => null);
       return info?.isFile() ? { file, bytes: info.size, modified: info.mtimeMs } : null;
     }));
-    const files = entries.filter(Boolean).sort((a, b) => a.modified - b.modified);
+    return entries.filter(Boolean);
+  }
+  async diskUsage() {
+    return { bytes: (await this.cacheFiles({ failures: true })).reduce((n, f) => n + f.bytes, 0), limit: this.maxDiskBytes };
+  }
+  async setDiskLimit(bytes) {
+    if (!Number.isSafeInteger(bytes) || bytes <= 0) throw new Error('Invalid preview cache size.');
+    const lower = bytes < this.maxDiskBytes;
+    this.maxDiskBytes = bytes;
+    if (lower) await this.prune(true);
+  }
+  // Removes every cached file, failure records included so blocked RAWs get
+  // another try. In-flight temporary files are left to their writers; anything
+  // still needed is regenerated on the next request.
+  async clearDisk() {
+    const files = await this.cacheFiles({ failures: true });
+    let freed = 0;
+    await Promise.all(files.map(f => fs.rm(f.file, { force: true }).then(() => { freed += f.bytes; }, () => {})));
+    this.inventories.clear();
+    return { freed, ...await this.diskUsage() };
+  }
+  async prune(force = false) {
+    const now = Date.now(); if (!force && now - this.lastPrune < 60000) return; this.lastPrune = now;
+    const files = (await this.cacheFiles()).sort((a, b) => a.modified - b.modified);
     let total = files.reduce((n, f) => n + f.bytes, 0);
     for (const file of files) {
       if (total <= this.maxDiskBytes) break;

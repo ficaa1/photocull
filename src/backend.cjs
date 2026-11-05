@@ -62,7 +62,8 @@ async function start() {
   const transfers = new TransferService({ onProgress: value => send('copy-progress', value), captureDate: item => previews.metadata(item).then(data => data.captured) });
   const devices = new DeviceMonitor({ onChange: value => send('devices-changed', value),
     ...(smoke ? { discover: async () => process.env.PHOTOCULL_TEST_DEVICES ? JSON.parse(await fs.readFile(process.env.PHOTOCULL_TEST_DEVICES, 'utf8')) : [] } : {}) });
-  previews = new PreviewService(path.join(dataDir, 'previews'), { rendering: settings.value.rawRendering, onState: status => send('preview-state', status) });
+  const GB = 1024 ** 3;
+  previews = new PreviewService(path.join(dataDir, 'previews'), { rendering: settings.value.rawRendering, maxDiskBytes: settings.value.previewCacheGB * GB, onState: status => send('preview-state', status) });
 
   const onCard = async folder => {
     const real = await fs.realpath(folder);
@@ -104,6 +105,7 @@ async function start() {
     'settings': async patch => {
       const snapshot = patch === undefined || patch === null ? settings.snapshot() : await settings.update(patch);
       if (previews.policy !== snapshot.rawRendering) previews.setPolicy(snapshot.rawRendering);
+      if (previews.maxDiskBytes !== snapshot.previewCacheGB * GB) await previews.setDiskLimit(snapshot.previewCacheGB * GB);
       return snapshot;
     },
     'save-preset': (name, value) => settings.savePreset(name, value),
@@ -113,6 +115,8 @@ async function start() {
       if (value !== undefined && value !== null) { await settings.update({ rawRendering: value }); previews.setPolicy(value); }
       return { rawRendering: previews.policy, revision: previews.revision };
     },
+    'preview-cache': () => previews.diskUsage(),
+    'clear-preview-cache': () => previews.clearDisk(),
     'retry-preview': async (session, id) => { await previews.retry(library.item(session, id)); },
     'focus': (session, ids) => {
       if (!Array.isArray(ids) || ids.length > 8) throw new Error('Invalid focus selection.');
