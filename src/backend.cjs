@@ -71,9 +71,9 @@ async function start() {
   };
 
   const settings = new SettingsStore(dataDir); await settings.init();
-  const library = new Library(dataDir, { settings: () => settings.value });
+  const library = new Library(dataDir, { settings: () => settings.value, recipeSettings: id => recipes.get(id)?.settings, onWarning: warning => send('sidecar-warning', warning) });
   let previews;
-  const transfers = new TransferService({ onProgress: value => send('copy-progress', value), captureDate: item => previews.metadata(item).then(data => data.captured) });
+  const transfers = new TransferService({ recipeSettings: id => recipes.get(id)?.settings, onProgress: value => send('copy-progress', value), captureDate: item => previews.metadata(item).then(data => data.captured) });
   const backups = new BackupService(dataDir, { onProgress: value => send('backup-progress', value) });
   const devices = new DeviceMonitor({ discover: async () => { const found=await discoverDevices(settings.value);for(const device of found)device.backup=await backups.snapshot(device.root,'volume:'+device.identity).catch(()=>null);return found; }, onChange: value => send('devices-changed', value),
     ...(smoke ? { discover: async () => process.env.PHOTOCULL_TEST_DEVICES ? JSON.parse(await fs.readFile(process.env.PHOTOCULL_TEST_DEVICES, 'utf8')) : [] } : {}) });

@@ -50,8 +50,8 @@ function groupFiles(files) {
 const developSummary = develop => ({ developed: !!develop?.tiff && !develop?.missing, externalEdit: !!develop?.editedBy && !develop?.missing, editedBy: develop?.editedBy ?? null, tiff: develop?.tiff ?? null, handoffMissing: !!develop?.missing, developRevision: develop?.revision ?? 0, recipe: develop?.recipe ?? null, adjusted: !!develop?.settings });
 
 class Library {
-  constructor(dataDir, { settings = () => DEFAULTS } = {}) {
-    this.settings = settings;
+  constructor(dataDir, { settings = () => DEFAULTS, recipeSettings = () => null, onWarning = () => {} } = {}) {
+    this.settings = settings; this.recipeSettings = recipeSettings; this.onWarning = onWarning;
     this.dataDir = dataDir;
     this.sessions = new Map();
     this.writes = Promise.resolve();
@@ -86,6 +86,7 @@ class Library {
       catch (e) { warnings.push(`${f.name}: ${e.message}`); return null; }
     });
     const items = groupFiles(stats.filter(Boolean));
+    let imported = false; const unsynced = [];
     const store = path.join(this.dataDir, 'sessions', hash(folder + ':' + recursive) + '.json');
     let saved = {};
     try { saved = JSON.parse(await fs.readFile(store, 'utf8')).decisions ?? {}; }
@@ -93,34 +94,41 @@ class Library {
     await mapLimit(items, 8, async item => {
       const cached = saved[item.id];
       const valid = cached?.fingerprint === item.fingerprint;
-      if (valid) Object.assign(item, decision(cached), { modified: cached.modified || 0, edited: cached.edited ?? (cached.flag !== 'none' || cached.rating > 0), develop: developState(resolveDevelop(cached.develop, item.path)) });
-      const sidecars = [];
+      if (valid) Object.assign(item, decision(cached), { modified: cached.modified || 0, edited: cached.edited ?? (cached.flag !== 'none' || cached.rating > 0), develop: developState(resolveDevelop(cached.develop, item.path, folder)) });
+      const sidecars = [], existingSidecars = [];
       for (const file of item.sidecars) {
         try {
           const stat = await fs.lstat(file);
+          existingSidecars.push({ file, modified: stat.mtimeMs });
           if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 2 * 1024 * 1024) throw new Error('Unsupported sidecar');
           const state = readXmp(await fs.readFile(file, 'utf8'), this.settings(), { portable: true });
+          if (state.warning) warnings.push(`${item.name}: ${state.warning}`);
           if (state.develop) {
             try { if (state.develop.settings) state.develop.settings = checkSettings(state.develop.settings); }
             catch { delete state.develop; warnings.push(`${item.name}: Invalid PhotoCull develop settings in XMP; decisions were still imported.`); }
           }
+          existingSidecars.at(-1).modified = Math.max(state.modified, stat.mtimeMs);
           sidecars.push({ file, state, modified: Math.max(state.modified, stat.mtimeMs) });
         } catch (e) { if (e.code !== 'ENOENT') warnings.push(`${item.name}: XMP could not be read (${path.basename(file)}).`); }
       }
       // Ties favor the cached session, then the Lightroom filename. Both naming
       // styles are read; future writes use the newest existing sidecar.
       sidecars.sort((a, b) => b.modified - a.modified || item.sidecars.indexOf(a.file) - item.sidecars.indexOf(b.file));
+      existingSidecars.sort((a, b) => b.modified - a.modified || item.sidecars.indexOf(a.file) - item.sidecars.indexOf(b.file));
+      if (existingSidecars.length) item.sidecar = existingSidecars[0].file;
       if (sidecars.length) {
-        const winner = sidecars[0]; item.sidecar = winner.file;
+        const winner = sidecars[0];
         if (!valid || winner.modified > item.modified) {
           const state = winner.state;
           Object.assign(item, decision({ ...item, ...state }), { modified: winner.modified });
+          imported = true;
           if (Object.hasOwn(state, 'develop')) {
-            const resolved = resolveDevelop(state.develop, item.path);
+            const resolved = resolveDevelop(state.develop, item.path, folder);
             item.develop = developState(resolved);
           }
         }
       }
+      if (valid && item.modified > (sidecars[0]?.modified || 0) && (item.edited || item.develop)) unsynced.push(item);
       if (item.develop?.tiff) item.develop.missing = !await fs.stat(item.develop.tiff).then(s => s.isFile(), () => false);
     });
     if (generation !== this.scanGeneration) throw new Error('Folder scan was superseded.');
@@ -129,6 +137,8 @@ class Library {
     // Image jobs already in flight retain their own file references.
     this.sessions.clear();
     this.sessions.set(session.id, session);
+    if (imported) await this.save(session);
+    if (unsynced.length) this.queueSidecars(session, unsynced);
     return this.publicSession(session);
   }
 
@@ -157,7 +167,7 @@ class Library {
     const write = this.writes.catch(() => {}).then(async () => {
       this.pendingSaves.delete(s.id);
       const data = JSON.stringify({ version: 1, folder: s.folder, decisions: Object.fromEntries(s.items.map(i =>
-        [i.id, { ...decision(i), fingerprint: i.fingerprint, modified: i.modified, edited: i.edited, ...(i.develop ? { develop: portableDevelop(i.develop, i.path) } : {}) }])) });
+        [i.id, { ...decision(i), fingerprint: i.fingerprint, modified: i.modified, edited: i.edited, ...(i.develop ? { develop: portableDevelop(i.develop, i.path, s.folder) } : {}) }])) });
       await fs.mkdir(path.dirname(s.store), { recursive: true });
       await atomicWrite(s.store, data); this.stats.sessionWrites++;
     });
@@ -165,11 +175,18 @@ class Library {
     return write;
   }
 
+  sidecarItem(s, item) {
+    const develop = item.develop ? { ...item.develop, settings: item.develop.settings ?? this.recipeSettings(item.develop.recipe) ?? null } : null;
+    return { ...item, photoRoot: s.folder, develop };
+  }
+
   changed(s, items) {
-    for (const item of items) {
-      item.modified = Math.max(Date.now(), (item.modified || 0) + 1);
-      this.pendingSidecars.set(s.id + ':' + item.id, { s, item });
-    }
+    for (const item of items) item.modified = Math.max(Date.now(), (item.modified || 0) + 1);
+    this.queueSidecars(s, items);
+  }
+
+  queueSidecars(s, items) {
+    for (const item of items) this.pendingSidecars.set(s.id + ':' + item.id, { s, item });
     clearTimeout(this.sidecarTimer);
     this.sidecarTimer = setTimeout(() => { void this.flushSidecars(); }, 250);
     this.sidecarTimer.unref?.();
@@ -179,17 +196,25 @@ class Library {
     clearTimeout(this.sidecarTimer);
     const pending = [...this.pendingSidecars.values()]; this.pendingSidecars.clear();
     this.sidecarWrites = this.sidecarWrites.catch(() => {}).then(async () => {
+      const owners = new Map();
+      for (const { s } of pending) if (!owners.has(s.id)) {
+        const counts = new Map();
+        for (const item of s.items) counts.set(item.sidecar, (counts.get(item.sidecar) || 0) + 1);
+        owners.set(s.id, counts);
+      }
       await mapLimit(pending, 3, async ({ s, item }) => {
         if (!s.byId.has(item.id) || !shouldWriteSidecars(this.settings(), s.removable)) return;
         try {
           const root = await fs.stat(s.folder);
           if (`${root.dev}:${root.ino}` !== s.folderId || await fs.realpath(s.folder) !== s.folder) throw new Error('Photo folder changed; reopen it before writing XMP.');
-          if (s.items.filter(i => i.sidecar === item.sidecar).length > 1) throw new Error('Multiple photos share this sidecar name.');
-          await writeXmp(item.sidecar, { ...item, develop: item.develop || null }, this.settings());
+          const source = await fs.lstat(item.path);
+          if (!source.isFile() || source.isSymbolicLink() || `${source.dev}:${source.ino}` !== item.fileId || source.size !== item.size || source.mtimeMs !== item.mtimeMs) throw new Error('Photo changed; reopen it before writing XMP.');
+          if (owners.get(s.id).get(item.sidecar) > 1) throw new Error('Multiple photos share this sidecar name.');
+          await writeXmp(item.sidecar, this.sidecarItem(s, item), this.settings());
           this.stats.sidecarWrites++;
         } catch (e) {
           const warning = `${item.name}: XMP not written: ${e.message}`;
-          if (!s.warnings.includes(warning)) s.warnings.push(warning);
+          if (!s.warnings.includes(warning)) { s.warnings.push(warning); this.onWarning({ session: s.id, message: warning }); }
         }
       });
     });
@@ -299,7 +324,7 @@ class Library {
     await this.flushSidecars();
     const s = this.get(sessionId);
     // Snapshot decisions so keystrokes during export do not change the current batch.
-    const items = s.items.filter(i => i.edited || i.modified && i.develop).map(i => ({ ...i, ...decision(i) }));
+    const items = s.items.filter(i => i.edited || i.modified && i.develop).map(i => this.sidecarItem(s, i));
     const failures = [], paths = new Map();
     // A same-stem second RAW format must never silently overwrite another decision.
     for (const item of s.items) {
@@ -325,6 +350,7 @@ class Library {
   // XMP sidecars are listed separately with their owners, because same-stem
   // RAWs share one; delete a sidecar only once all its owners are gone.
   async deletionPlan(sessionId, ids) {
+    await this.flushSidecars();
     const s = this.get(sessionId);
     if (!Array.isArray(ids) || !ids.length || ids.length > 100_000) throw new Error('Choose photos to delete.');
     const changed = 'Changed since the folder was opened; open the folder again.';

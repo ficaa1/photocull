@@ -151,6 +151,7 @@ function receiveDevices(snapshot) {
   for (const id of state.autoOpened) if (!state.devices.some(d => d.id === id)) state.autoOpened.delete(id);
 }
 api.onDevices(receiveDevices);
+api.onSidecarWarning(warning => { if (state.session?.id === warning.session) toast(warning.message); });
 void api.devices().then(receiveDevices).catch(error => { state.deviceError = error.message; renderDevices(); });
 
 function renderCounts() {

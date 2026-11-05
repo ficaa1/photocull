@@ -49,10 +49,12 @@ async function cleanup(library, sessionId, token, allowUnexported = false, onlyI
       deleted.push(entry.path);
     } catch (e) { failures.push({ path: entry.path, error: e.message }); }
   }
+  const changed = session.items.filter(item => item.develop?.handoffs.some(r => deleted.includes(r.path)));
   for (const item of session.items) if (item.develop) {
     item.develop.handoffs = item.develop.handoffs.filter(r => !deleted.includes(r.path));
     if (deleted.includes(item.develop.tiff)) { item.develop.tiff = null; item.develop.editedBy = null; item.develop.exported = false; item.develop.revision++; }
   }
+  library.changed(session, changed);
   await library.save(session);
   return { deleted, failures, items: session.items.map(i => ({ id: i.id, tiff: i.develop?.tiff || null, developed: !!i.develop?.tiff, externalEdit: !!i.develop?.editedBy, editedBy: i.develop?.editedBy || null, developRevision: i.develop?.revision || 0 })) };
 }

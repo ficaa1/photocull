@@ -62,7 +62,7 @@ test('newest sidecar wins on reopen; a newer local decision and timestamp ties k
   reopened = await new Library(data).scan(photos);
   assert.equal(reopened.items[0].flag, 'reject'); assert.equal(reopened.items[0].rating, 5);
   const store = library.get(session.id).store, saved = JSON.parse(await fs.readFile(store, 'utf8'));
-  saved.decisions[id].modified = local + 10000; await fs.writeFile(store, JSON.stringify(saved));
+  saved.decisions[id].flag = 'pick'; saved.decisions[id].rating = 2; saved.decisions[id].modified = local + 10000; await fs.writeFile(store, JSON.stringify(saved));
   reopened = await new Library(data).scan(photos);
   assert.equal(reopened.items[0].flag, 'pick', 'Equal timestamps favor the session');
 });
@@ -114,6 +114,31 @@ test('relative handoffs, recipe settings, editor and export state relocate with 
   assert.equal(resolveDevelop({ tiff: '../escape.tif' }, path.join(moved, 'photo.ARW')).tiff, null);
 });
 
+test('recursive photo trees relocate root handoff folders and include effective custom recipe settings', async t => {
+  const { root, photos, data } = await setup(t, {}, ['top.ARW']);
+  await fs.mkdir(path.join(photos, 'DCIM')); await fs.writeFile(path.join(photos, 'DCIM', 'nested.ARW'), 'photo');
+  await fs.mkdir(path.join(photos, 'Edits')); const tiff = path.join(photos, 'Edits', 'nested.tif'); await fs.writeFile(tiff, 'tiff');
+  const library = new Library(data, { recipeSettings: id => id === 'custom-look' ? { light: { contrast: 12 } } : null });
+  const s = await library.scan(photos, true), item = s.items.find(i => i.name === 'nested.ARW');
+  await library.developSet(s.id, [item.id], { recipe: 'custom-look' }); await library.developMark(s.id, item.id, { tiff }); await library.close();
+  const xml = await fs.readFile(path.join(photos, 'DCIM', 'nested.xmp'), 'utf8');
+  assert.equal(state(xml).develop.tiff, '../Edits/nested.tif'); assert.equal(state(xml).develop.settings.light.contrast, 12);
+  const moved = path.join(root, 'moved'); await fs.rename(photos, moved);
+  const fresh = new Library(path.join(root, 'other-state')), again = await fresh.scan(moved, true);
+  assert.equal(again.items.find(i => i.name === 'nested.ARW').tiff, path.join(moved, 'Edits', 'nested.tif'));
+});
+
+test('malformed alternate sidecars are respected and invalid develop settings cannot block opening decisions', async t => {
+  const { photos, library } = await setup(t);
+  const darktable = path.join(photos, 'photo.ARW.xmp'); await fs.writeFile(darktable, 'not xml');
+  let s = await library.scan(photos); assert.equal(library.item(s.id, s.items[0].id).sidecar, darktable);
+  await library.decide(s.id, s.items[0].id, { flag: 'pick' }); await library.flushSidecars();
+  assert.equal(await fs.readFile(darktable, 'utf8'), 'not xml'); assert.ok(library.get(s.id).warnings.some(w => /not written/.test(w)));
+  assert.equal((await fs.readdir(photos)).includes('photo.xmp'), false);
+  await fs.writeFile(darktable, updateXmp('', { flag: 'pick', rating: 4, modified: Date.now() + 10000, develop: { settings: { light: { exposure: 100 } } } }));
+  s = await library.scan(photos); assert.equal(s.items[0].flag, 'pick'); assert.equal(s.items[0].rating, 4); assert.equal(s.items[0].adjusted, false);
+});
+
 test('card default avoids source XMP and copies portable decisions automatically; Never opts out', async t => {
   const { root, photos, library, setSettings } = await setup(t);
   const s = await library.scan(photos, false, { removable: true }), id = s.items[0].id;
@@ -159,4 +184,11 @@ test('300 decisions acknowledge durable local state without waiting for sidecar 
   const fresh = await new Library(path.join(photos, '..', 'second-laptop')).scan(photos);
   assert.ok(fresh.items.every(i => i.flag === 'pick' && i.rating === 4));
   t.diagnostic(`300 decisions acknowledged in ${elapsed.toFixed(1)} ms; ${library.stats.sessionWrites} local writes; ${ticks.length} event-loop ticks during sidecar flush`);
+});
+
+test('unsynced durable session decisions resume sidecar writing after reopening', async t => {
+  const { photos, data, library } = await setup(t, { writeSidecars: 'never' });
+  const s = await library.scan(photos); await library.decide(s.id, s.items[0].id, { flag: 'pick', rating: 5 });
+  const fresh = new Library(data); await fresh.scan(photos); await fresh.close();
+  assert.equal(state(await fs.readFile(path.join(photos, 'photo.xmp'), 'utf8')).rating, 5);
 });

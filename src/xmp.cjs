@@ -55,8 +55,10 @@ function readXmp(xml, settings, { portable = false } = {}) {
   result.modified = Date.parse(property(doc, 'modified', PHOTOCULL)) || 0;
   const state = property(doc, 'develop', PHOTOCULL);
   if (state) {
-    const value = JSON.parse(state);
-    if (value.version === 1 && (value.state === null || value.state && typeof value.state === 'object' && !Array.isArray(value.state))) result.develop = value.state;
+    try {
+      const value = JSON.parse(state);
+      if (value?.version === 1 && (value.state === null || value.state && typeof value.state === 'object' && !Array.isArray(value.state))) result.develop = value.state;
+    } catch { result.warning = 'Invalid PhotoCull develop data in XMP; decisions were still imported.'; }
   }
   return result;
 }
@@ -91,7 +93,7 @@ function patchProperties(xml, owned, description) {
     const local = parts.at(-1), ns = scopes[parts.length > 1 ? parts[0] : ''];
     const desc = ns === RDF && local === 'Description' && parent?.ns === RDF && parent?.local === 'RDF';
     if (parent?.desc && !owned.has(key(ns, local))) parent.replaceable = false;
-    const replaceable = desc && attrs.some(a => a[1].split(':').at(-1) === 'version' && scopes[a[1].split(':')[0]] === PHOTOCULL) && attrs.every(a => a[1] === 'xmlns' || a[1].startsWith('xmlns:') || a[1].split(':').at(-1) === 'about' && scopes[a[1].split(':')[0]] === RDF || owned.has(key(scopes[a[1].split(':')[0]], a[1].split(':')[1])));
+    const replaceable = desc && attrs.some(a => a[1].split(':').at(-1) === 'version' && scopes[a[1].split(':')[0]] === PHOTOCULL) && attrs.every(a => a[1] === 'xmlns' || a[1].startsWith('xmlns:') && [RDF, XMP, PHOTOCULL, DC].includes(a[2].slice(1, -1)) || a[1].split(':').at(-1) === 'about' && scopes[a[1].split(':')[0]] === RDF || owned.has(key(scopes[a[1].split(':')[0]], a[1].split(':')[1])));
     const remove = !stack.some(n => n.remove) && parent?.desc && owned.has(key(ns, local));
     if (desc && !stack.some(n => n.remove) && !remove) for (const attr of attrs) {
       const [prefix, field] = attr[1].split(':');
@@ -173,7 +175,7 @@ function updateXmp(xml, decision, settings) {
   scalar(PHOTOCULL, 'photocull', 'standardRating', metadata.writeRatings ? property(doc, 'Rating') : property(original, 'Rating'));
   scalar(PHOTOCULL, 'photocull', 'standardLabel', metadata.writeLabels ? property(doc, 'Label') : oldLabel);
   scalar(PHOTOCULL, 'photocull', 'modified', new Date(decision.modified || Date.now()).toISOString());
-  if (Object.hasOwn(decision, 'develop')) scalar(PHOTOCULL, 'photocull', 'develop', JSON.stringify({ version: 1, state: portableDevelop(decision.develop, decision.path) }));
+  if (Object.hasOwn(decision, 'develop')) scalar(PHOTOCULL, 'photocull', 'develop', JSON.stringify({ version: 1, state: decision.develop ? { ...portableDevelop(decision.develop, decision.path, decision.photoRoot), edited: !!decision.develop.editedBy } : null }));
   desc.setAttributeNS(XMLNS, 'xmlns:rdf', RDF);
   return patchProperties(xml || base, owned, new XMLSerializer().serializeToString(desc));
 }
@@ -206,26 +208,29 @@ async function writeXmp(file, decision, settings) {
 
 // Sidecars use slash-separated relative paths on every platform. Absolute paths
 // outside the photo tree stay absolute; never reinterpret a foreign drive path.
-function portablePath(file, photo) {
+function portablePath(file, photo, root) {
   if (typeof file !== 'string' || !photo) return file;
   const api = path.win32.isAbsolute(photo) && !path.posix.isAbsolute(photo) ? path.win32 : path;
   const relative = api.relative(api.dirname(photo), file);
-  return relative && relative !== '..' && !relative.startsWith('..' + api.sep) && !api.isAbsolute(relative) ? relative.split(api.sep).join('/') : file;
+  const inRoot = root && !api.relative(root, file).split(api.sep).includes('..') && !api.isAbsolute(api.relative(root, file));
+  return relative && (inRoot || relative !== '..' && !relative.startsWith('..' + api.sep) && !api.isAbsolute(relative)) ? relative.split(api.sep).join('/') : file;
 }
-function resolvePath(file, photo) {
+function resolvePath(file, photo, root = path.dirname(photo)) {
   if (typeof file !== 'string' || !file || file.includes('\0')) return null;
   if (path.isAbsolute(file) || path.win32.isAbsolute(file)) return file;
   const parts = file.split(/[\\/]/);
-  if (parts.includes('..')) return null;
-  return path.resolve(path.dirname(photo), ...parts);
+  const resolved = path.resolve(path.dirname(photo), ...parts), relative = path.relative(root, resolved);
+  if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) return null;
+  return resolved;
 }
-function portableDevelop(state, photo) {
+function portableDevelop(state, photo, root) {
   if (!state) return null;
-  return { ...state, tiff: portablePath(state.tiff, photo), handoffs: (state.handoffs || []).map(r => ({ ...r, path: portablePath(r.path, photo), realPath: portablePath(r.realPath, photo) })) };
+  const { missing, ...saved } = state;
+  return { ...saved, tiff: portablePath(state.tiff, photo, root), handoffs: (state.handoffs || []).map(r => ({ ...r, path: portablePath(r.path, photo, root), realPath: portablePath(r.realPath, photo, root) })) };
 }
-function resolveDevelop(state, photo) {
+function resolveDevelop(state, photo, root) {
   if (!state) return null;
-  return { ...state, tiff: resolvePath(state.tiff, photo), handoffs: (Array.isArray(state.handoffs) ? state.handoffs : []).map(r => ({ ...r, path: resolvePath(r.path, photo), realPath: resolvePath(r.realPath, photo) })) };
+  return { ...state, tiff: resolvePath(state.tiff, photo, root), handoffs: (Array.isArray(state.handoffs) ? state.handoffs : []).map(r => ({ ...r, path: resolvePath(r.path, photo, root), realPath: resolvePath(r.realPath, photo, root) })) };
 }
 function sidecarPaths(photo) { return [photo.slice(0, -path.extname(photo).length) + '.xmp', photo + '.xmp']; }
 async function writableSidecar(file) {

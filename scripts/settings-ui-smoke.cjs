@@ -33,7 +33,11 @@ async function main() {
     await page.waitForFunction(()=>document.querySelector('#settings-name-preview').textContent==='Trip_20260926_007.ARW');
     await page.locator('[data-settings-tab="metadata"]').click();await page.locator('#preset-name').fill('Travel');await page.locator('#preset-save').click();await page.waitForFunction(()=>document.querySelector('#metadata-preset').selectedOptions[0].textContent==='Travel');
     await page.locator('#settings-save').click();await page.locator('#settings-dialog').waitFor({state:'hidden'});
+<<<<<<< HEAD
     const settings=await page.evaluate(()=>window.photocull.settings());assert.equal(settings.metadata.creator,'Test Photographer & friends');assert.equal(settings.autoAdvance,false);assert.equal(settings.writeSidecars,'never');assert.equal(settings.colors[3].label,'To edit');checks.push('settings save and named preset include metadata, palette, and filename template');
+=======
+    const settings=await page.evaluate(()=>window.photocull.settings());assert.equal(settings.metadata.creator,'Alex & friends');assert.equal(settings.autoAdvance,false);assert.equal(settings.writeSidecars,'never');assert.equal(settings.colors[3].label,'To edit');checks.push('settings save and named preset include metadata, palette, filename template and XMP policy');
+>>>>>>> 1153e3b (Cover recursive handoffs, recipe portability and background write recovery)
     await page.keyboard.press('Alt+4');await page.keyboard.press('5');await page.keyboard.press('p');await page.waitForFunction(()=>document.querySelector('#count-pick').textContent==='1');
     assert.equal(await page.locator('#photo-name').textContent(),'a.ARW');assert.equal(await page.locator('#color-labels button[aria-label="Review"]').getAttribute('aria-pressed'),'true');
     await page.locator('#color-filter').selectOption('4');assert.equal(await page.locator('#view-count').textContent(),'1');await page.locator('#color-filter').selectOption('');checks.push('independent color shortcut, selected swatch, and color filter');

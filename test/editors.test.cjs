@@ -9,9 +9,10 @@ const { Library } = require('../src/library.cjs');
 const { inventory, cleanup } = require('../src/handoffs.cjs');
 const { planTiffs } = require('../src/develop-plan.cjs');
 async function fixture(t) {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'photocull-editors-')); t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'photocull-editors-'));
   const photos=path.join(dir,'photos');await fs.mkdir(photos);await fs.writeFile(path.join(photos,'a.ARW'),'source');
   const library=new Library(path.join(dir,'state')), session=await library.scan(photos), id=session.items[0].id;
+  t.after(async()=>{await library.close();await fs.rm(dir,{recursive:true,force:true,maxRetries:5,retryDelay:100});});
   const file=path.join(dir,'hand off.tif');await fs.writeFile(file,'pixels');
   return {dir,photos,library,session,id,file};
 }
@@ -45,7 +46,7 @@ test('old edited sessions stay readable; new writes retain editor identity and h
   await reopened.developMark(session.id,f.id,{editedBy:'my-editor'});await reopened.developSet(session.id,[f.id],{settings:{light:{exposure:2}}});assert.equal(reopened.developGet(session.id,f.id).editedBy,'my-editor');
   const second=path.join(f.dir,'second.png');await fs.writeFile(second,'pixels');await reopened.developMark(session.id,f.id,{tiff:second});
   assert.equal(reopened.developGet(session.id,f.id).editedBy,null);assert.equal(reopened.developGet(session.id,f.id).handoffs.length,2);
-  const store=JSON.parse(await fs.readFile(reopened.get(session.id).store));assert.equal('edited' in store.decisions[f.id].develop,false);
+  const store=JSON.parse(await fs.readFile(reopened.get(session.id).store));assert.equal('edited' in store.decisions[f.id].develop,false);await reopened.close();
 });
 test('cleanup counts only recorded files, protects unexported edits, rechecks stamps, and preserves unrelated files', async t=>{
   const f=await fixture(t);await f.library.developMark(f.session.id,f.id,{tiff:f.file,editedBy:'custom'});

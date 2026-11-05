@@ -11,7 +11,7 @@
     subscribers.get(name).add(callback);
     return () => subscribers.get(name).delete(callback);
   };
-  const EVENTS = ['backup-progress','edit-shortcut', 'open-folder-shortcut', 'settings-shortcut', 'fullscreen-toggle', 'fullscreen-changed', 'devices-changed', 'copy-progress', 'preview-state', 'develop-progress', 'export-progress', 'lens-database-progress'];
+  const EVENTS = ['backup-progress','edit-shortcut', 'open-folder-shortcut', 'settings-shortcut', 'fullscreen-toggle', 'fullscreen-changed', 'devices-changed', 'copy-progress', 'sidecar-warning', 'preview-state', 'develop-progress', 'export-progress', 'lens-database-progress'];
 
   let backend, imageBase, platform, host, shell;
   if (tauri) {
@@ -139,6 +139,7 @@
     onFullscreen: callback => subscribe('fullscreen-changed', callback),
     onDevices: callback => subscribe('devices-changed', callback),
     onCopyProgress: callback => subscribe('copy-progress', callback),
+    onSidecarWarning: callback => subscribe('sidecar-warning', callback),
     onPreviewState: callback => subscribe('preview-state', callback),
     fullscreen: value => {
       if (typeof value !== 'boolean') return Promise.reject(new Error('Invalid fullscreen mode.'));

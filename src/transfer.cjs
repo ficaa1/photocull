@@ -28,7 +28,7 @@ async function existing(file) {
 }
 
 class TransferService {
-  constructor({ onProgress = () => {}, captureDate = async () => null, metadataWriter } = {}) { this.onProgress = onProgress; this.captureDate = captureDate; this.active = null; this.metadataWriter = metadataWriter || new MetadataWriter(); }
+  constructor({ onProgress = () => {}, captureDate = async () => null, recipeSettings = () => null, metadataWriter } = {}) { this.recipeSettings = recipeSettings; this.onProgress = onProgress; this.captureDate = captureDate; this.active = null; this.metadataWriter = metadataWriter || new MetadataWriter(); }
   async copy(session, destination, { includeJpeg = false, includeXmp = false, metadataSettings, naming, folders, embedMetadata = false, verify = false } = {}) {
     if (this.active) throw new Error('Another copy is already running.');
     const validated = normalizeSettings({ naming: naming || {}, folders: folders || {} });
@@ -79,7 +79,7 @@ class TransferService {
             if (info.size > 2 * 1024 ** 2) throw new Error('Existing XMP exceeds 2 MB.');
             xml = await fs.readFile(item.sidecar, 'utf8');
           } catch (error) { if (error.code !== 'ENOENT') throw error; }
-          const bytes = Buffer.from(updateXmp(xml, { ...item, develop: item.develop || null }, options.metadataSettings));
+          const bytes = Buffer.from(updateXmp(xml, { ...item, photoRoot: session.folder, develop: item.develop ? { ...item.develop, settings: item.develop.settings ?? this.recipeSettings(item.develop.recipe) ?? null } : null }, options.metadataSettings));
           const darktable = item.sidecar === item.path + '.xmp';
           files.push({ bytes, relative: path.join(directory, renamed.stem + (darktable ? renamed.extension : '') + '.xmp') });
         }
@@ -134,7 +134,11 @@ class TransferService {
             }
             await output.sync();
             if ((await output.stat()).size !== (file.bytes?.length ?? file.stat.size)) throw new Error('Copy size did not match the source.');
-            if (file.bytes) { await output.close(); output = null; await fs.link(staging, target); created.push(target); }
+            if (file.bytes) {
+              await output.close(); output = null;
+              if (await existing(target)) throw Object.assign(new Error(`Already exists: ${file.relative}`), { code: 'CONFLICT' });
+              await fs.rename(staging, target); created.push(target);
+            }
           } finally {
             await Promise.allSettled([input?.close(), output?.close()]);
             if (file.bytes) await fs.rm(staging, { force: true });
