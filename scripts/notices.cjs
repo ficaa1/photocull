@@ -66,6 +66,9 @@ let output = `# Third-party notices\n\nReproduce offline with \`node scripts/not
 output += read('third-party/runtime-notices.md') + '\n';
 output += '## npm lockfile inventory\n\n| Package | Version | License | Scope |\n| --- | --- | --- | --- |\n' + rows(npm, [p=>p.name,p=>p.version,p=>p.license,p=>p.dev?'Build/test only':p.optional?'Runtime, platform optional':'Runtime']) + '\n\n';
 output += '## Rust lockfile inventory\n\nMetadata captured with `cargo metadata --locked --format-version 1`; reviewed license texts follow. MPL sources are supplied in `third-party/sources/`. Permissive alternatives are used where an expression offers them.\n\n| Crate | Version | License | Source |\n| --- | --- | --- | --- |\n' + rows(snapshot.packages,[p=>p.name,p=>p.version,p=>p.license,p=>p.repository || p.source]) + '\n\n';
+const exif = json('third-party/windows-exiftool-inventory.json');
+if (!npm.some(p => p.name === exif.package && p.version === exif.version)) throw new Error('Refresh Windows ExifTool binary inventory.');
+output += '## Windows ExifTool native runtime\n\nExact binaries from the locked npm tarball; license archive retained intact. Some embedded-component builds require source/provenance verification before release (marked below). Perl modules also retain their source notices inside node_modules.\n\n| Binary | License / review status | SHA-256 |\n| --- | --- | --- |\n' + rows(exif.binaries, [p=>p.file,p=>p.license,p=>p.sha256]) + '\n\n';
 output += '## Bundled Rust license texts\n\n';
 for (const id of Object.keys(snapshot.texts).sort()) {
   const users = snapshot.packages.filter(p=>p.licenses.some(l=>l.text===id)).map(p=>`${p.name} ${p.version}`).join(', ');

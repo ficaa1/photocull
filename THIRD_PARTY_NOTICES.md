@@ -779,6 +779,51 @@ Metadata captured with `cargo metadata --locked --format-version 1`; reviewed li
 | zvariant_utils | 4.2.0 | MIT | https://github.com/z-galaxy/zbus/ |
 | zvariant | 5.15.1 | MIT | https://github.com/z-galaxy/zbus/ |
 
+## Windows ExifTool native runtime
+
+Exact binaries from the locked npm tarball; license archive retained intact. Some embedded-component builds require source/provenance verification before release (marked below). Perl modules also retain their source notices inside node_modules.
+
+| Binary | License / review status | SHA-256 |
+| --- | --- | --- |
+| exiftool_files/lib/auto/Win32/API/API.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | e224356a2318a636fb61eaedb8f5ccba9b3db78e5f743391dc88a02c4eeb7aa5 |
+| exiftool_files/lib/auto/B/B.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | 29acb321d887ae5c2251c8d4d69f2aec7bc8d5ddd51279f738da0d49974883ea |
+| exiftool_files/lib/auto/MIME/Base64/Base64.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | 52608122dbf4eaf6ea2c229472fa7287ea518306409c6b7f7e2522d5e9406fd7 |
+| exiftool_files/lib/auto/IO/Compress/Brotli/Brotli.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices; MIT (Brotli) | 7a2d367a0ddea0c422647b85f51a43482679826d64b7616212d06bf3d3ef2b1e |
+| exiftool_files/lib/auto/Compress/Raw/Bzip2/Bzip2.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices; bzip2-1.0.6 | 61895e2854c95814aa62491f9aa84af968bcb78cf1c695f943ba85aa20a9949c |
+| exiftool_files/lib/auto/CryptX/CryptX.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later; LibTomCrypt/LibTomMath notices require verification | b1906a0514a2e970464fb07fe54762e0495e90c1f1dfaaae7e7f59c642e8e626 |
+| exiftool_files/lib/auto/Cwd/Cwd.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | 7d26a2568eff0769e37acc3e5d1746878dd6be40bf82fe921c693508267cf184 |
+| exiftool_files/lib/auto/Data/Dumper/Dumper.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | f9006622a076acc6cb2d7abf1a6887546cd83824dbb6ba0cd56c946f3446a3ee |
+| exiftool_files/lib/auto/Encode/Encode.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | 92c0c5714bca1c56a7e1db68aec152b7dbd31e94d5134e7d0564d005a0c9718d |
+| exiftool_files/lib/auto/Math/BigInt/FastCalc/FastCalc.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | 5e5420cf0127859738e15f54b9497455ff492a4bb546bbcf3dcf1189fceb463a |
+| exiftool_files/lib/auto/Fcntl/Fcntl.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | 77a850b7c59f732a92fa67f4b340fba6a23d51a83b01f4586d71e3484937efd7 |
+| exiftool_files/lib/auto/Win32API/File/File.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | b6423fa9e675642402c1311cf79c40d81793630d6e750a20fc74da13c103418b |
+| exiftool_files/lib/auto/Win32/FindFile/FindFile.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | 570366ff7c5c120d28d8d2719b76b91a08925ec77d18cf91986e832ad5b08d79 |
+| exiftool_files/lib/auto/File/Glob/Glob.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | aa6e4119bb1e4e617387ca98a918d6e2562565f8662790edd29cdd9c04b8a771 |
+| exiftool_files/lib/auto/Math/BigInt/GMP/GMP.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (wrapper); LGPL-3.0-or-later OR GPL-2.0-or-later (GMP) | 9b933a611c03049291baa282a72299fea6cc4d45895d17077a522bb0a2816de2 |
+| exiftool_files/lib/auto/Time/HiRes/HiRes.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | ac430a48020982e15d65b7bf7b0cd42600046a33386284c248b18eb0a25d54bc |
+| exiftool_files/lib/auto/IO/IO.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | cf531c8e8a3bf8ae8cc8330603126e289b7957f20e78e5f9b1f3bb47e4355eb1 |
+| exiftool_files/libgcc_s_seh-1.dll | GPL-3.0-or-later WITH GCC-exception-3.1 | 5c67505c405f717d59ff2c583a11f54300dc9bf1577713b5dbbd00588c957325 |
+| exiftool_files/liblzma-5__.dll | 0BSD / public domain (XZ liblzma; verify exact bundled build) | f8863edc9c330456f1914ab054ef1ec839042ca3e5f172019c53760880d550e0 |
+| exiftool_files/libstdc++-6.dll | GPL-3.0-or-later WITH GCC-exception-3.1 | 03ad55828067fad4d24932ebb7a5b45e40c96255238775a6e02b1478e3b31d87 |
+| exiftool_files/libwinpthread-1.dll | MIT / BSD (winpthreads and MinGW notices) | 0d9f9c09d4219d6c74930de38e35c454add54ba7117748f8b4f65f8eac624a96 |
+| exiftool_files/lib/auto/Unicode/LineBreak/LineBreak.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices; bundled text-processing libraries require verification | f7f366274b3ac891a5dbc609a75edb85eb68d40dfa85bdc83de347dd3c1d3bd0 |
+| exiftool_files/lib/auto/Compress/Raw/Lzma/Lzma.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | 1abc3aae3a51618b1fdb91c4201f478368a1173a5930ace283ee7debe7c6dfc2 |
+| exiftool_files/lib/auto/Digest/MD5/MD5.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | cc22eba3612c5f39694769637777bcf50188ba8b1b070a368b202841f40d6526 |
+| exiftool_files/lib/auto/mro/mro.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | 8d930ee319cefe5453927b85af3dac915a431096b6d6bbe009ed9ec415761109 |
+| exiftool_files/perl532.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | cfb80cfad6b868dab14f6a12083e4f3cb5714ac23b1b0e5a96f09144b116ab4c |
+| exiftool_files/lib/auto/Time/Piece/Piece.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | f2ad5834793f4962b3215c52f030a14b187a99db17ade36d13dcaf8e55676ac5 |
+| exiftool_files/lib/auto/POSIX/POSIX.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | 7d7527795436c4b407ce2fdcaf79c8fd0cd2de66a04d872ab95ee3d08b25dade |
+| exiftool_files/lib/auto/re/re.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | 42ca12eaaaae8763b58865a0d91e51983fddbafec726aac9467ff44c073b25ac |
+| exiftool_files/lib/auto/PerlIO/scalar/scalar.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | 4b862b819a1c1277f7641d3974b2b524dd97d0feff82452426e8641597e18cb3 |
+| exiftool_files/lib/auto/Digest/SHA/SHA.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | 4f92b834957dac8f553f53dd32fe20de198337a4ebfcf412b378e2ac20e37a57 |
+| exiftool_files/lib/auto/Socket/Socket.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | 8d40a3a5ee3e4bc4007c26c6cef240bc087e4ab3c271d4fcef7c98e233218b2d |
+| exiftool_files/lib/auto/Storable/Storable.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | 2f533b64eb84c360466dde89b7c795b05c487e3cb1a706778f1dc1ccdbc47214 |
+| exiftool_files/lib/auto/List/Util/Util.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | 55be0a3d736c696614ad6455b1645b9d6701a7c7ef7867f0d49714f5f3887bba |
+| exiftool_files/lib/auto/Win32/Win32.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | aeb506447fb43806403c7817febf15d33a97a75caf88208bdd0ccf6186941cb9 |
+| exiftool_files/lib/auto/Compress/Raw/Zlib/Zlib.xs.dll | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices; Zlib | 14989f765eabe2b0eac205fdcba675d83853bb20e85b0a7efb1574bc5fce31d9 |
+| exiftool.exe | CC0-1.0 (Oliver Betz launcher) | 44b336d7596c3ec86577a5ff6d46e8388a56eb69a15f09987d4ac6cc3abbf75e |
+| exiftool_files/perl.exe | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | 4d61ebe19311dbf7b9710ac2c6c402e3cba3e23b63e8b82be88e471343bed52d |
+
 ## Bundled Rust license texts
 
 ### fiat-crypto 0.2.9
