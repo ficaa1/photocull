@@ -9,6 +9,7 @@ Reproduce offline with `node scripts/notices.cjs`. Inventory covers all lockfile
 | Node.js | Official Node 24 runtime used for staging | MIT plus embedded third-party licenses | Sidecar; exact version and complete Node-LICENSE.txt added during staging |
 | sharp | 0.35.5 | Apache-2.0 | Node addon |
 | sharp-libvips | 1.3.4, libvips 8.18.7 | LGPL-3.0-or-later plus component licenses below | Unmodified dynamically loaded DLL/dylib/so; platform dependencies recorded in versions.json |
+| Native lossy WebP encoder | webp 0.3.1 / libwebp-sys 0.9.6 | MIT OR Apache-2.0 wrapper; bundled libwebp BSD-3-Clause plus patent grant | Statically linked Rust/C export helper; libwebp-COPYING.txt and libwebp-PATENTS.txt supplied |
 | ExifTool | exiftool-vendored 39.1.0; platform binary from lockfile | MIT wrapper; ExifTool/Perl: Artistic-1.0-Perl OR GPL-1.0-or-later; Windows native components have additional terms | Separate process; Artistic option selected; copyright Phil Harvey. Preserve vendored package notices and Perl runtime licenses |
 | libraw-wasm-nothread | 1.6.0-nothread.1, LibRaw 0.22.1 | ISC wrapper; LibRaw CDDL-1.0 OR LGPL-2.1-or-later | CDDL-1.0 selected; unmodified static WASM; complete LibRaw and wrapper/build source archives in third-party/ |
 | Little CMS | 2.19.1 in WASM | MIT | Static WASM; notice supplied |
