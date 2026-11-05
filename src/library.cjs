@@ -3,7 +3,7 @@ const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const { mapLimit } = require('./queue.cjs');
 const { DEFAULTS } = require('./preferences.cjs');
-const { readXmp, writeXmp, atomicWrite } = require('./xmp.cjs');
+const { readXmp, writeXmp, atomicWrite, sidecarPaths, portableDevelop, resolveDevelop, shouldWriteSidecars } = require('./xmp.cjs');
 const { developState, checkSettings } = require('./develop.cjs');
 
 const RAW = new Set(['.arw', '.cr2', '.cr3', '.nef', '.nrw', '.dng', '.raf', '.orf', '.rw2', '.pef', '.srw', '.3fr', '.fff', '.iiq', '.rwl']);
@@ -40,14 +40,14 @@ function groupFiles(files) {
       records.push({ ...f, id: hash(f.path).slice(0, 24), raw,
         companion: companion?.path ?? null, companionSize: companion?.size, companionMtimeMs: companion?.mtimeMs,
         fingerprint: `${f.size}:${f.mtimeMs}:${companion?.size ?? ''}:${companion?.mtimeMs ?? ''}`,
-        sidecar: raw ? f.path.slice(0, -path.extname(f.path).length) + '.xmp' : f.path + '.xmp',
+        sidecar: sidecarPaths(f.path)[0], sidecars: sidecarPaths(f.path), modified: 0,
         flag: 'none', rating: 0, color: null, edited: false, source: raw ? 'Embedded RAW preview' : 'Original image' });
     }
   }
   return records.sort((a, b) => filenameOrder.compare(a.name, b.name) || a.path.localeCompare(b.path));
 }
 
-const developSummary = develop => ({ developed: !!develop?.tiff, externalEdit: !!develop?.editedBy, editedBy: develop?.editedBy ?? null, tiff: develop?.tiff ?? null, developRevision: develop?.revision ?? 0, recipe: develop?.recipe ?? null, adjusted: !!develop?.settings });
+const developSummary = develop => ({ developed: !!develop?.tiff && !develop?.missing, externalEdit: !!develop?.editedBy && !develop?.missing, editedBy: develop?.editedBy ?? null, tiff: develop?.tiff ?? null, handoffMissing: !!develop?.missing, developRevision: develop?.revision ?? 0, recipe: develop?.recipe ?? null, adjusted: !!develop?.settings });
 
 class Library {
   constructor(dataDir, { settings = () => DEFAULTS } = {}) {
@@ -56,11 +56,13 @@ class Library {
     this.sessions = new Map();
     this.writes = Promise.resolve();
     this.scanGeneration = 0;
-    this.pendingSaves = new Map(); this.stats = { sessionWrites: 0 };
+    this.pendingSaves = new Map(); this.stats = { sessionWrites: 0, sidecarWrites: 0 };
+    this.pendingSidecars = new Map(); this.sidecarWrites = Promise.resolve();
   }
 
   async scan(folder, recursive = false, { removable = false } = {}) {
     const generation = ++this.scanGeneration;
+    await this.flushSidecars();
     folder = await fs.realpath(folder);
     if (!(await fs.stat(folder)).isDirectory()) throw new Error('Choose a folder of images.');
     const files = [], warnings = [];
@@ -90,14 +92,36 @@ class Library {
     catch (e) { if (e.code !== 'ENOENT') warnings.push('Saved session could not be read; existing XMP will be used.'); }
     await mapLimit(items, 8, async item => {
       const cached = saved[item.id];
-      if (cached?.fingerprint === item.fingerprint) Object.assign(item, decision(cached), { edited: cached.edited ?? (cached.flag !== 'none' || cached.rating > 0), develop: developState(cached.develop) });
-      else {
+      const valid = cached?.fingerprint === item.fingerprint;
+      if (valid) Object.assign(item, decision(cached), { modified: cached.modified || 0, edited: cached.edited ?? (cached.flag !== 'none' || cached.rating > 0), develop: developState(resolveDevelop(cached.develop, item.path)) });
+      const sidecars = [];
+      for (const file of item.sidecars) {
         try {
-          const stat = await fs.lstat(item.sidecar);
+          const stat = await fs.lstat(file);
           if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 2 * 1024 * 1024) throw new Error('Unsupported sidecar');
-          Object.assign(item, readXmp(await fs.readFile(item.sidecar, 'utf8'), this.settings()));
-        } catch (e) { if (e.code !== 'ENOENT') warnings.push(`${item.name}: XMP could not be read.`); }
+          const state = readXmp(await fs.readFile(file, 'utf8'), this.settings(), { portable: true });
+          if (state.develop) {
+            try { if (state.develop.settings) state.develop.settings = checkSettings(state.develop.settings); }
+            catch { delete state.develop; warnings.push(`${item.name}: Invalid PhotoCull develop settings in XMP; decisions were still imported.`); }
+          }
+          sidecars.push({ file, state, modified: Math.max(state.modified, stat.mtimeMs) });
+        } catch (e) { if (e.code !== 'ENOENT') warnings.push(`${item.name}: XMP could not be read (${path.basename(file)}).`); }
       }
+      // Ties favor the cached session, then the Lightroom filename. Both naming
+      // styles are read; future writes use the newest existing sidecar.
+      sidecars.sort((a, b) => b.modified - a.modified || item.sidecars.indexOf(a.file) - item.sidecars.indexOf(b.file));
+      if (sidecars.length) {
+        const winner = sidecars[0]; item.sidecar = winner.file;
+        if (!valid || winner.modified > item.modified) {
+          const state = winner.state;
+          Object.assign(item, decision({ ...item, ...state }), { modified: winner.modified });
+          if (Object.hasOwn(state, 'develop')) {
+            const resolved = resolveDevelop(state.develop, item.path);
+            item.develop = developState(resolved);
+          }
+        }
+      }
+      if (item.develop?.tiff) item.develop.missing = !await fs.stat(item.develop.tiff).then(s => s.isFile(), () => false);
     });
     if (generation !== this.scanGeneration) throw new Error('Folder scan was superseded.');
     const root = await fs.stat(folder);
@@ -133,7 +157,7 @@ class Library {
     const write = this.writes.catch(() => {}).then(async () => {
       this.pendingSaves.delete(s.id);
       const data = JSON.stringify({ version: 1, folder: s.folder, decisions: Object.fromEntries(s.items.map(i =>
-        [i.id, { ...decision(i), fingerprint: i.fingerprint, edited: i.edited, ...(i.develop ? { develop: i.develop } : {}) }])) });
+        [i.id, { ...decision(i), fingerprint: i.fingerprint, modified: i.modified, edited: i.edited, ...(i.develop ? { develop: portableDevelop(i.develop, i.path) } : {}) }])) });
       await fs.mkdir(path.dirname(s.store), { recursive: true });
       await atomicWrite(s.store, data); this.stats.sessionWrites++;
     });
@@ -141,10 +165,43 @@ class Library {
     return write;
   }
 
+  changed(s, items) {
+    for (const item of items) {
+      item.modified = Math.max(Date.now(), (item.modified || 0) + 1);
+      this.pendingSidecars.set(s.id + ':' + item.id, { s, item });
+    }
+    clearTimeout(this.sidecarTimer);
+    this.sidecarTimer = setTimeout(() => { void this.flushSidecars(); }, 250);
+    this.sidecarTimer.unref?.();
+  }
+
+  async flushSidecars() {
+    clearTimeout(this.sidecarTimer);
+    const pending = [...this.pendingSidecars.values()]; this.pendingSidecars.clear();
+    this.sidecarWrites = this.sidecarWrites.catch(() => {}).then(async () => {
+      await mapLimit(pending, 3, async ({ s, item }) => {
+        if (!s.byId.has(item.id) || !shouldWriteSidecars(this.settings(), s.removable)) return;
+        try {
+          const root = await fs.stat(s.folder);
+          if (`${root.dev}:${root.ino}` !== s.folderId || await fs.realpath(s.folder) !== s.folder) throw new Error('Photo folder changed; reopen it before writing XMP.');
+          if (s.items.filter(i => i.sidecar === item.sidecar).length > 1) throw new Error('Multiple photos share this sidecar name.');
+          await writeXmp(item.sidecar, { ...item, develop: item.develop || null }, this.settings());
+          this.stats.sidecarWrites++;
+        } catch (e) {
+          const warning = `${item.name}: XMP not written: ${e.message}`;
+          if (!s.warnings.includes(warning)) s.warnings.push(warning);
+        }
+      });
+    });
+    return this.sidecarWrites;
+  }
+
+  async close() { await this.flushSidecars(); await this.writes; }
+
   // Develop state (see develop.cjs). Not part of undo: it is edited in the develop view, not by culling keys.
   developGet(sessionId, imageId) {
     const item = this.item(sessionId, imageId);
-    return { id: item.id, name: item.name, raw: item.raw, ...(item.develop || { recipe: null, settings: null, tiff: null, editedBy: null }), edited: !!item.develop?.editedBy };
+    return { id: item.id, name: item.name, raw: item.raw, ...(item.develop || { recipe: null, settings: null, tiff: null, editedBy: null }), edited: !!item.develop?.editedBy, missing: !!item.develop?.missing };
   }
 
   async developSet(sessionId, ids, { recipe = null, settings = null } = {}) {
@@ -153,7 +210,12 @@ class Library {
     if (recipe !== null && (typeof recipe !== 'string' || recipe.length > 80)) throw new Error('Unknown recipe.');
     settings = settings === null ? null : checkSettings(settings);
     const items = [...new Set(ids)].map(id => this.item(sessionId, id));
-    for (const item of items) item.develop = developState({ ...item.develop, recipe, settings, tiff: item.develop?.tiff ?? null, editedBy: item.develop?.editedBy ?? null });
+    for (const item of items) {
+      const missing = item.develop?.missing;
+      item.develop = developState({ ...item.develop, recipe, settings, tiff: item.develop?.tiff ?? null, editedBy: item.develop?.editedBy ?? null });
+      if (item.develop && missing) item.develop.missing = true;
+    }
+    this.changed(s, items);
     await this.save(s);
     return { items: items.map(item => ({ id: item.id, ...developSummary(item.develop) })) };
   }
@@ -179,6 +241,7 @@ class Library {
       next.handoffs = [...next.handoffs.filter(r => r.path !== next.tiff), record];
     }
     item.develop = developState(next);
+    this.changed(s, [item]);
     await this.save(s);
     return { id: item.id, ...developSummary(item.develop) };
   }
@@ -190,6 +253,7 @@ class Library {
     if (s.undo.length > 500) s.undo.shift();
     s.redo = [];
     Object.assign(item, after, { edited: true });
+    this.changed(s, [item]);
     await this.save(s);
     return { id: item.id, ...after, edited: true };
   }
@@ -209,6 +273,7 @@ class Library {
       Object.assign(items[index], after, { edited: true });
       return { id, ...after, edited: true };
     });
+    this.changed(s, items);
     await this.save(s);
     return { items: result };
   }
@@ -225,14 +290,16 @@ class Library {
       Object.assign(item, direction === 'redo' ? entry.after : entry.before, { edited: true });
       return { id: item.id, ...decision(item), edited: true };
     });
+    this.changed(s, items.map(i => this.item(sessionId, i.id)));
     await this.save(s);
     return action.batch ? { items } : items[0];
   }
 
   async exportXmp(sessionId, settings = this.settings()) {
+    await this.flushSidecars();
     const s = this.get(sessionId);
     // Snapshot decisions so keystrokes during export do not change the current batch.
-    const items = s.items.filter(i => i.edited).map(i => ({ ...i, ...decision(i) }));
+    const items = s.items.filter(i => i.edited || i.modified && i.develop).map(i => ({ ...i, ...decision(i) }));
     const failures = [], paths = new Map();
     // A same-stem second RAW format must never silently overwrite another decision.
     for (const item of s.items) {
@@ -283,9 +350,9 @@ class Library {
       photos.push({ id: item.id, name: item.name, files: [item.path, ...(item.companion && await lstat(item.companion) ? [item.companion] : [])] });
     }
     const owners = new Map();
-    for (const item of s.items) {
-      if (!owners.has(item.sidecar)) owners.set(item.sidecar, []);
-      owners.get(item.sidecar).push(item.id);
+    for (const item of s.items) for (const file of item.sidecars) {
+      if (!owners.has(file)) owners.set(file, []);
+      owners.get(file).push(item.id);
     }
     const sidecars = [];
     for (const [file, ids] of owners) {

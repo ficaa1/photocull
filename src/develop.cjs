@@ -146,10 +146,10 @@ function developState(input) {
   const state = {
     recipe: typeof input.recipe === 'string' && input.recipe.length <= 80 ? input.recipe : null,
     settings: isObject(input.settings) ? input.settings : null,
-    tiff: typeof input.tiff === 'string' && path.isAbsolute(input.tiff) ? input.tiff : null,
+    tiff: typeof input.tiff === 'string' && (path.isAbsolute(input.tiff) || path.win32.isAbsolute(input.tiff)) ? input.tiff : null,
     editedBy: Object.hasOwn(input, 'editedBy') ? (typeof input.editedBy === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(input.editedBy) ? input.editedBy : null) : input.edited === true ? 'dehancer' : null,
     exported: input.exported === true,
-    handoffs: Array.isArray(input.handoffs) ? input.handoffs.filter(r => isObject(r) && typeof r.path === 'string' && path.isAbsolute(r.path)).map(r => ({ path: r.path, realPath: typeof r.realPath === 'string' ? r.realPath : r.path, editedBy: typeof r.editedBy === 'string' ? r.editedBy : null, exported: r.exported === true, exportedStamp: fileStamp(r.exportedStamp), writtenStamp: fileStamp(r.writtenStamp) })) : [],
+    handoffs: Array.isArray(input.handoffs) ? input.handoffs.filter(r => isObject(r) && typeof r.path === 'string' && (path.isAbsolute(r.path) || path.win32.isAbsolute(r.path))).map(r => ({ path: r.path, realPath: typeof r.realPath === 'string' ? r.realPath : r.path, editedBy: typeof r.editedBy === 'string' ? r.editedBy : null, exported: r.exported === true, exportedStamp: fileStamp(r.exportedStamp), writtenStamp: fileStamp(r.writtenStamp) })) : [],
     revision: Number.isSafeInteger(input.revision) && input.revision >= 0 ? input.revision : 0,
   };
   if (state.tiff && !state.handoffs.some(r => r.path === state.tiff)) state.handoffs.push({ path: state.tiff, realPath: state.tiff, editedBy: state.editedBy, exported: state.exported, exportedStamp: null, writtenStamp: null });

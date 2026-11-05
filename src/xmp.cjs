@@ -1,4 +1,5 @@
 const fs = require('node:fs/promises');
+const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { normalizeSettings } = require('./preferences.cjs');
 const { DOMParser, XMLSerializer } = require('@xmldom/xmldom');
@@ -7,6 +8,7 @@ const RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
 const XMP = 'http://ns.adobe.com/xap/1.0/';
 const XMLNS = 'http://www.w3.org/2000/xmlns/';
 const DC = 'http://purl.org/dc/elements/1.1/';
+const PHOTOCULL = 'https://www.filipbiljic.com/photocull/ns/1.0/';
 const XML = 'http://www.w3.org/XML/1998/namespace';
 
 function parse(xml) {
@@ -21,37 +23,109 @@ function parse(xml) {
   return doc;
 }
 
-function property(doc, name) {
+function property(doc, name, namespace = XMP) {
   for (const desc of Array.from(doc.getElementsByTagNameNS(RDF, 'Description'))) {
-    if (desc.hasAttributeNS(XMP, name)) return desc.getAttributeNS(XMP, name);
-    const el = desc.getElementsByTagNameNS(XMP, name)[0];
+    if (desc.parentNode?.namespaceURI !== RDF || desc.parentNode.localName !== 'RDF') continue;
+    if (desc.hasAttributeNS(namespace, name)) return desc.getAttributeNS(namespace, name);
+    const el = Array.from(desc.childNodes).find(n => n.namespaceURI === namespace && n.localName === name);
     if (el) return el.textContent;
   }
   return '';
 }
 
-function readXmp(xml, settings) {
-  const doc = parse(xml);
-  const rating = Number(property(doc, 'Rating'));
-  const label = property(doc, 'Label');
+function readXmp(xml, settings, { portable = false } = {}) {
+  const doc = parse(xml), rawRating = property(doc, 'Rating'), label = property(doc, 'Label');
+  const rating = Number(rawRating);
   const pickLabel = settings ? settings.colors.find(c => c.id === settings.metadata.pickColor)?.label : 'Green';
   const result = { rating: rating > 0 && rating <= 5 ? Math.round(rating) : 0,
     flag: rating === -1 ? 'reject' : pickLabel && label === pickLabel ? 'pick' : 'none' };
-  if (settings) result.color = settings.colors.find(c => c.label && c.label === label)?.id || null;
+  if (settings) result.color = settings.colors.find(c => c.label && c.label === label)?.id || (label === '' ? '' : null);
+  if (!portable) return result;
+  const flag = property(doc, 'flag', PHOTOCULL);
+  const savedRating = Number(property(doc, 'rating', PHOTOCULL));
+  // Standard fields remain authoritative when another application changes them.
+  const ownRating = property(doc, 'standardRating', PHOTOCULL);
+  const ownLabel = property(doc, 'standardLabel', PHOTOCULL);
+  if (['pick', 'reject', 'none'].includes(flag) && rawRating === ownRating && label === ownLabel) {
+    result.flag = flag;
+    const color = property(doc, 'color', PHOTOCULL);
+    if (settings && (color === '' || color === 'none' || /^[1-8]$/.test(color))) result.color = color === 'none' ? null : color;
+    if (Number.isInteger(savedRating) && savedRating >= 0 && savedRating <= 5) result.rating = savedRating;
+  }
+  result.modified = Date.parse(property(doc, 'modified', PHOTOCULL)) || 0;
+  const state = property(doc, 'develop', PHOTOCULL);
+  if (state) {
+    const value = JSON.parse(state);
+    if (value.version === 1 && (value.state === null || value.state && typeof value.state === 'object' && !Array.isArray(value.state))) result.develop = value.state;
+  }
   return result;
+}
+
+// XML is validated with the DOM above, but only owned property spans are changed.
+// Keeping the rest of the original string avoids reformatting foreign develop data,
+// namespace aliases, comments, processing instructions or entity spellings.
+function patchProperties(xml, owned, description) {
+  const tokens = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<\/?[^>"']*(?:(?:"[^"]*"|'[^']*')[^>"']*)*>/g;
+  const stack = [], edits = [];
+  let match, insertion;
+  const key = (ns, name) => ns + ':' + name;
+  while ((match = tokens.exec(xml))) {
+    const token = match[0], start = match.index, end = tokens.lastIndex;
+    if (/^<[!?]/.test(token)) { if (stack.at(-1)?.desc) stack.at(-1).replaceable = false; continue; }
+    if (token.startsWith('</')) {
+      const node = stack.pop();
+      if (node.replaceable) {
+        for (let i = edits.length - 1; i >= 0; i--) if (edits[i][0] >= node.start) edits.splice(i, 1);
+        edits.push([node.start, end, '']);
+      } else if (node.remove) edits.push([node.start, end, '']);
+      if (node.ns === RDF && node.local === 'RDF' && insertion === undefined) insertion = start;
+      continue;
+    }
+    const parent = stack.at(-1), scopes = { ...parent?.scopes };
+    const attrs = [...token.matchAll(/\s+([^\s=/>]+)\s*=\s*("[^"]*"|'[^']*')/g)];
+    for (const attr of attrs) {
+      if (attr[1] === 'xmlns') scopes[''] = attr[2].slice(1, -1);
+      else if (attr[1].startsWith('xmlns:')) scopes[attr[1].slice(6)] = attr[2].slice(1, -1);
+    }
+    const name = /^<([^\s/>]+)/.exec(token)[1], parts = name.split(':');
+    const local = parts.at(-1), ns = scopes[parts.length > 1 ? parts[0] : ''];
+    const desc = ns === RDF && local === 'Description' && parent?.ns === RDF && parent?.local === 'RDF';
+    if (parent?.desc && !owned.has(key(ns, local))) parent.replaceable = false;
+    const replaceable = desc && attrs.some(a => a[1].split(':').at(-1) === 'version' && scopes[a[1].split(':')[0]] === PHOTOCULL) && attrs.every(a => a[1] === 'xmlns' || a[1].startsWith('xmlns:') || a[1].split(':').at(-1) === 'about' && scopes[a[1].split(':')[0]] === RDF || owned.has(key(scopes[a[1].split(':')[0]], a[1].split(':')[1])));
+    const remove = !stack.some(n => n.remove) && parent?.desc && owned.has(key(ns, local));
+    if (desc && !stack.some(n => n.remove) && !remove) for (const attr of attrs) {
+      const [prefix, field] = attr[1].split(':');
+      if (field && owned.has(key(scopes[prefix], field))) edits.push([start + attr.index, start + attr.index + attr[0].length, '']);
+    }
+    if (/\/\s*>$/.test(token)) {
+      if (remove || replaceable) {
+        for (let i = edits.length - 1; i >= 0; i--) if (edits[i][0] >= start) edits.splice(i, 1);
+        edits.push([start, end, '']);
+      }
+      if (ns === RDF && local === 'RDF' && insertion === undefined) {
+        edits.push([end - 2, end, '>' + description + '</' + name + '>']); insertion = -1;
+      }
+    } else stack.push({ scopes, ns, local, start, desc, remove, replaceable });
+  }
+  if (insertion >= 0) edits.push([insertion, insertion, description]);
+  if (insertion === undefined) throw new Error('Unsupported RDF structure; existing sidecar left intact.');
+  for (const [start, end, value] of edits.sort((a, b) => b[0] - a[0])) xml = xml.slice(0, start) + value + xml.slice(end);
+  return xml;
 }
 
 function updateXmp(xml, decision, settings) {
   const config = normalizeSettings(settings), metadata = config.metadata;
   const base = '<?xpacket begin="\uFEFF" id="W5M0MpCehiHzreSzNTczkc9d"?>\n' +
     `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="${RDF}"><rdf:Description rdf:about=""/></rdf:RDF></x:xmpmeta>\n<?xpacket end="w"?>`;
-  const doc = parse(xml || base), oldLabel = property(doc, 'Label');
+  const original = parse(xml || base), oldLabel = property(original, 'Label');
+  const doc = parse(base), owned = new Set();
   let desc = doc.getElementsByTagNameNS(RDF, 'Description')[0];
   if (!desc) {
     desc = doc.createElementNS(RDF, 'rdf:Description'); desc.setAttributeNS(RDF, 'rdf:about', '');
     doc.getElementsByTagNameNS(RDF, 'RDF')[0].appendChild(desc);
   }
   function remove(namespace, name) {
+    owned.add(namespace + ':' + name);
     for (const d of Array.from(doc.getElementsByTagNameNS(RDF, 'Description'))) d.removeAttributeNS(namespace, name);
     for (const el of Array.from(doc.getElementsByTagNameNS(namespace, name))) el.parentNode.removeChild(el);
   }
@@ -86,24 +160,35 @@ function updateXmp(xml, decision, settings) {
   if (metadata.caption) collection('description', 'Alt', [metadata.caption]);
   if (metadata.keywords.length) {
     const keywords = [];
-    for (const subject of Array.from(doc.getElementsByTagNameNS(DC, 'subject'))) {
+    for (const subject of Array.from(original.getElementsByTagNameNS(DC, 'subject'))) {
       for (const li of Array.from(subject.getElementsByTagNameNS(RDF, 'li'))) keywords.push(li.textContent);
     }
-    for (const d of Array.from(doc.getElementsByTagNameNS(RDF, 'Description'))) if (d.hasAttributeNS(DC, 'subject')) keywords.push(d.getAttributeNS(DC, 'subject'));
+    for (const d of Array.from(original.getElementsByTagNameNS(RDF, 'Description'))) if (d.hasAttributeNS(DC, 'subject')) keywords.push(d.getAttributeNS(DC, 'subject'));
     collection('subject', 'Bag', [...new Set([...keywords, ...metadata.keywords])]);
   }
-  return new XMLSerializer().serializeToString(doc);
+  scalar(PHOTOCULL, 'photocull', 'version', '1');
+  scalar(PHOTOCULL, 'photocull', 'flag', decision.flag || 'none');
+  scalar(PHOTOCULL, 'photocull', 'color', decision.color ?? 'none');
+  scalar(PHOTOCULL, 'photocull', 'rating', String(decision.rating || 0));
+  scalar(PHOTOCULL, 'photocull', 'standardRating', metadata.writeRatings ? property(doc, 'Rating') : property(original, 'Rating'));
+  scalar(PHOTOCULL, 'photocull', 'standardLabel', metadata.writeLabels ? property(doc, 'Label') : oldLabel);
+  scalar(PHOTOCULL, 'photocull', 'modified', new Date(decision.modified || Date.now()).toISOString());
+  if (Object.hasOwn(decision, 'develop')) scalar(PHOTOCULL, 'photocull', 'develop', JSON.stringify({ version: 1, state: portableDevelop(decision.develop, decision.path) }));
+  desc.setAttributeNS(XMLNS, 'xmlns:rdf', RDF);
+  return patchProperties(xml || base, owned, new XMLSerializer().serializeToString(desc));
 }
 
 async function atomicWrite(file, data) {
   const temp = `${file}.${randomUUID()}.tmp`;
   try {
-    await fs.writeFile(temp, data, { flag: 'wx' });
+    const handle = await fs.open(temp, 'wx');
+    try { await handle.writeFile(data); await handle.sync(); } finally { await handle.close(); }
     await fs.rename(temp, file);
   } finally { await fs.rm(temp, { force: true }).catch(() => {}); }
 }
 
 async function writeXmp(file, decision, settings) {
+  await writableSidecar(file);
   let old = '';
   try {
     const info = await fs.lstat(file);
@@ -119,4 +204,36 @@ async function writeXmp(file, decision, settings) {
   await atomicWrite(file, next);
 }
 
-module.exports = { readXmp, updateXmp, writeXmp, atomicWrite };
+// Sidecars use slash-separated relative paths on every platform. Absolute paths
+// outside the photo tree stay absolute; never reinterpret a foreign drive path.
+function portablePath(file, photo) {
+  if (typeof file !== 'string' || !photo) return file;
+  const api = path.win32.isAbsolute(photo) && !path.posix.isAbsolute(photo) ? path.win32 : path;
+  const relative = api.relative(api.dirname(photo), file);
+  return relative && relative !== '..' && !relative.startsWith('..' + api.sep) && !api.isAbsolute(relative) ? relative.split(api.sep).join('/') : file;
+}
+function resolvePath(file, photo) {
+  if (typeof file !== 'string' || !file || file.includes('\0')) return null;
+  if (path.isAbsolute(file) || path.win32.isAbsolute(file)) return file;
+  const parts = file.split(/[\\/]/);
+  if (parts.includes('..')) return null;
+  return path.resolve(path.dirname(photo), ...parts);
+}
+function portableDevelop(state, photo) {
+  if (!state) return null;
+  return { ...state, tiff: portablePath(state.tiff, photo), handoffs: (state.handoffs || []).map(r => ({ ...r, path: portablePath(r.path, photo), realPath: portablePath(r.realPath, photo) })) };
+}
+function resolveDevelop(state, photo) {
+  if (!state) return null;
+  return { ...state, tiff: resolvePath(state.tiff, photo), handoffs: (Array.isArray(state.handoffs) ? state.handoffs : []).map(r => ({ ...r, path: resolvePath(r.path, photo), realPath: resolvePath(r.realPath, photo) })) };
+}
+function sidecarPaths(photo) { return [photo.slice(0, -path.extname(photo).length) + '.xmp', photo + '.xmp']; }
+async function writableSidecar(file) {
+  const dir = await fs.stat(path.dirname(file));
+  const stat = await fs.lstat(file).catch(e => { if (e.code === 'ENOENT') return null; throw e; });
+  if (!(dir.mode & 0o222) || stat && !(stat.mode & 0o222)) throw new Error('Sidecar location is read-only.');
+  await fs.access(path.dirname(file), fs.constants.W_OK);
+  if (stat) await fs.access(file, fs.constants.W_OK);
+}
+const shouldWriteSidecars = (settings, removable) => settings.writeSidecars !== 'never' && (settings.writeSidecars === 'always' || !removable);
+module.exports = { readXmp, updateXmp, writeXmp, atomicWrite, sidecarPaths, portableDevelop, resolveDevelop, portablePath, shouldWriteSidecars, PHOTOCULL };

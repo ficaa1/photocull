@@ -95,6 +95,7 @@ async function start() {
   const backupSource = async source => { if(typeof source !== 'string' || !path.isAbsolute(source))throw new Error('Choose a card or folder.');const real=await fs.realpath(source);if(!(await fs.stat(real)).isDirectory())throw new Error('Choose a folder.');return real; };
   previews.editorName = id => settings.value.editors.find(e=>e.id===id)?.name;
   let importing=false;
+  const previewPhoto = photo => photo.develop?.missing ? { ...photo, develop: null } : photo;
   const methods = {
     'app-info': async () => ({ name: 'PhotoCull', version: require('../package.json').version, license: 'MIT',
       copyright: 'Copyright (C) 2026 Filip Biljic', notices: await fs.readFile(path.join(__dirname, '..', 'THIRD_PARTY_NOTICES.md'), 'utf8') }),
@@ -121,7 +122,7 @@ async function start() {
     'export-recipes': (file, id) => recipes.exportFile(file, id),
     'develop-get': async (session, id) => {
       const state = library.developGet(session, id);
-      if (state.tiff && !await fs.stat(state.tiff).then(s => s.isFile(), () => false)) { state.tiff = null; state.edited = false; state.editedBy = null; }
+      if (state.tiff && !await fs.stat(state.tiff).then(s => s.isFile(), () => false)) { state.missing = true; state.edited = false; }
       const recipe = recipes.get(state.recipe) || recipes.get(settings.value.defaultRecipe) || recipes.get('neutral');
       return { ...state, recipe: recipe.id, recipeSettings: recipe.settings, settings: state.settings ?? recipe.settings };
     },
@@ -221,10 +222,10 @@ async function start() {
     'decide': (session, id, patch) => library.decide(session, id, patch),
     'decide-many': (session, ids, patch) => library.decideMany(session, ids, patch),
     'history': (session, direction) => library.history(session, direction),
-    'metadata': (session, id, kind = 'preview') => previews.metadata(library.item(session, id), kind),
+    'metadata': (session, id, kind = 'preview') => previews.metadata(previewPhoto(library.item(session, id)), kind),
     // size: the photo's real oriented pixel size (or null), for loupe zoom percentages.
     'preview-status': async (session, id, kind = 'preview', original = false) => {
-      const photo = library.item(session, id), item = original ? { ...photo, develop: null } : photo;
+      const photo = library.item(session, id), item = original ? { ...photo, develop: null } : previewPhoto(photo);
       return { ...previews.status(item, kind), size: await previews.dimensions(item) };
     },
     'settings': async patch => {
@@ -242,14 +243,14 @@ async function start() {
     },
     'preview-cache': () => previews.diskUsage(),
     'clear-preview-cache': () => previews.clearDisk(),
-    'retry-preview': async (session, id) => { await previews.retry(library.item(session, id)); },
+    'retry-preview': async (session, id) => { await previews.retry(previewPhoto(library.item(session, id))); },
     'focus': (session, ids) => {
       if (!Array.isArray(ids) || ids.length > 8) throw new Error('Invalid focus selection.');
-      previews.focus(ids.map(id => library.item(session, id)));
+      previews.focus(ids.map(id => previewPhoto(library.item(session, id))));
     },
     'visible': (session, ids) => {
       if (!Array.isArray(ids) || ids.length > 128) throw new Error('Invalid visible image selection.');
-      previews.visible(ids.map(id => library.item(session, id)));
+      previews.visible(ids.map(id => previewPhoto(library.item(session, id))));
     },
     'export-xmp': (session, profile) => library.exportXmp(session, profile ? normalizeSettings(profile) : settings.value),
     // Only the shell calls this, with a path from a native save dialog.
@@ -306,7 +307,7 @@ async function start() {
     try {
       if (route === 'image' && authorized) {
         const [session, id, kind] = rest;
-        const photo = library.item(session, id), item = url.searchParams.get('original') === '1' ? { ...photo, develop: null } : photo;
+        const photo = library.item(session, id), item = url.searchParams.get('original') === '1' ? { ...photo, develop: null } : previewPhoto(photo);
         // cached=1 only returns already generated images (404 otherwise);
         // prefetch=N ranks look-ahead work below anything on screen.
         const rank = Number(url.searchParams.get('prefetch')) || 0;
@@ -342,7 +343,7 @@ async function start() {
   let closing = null;
   const shutdown = () => closing ??= (async () => {
     server.close();
-    await Promise.allSettled([library.writes, settings.writes, previews.close(), transfers.close(), backups.close(), devices.close()]);
+    await Promise.allSettled([library.close(), settings.writes, previews.close(), transfers.close(), backups.close(), devices.close()]);
     process.exit(0);
   })();
   methods.shutdown = () => { void shutdown(); };

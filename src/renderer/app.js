@@ -112,6 +112,8 @@ function loadSession(session) {
   render(); renderDevices();
   setStatus('Saved');
   if (session.warnings.length) toast(`${session.warnings.length} file or sidecar warning(s): ${session.warnings[0]}`);
+  const missingHandoffs = session.items.filter(i => i.handoffMissing).length;
+  if (missingHandoffs) toast(`${missingHandoffs} external edit(s) missing. Showing original photos; copy the hand-off folder alongside the photos.`);
   if (!session.items.length) toast('No supported images found. Try including subfolders.');
 }
 
@@ -858,7 +860,7 @@ function syncSettings(value) {
   state.settings = value; state.settingsReady = true;
   loupe.setClickPercent(value.zoomPercent);
   $('default-recipe').value = value.defaultRecipe || 'neutral';
-  $('auto-advance').checked = value.autoAdvance; $('recursive').checked = value.recursive; $('raw-rendering').value = value.rawRendering;
+  $('auto-advance').checked = value.autoAdvance; $('recursive').checked = value.recursive; $('write-sidecars').value = value.writeSidecars; $('raw-rendering').value = value.rawRendering;
   $('copy-verify').checked = value.copyVerify; $('copy-jpeg').checked = value.copyJpeg; $('copy-xmp').checked = value.copyXmp; $('copy-metadata').checked = value.copyMetadata; fillFolders('copy', value.folders);
   $('copy-preset').replaceChildren(...value.presets.map(p => option(p.id, p.name))); $('copy-preset').value = value.activePreset;
   const filter = state.colorFilter;
@@ -931,7 +933,7 @@ function fillSettings(value) {
   $('default-recipe').value = value.defaultRecipe || 'neutral';
   $('auto-advance').checked = value.autoAdvance; $('recursive').checked = value.recursive; $('auto-open-cards').checked = value.autoOpenCards; $('zoom-click-center').checked = value.zoomClickCenter;
   $('preview-cache-limit').value = String(value.previewCacheGB); void showCacheUsage();
-  $('raw-rendering').value = value.rawRendering; $('default-jpeg').checked = value.copyJpeg; $('default-xmp').checked = value.copyXmp; $('default-metadata').checked = value.copyMetadata; fillFolders('settings', value.folders);
+  $('write-sidecars').value = value.writeSidecars; $('raw-rendering').value = value.rawRendering; $('default-jpeg').checked = value.copyJpeg; $('default-xmp').checked = value.copyXmp; $('default-metadata').checked = value.copyMetadata; fillFolders('settings', value.folders);
   $('metadata-preset').replaceChildren(...state.settings.presets.map(p => option(p.id, p.name))); $('metadata-preset').value = value.activePreset;
   $('preset-delete').disabled = !/^[\da-f-]{36}$/i.test(value.activePreset);
   for (const [id, key] of [['write-ratings','writeRatings'], ['write-labels','writeLabels'], ['reject-rating','rejectRating']]) $(id).checked = value.metadata[key];
@@ -954,7 +956,7 @@ function readSettings() {
   readEditors(value); value.defaultRecipe = $('default-recipe').value;
   value.autoAdvance = $('auto-advance').checked; value.recursive = $('recursive').checked; value.autoOpenCards = $('auto-open-cards').checked; value.zoomClickCenter = $('zoom-click-center').checked;
   value.previewCacheGB = Number($('preview-cache-limit').value);
-  value.rawRendering = $('raw-rendering').value; value.copyJpeg = $('default-jpeg').checked; value.copyXmp = $('default-xmp').checked; value.copyMetadata = $('default-metadata').checked; value.folders = readFolders('settings');
+  value.writeSidecars = $('write-sidecars').value; value.rawRendering = $('raw-rendering').value; value.copyJpeg = $('default-jpeg').checked; value.copyXmp = $('default-xmp').checked; value.copyMetadata = $('default-metadata').checked; value.folders = readFolders('settings');
   value.activePreset = $('metadata-preset').value;
   for (const [id,key] of [['write-ratings','writeRatings'],['write-labels','writeLabels'],['reject-rating','rejectRating']]) value.metadata[key] = $(id).checked;
   for (const flag of ['pick','reject']) value.metadata[flag + 'Color'] = $(`${flag}-color`).value;

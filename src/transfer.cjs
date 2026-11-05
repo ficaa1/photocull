@@ -72,15 +72,16 @@ class TransferService {
           if (item.companionSize !== undefined && (stat.size !== item.companionSize || stat.mtimeMs !== item.companionMtimeMs)) throw new Error('Companion JPEG changed. Reopen the folder before copying.');
           files.push({ source: item.companion, relative: path.join(directory, renamed.stem + path.extname(item.companion)), stat });
         }
-        if (options.includeXmp) {
+        if (options.includeXmp || session.removable && normalizeSettings(options.metadataSettings).writeSidecars !== 'never') {
           let xml = '';
           try {
             const info = await sourceStat(item.sidecar);
             if (info.size > 2 * 1024 ** 2) throw new Error('Existing XMP exceeds 2 MB.');
             xml = await fs.readFile(item.sidecar, 'utf8');
           } catch (error) { if (error.code !== 'ENOENT') throw error; }
-          const bytes = Buffer.from(updateXmp(xml, item, options.metadataSettings));
-          files.push({ bytes, relative: path.join(directory, renamed.stem + (item.raw ? '' : renamed.extension) + '.xmp') });
+          const bytes = Buffer.from(updateXmp(xml, { ...item, develop: item.develop || null }, options.metadataSettings));
+          const darktable = item.sidecar === item.path + '.xmp';
+          files.push({ bytes, relative: path.join(directory, renamed.stem + (darktable ? renamed.extension : '') + '.xmp') });
         }
         const group = { item, files };
         for (const file of files) {
@@ -109,6 +110,7 @@ class TransferService {
           progress.file = file.relative; emit(true);
           const target = path.join(root, file.relative);
           let input, output;
+          const staging = file.bytes ? `${target}.${randomUUID()}.tmp` : target;
           try {
             if (file.source) {
               const now = await sourceStat(file.source);
@@ -117,7 +119,7 @@ class TransferService {
               const opened = await input.stat();
               if (opened.size !== file.stat.size || opened.mtimeMs !== file.stat.mtimeMs) throw new Error('Source changed before copying.');
             }
-            output = await fs.open(target, 'wx'); created.push(target);
+            output = await fs.open(staging, 'wx'); if (!file.bytes) created.push(target);
             if (file.bytes) {
               await output.writeFile(file.bytes); written += file.bytes.length; progress.bytesCopied += file.bytes.length;
             } else {
@@ -132,7 +134,11 @@ class TransferService {
             }
             await output.sync();
             if ((await output.stat()).size !== (file.bytes?.length ?? file.stat.size)) throw new Error('Copy size did not match the source.');
-          } finally { await Promise.allSettled([input?.close(), output?.close()]); }
+            if (file.bytes) { await output.close(); output = null; await fs.link(staging, target); created.push(target); }
+          } finally {
+            await Promise.allSettled([input?.close(), output?.close()]);
+            if (file.bytes) await fs.rm(staging, { force: true });
+          }
         }
         if (options.verify) {
           progress.state = 'verifying'; emit(true);

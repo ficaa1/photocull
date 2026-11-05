@@ -10,7 +10,7 @@ const FOLDERS = { mode: 'flat', name: '' };
 const exportLogic = require('./renderer/export.js');
 const EXPORT_PRESETS = exportLogic.PRESETS.map(p => ({ ...p, options: exportLogic.options(p.options), naming: NAMING, subfolder: '', conflict: 'unique' }));
 const DEFAULTS = { version: 1, zoomPercent: 100, zoomClickCenter: false, rawRendering: 'missing', previewCacheGB: 2, autoAdvance: true, recursive: false, autoOpenCards: true, deleteMode: 'trash',
-  shortcuts: {}, welcomeDismissed: false, cardFolders: ['DCIM'], manualCards: [], backupTemplate: '{date}-{card}', copyVerify: false, copyJpeg: false, copyXmp: false, copyMetadata: false, folders: FOLDERS,
+  shortcuts: {}, welcomeDismissed: false, cardFolders: ['DCIM'], manualCards: [], backupTemplate: '{date}-{card}', copyVerify: false, copyJpeg: false, copyXmp: false, copyMetadata: false, writeSidecars: 'except-cards', folders: FOLDERS,
   editors: [dehancerPreset()], defaultEditor: 'dehancer', handoffFolder: '', handoffSubfolder: '_develop', handoffAlways: false, deleteHandoffsAfterExport: false, defaultRecipe: 'neutral', exportOptions: { format: 'jpeg', quality: 90, colorSpace: 'srgb' }, exportSubfolder: '', exportConflict: 'unique', exportPresets: EXPORT_PRESETS, activePreset: 'standard', naming: NAMING, metadata: METADATA, colors: COLORS };
 const BUILTINS = [
   { id: 'standard', name: 'Standard', metadata: METADATA, naming: NAMING, folders: FOLDERS, colors: COLORS },
@@ -41,6 +41,10 @@ function normalizeSettings(value = {}, base = DEFAULTS) {
     const path=require('node:path');
     if(key==='cardFolders'&&result[key].some(v=>v.split(/[\\/]/).some(p=>!p||p==='.'||p==='..')||/[<>:"|?*]/.test(v)))throw new Error('Use relative camera folder names.');
     if(key==='manualCards'&&result[key].some(v=>!path.isAbsolute(v)&&!path.win32.isAbsolute(v)))throw new Error('Use absolute card folder paths.');
+  }
+  if ('writeSidecars' in value) {
+    if (!['always', 'except-cards', 'never'].includes(value.writeSidecars)) throw new Error('Invalid XMP sidecar policy.');
+    result.writeSidecars = value.writeSidecars;
   }
   if ('zoomPercent' in value) {
     if (!Number.isFinite(value.zoomPercent) || value.zoomPercent < 5 || value.zoomPercent > 1600) throw new Error('Zoom must be between 5% and 1600%.');
