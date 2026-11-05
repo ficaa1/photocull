@@ -8,6 +8,9 @@ All notable changes to PhotoCull are documented here. This file follows [Keep a 
 
 - MIT license, contributor and security guidance, third-party inventory and in-app About credits.
 - Guarded public-repository build workflow and portable Windows symlink checks.
+- Configurable external editors with format, color space, destination and cleanup controls.
+- Recipe duplication/import/export and persistent finished-image export presets.
+- Lossy WebP export, bounded parallel export jobs and faster AVIF encoding.
 
 ### Fixed
 
