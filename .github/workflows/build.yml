@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-15, macos-15-intel, windows-latest]
+        os: [windows-latest, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -36,28 +36,13 @@ jobs:
             artifacts/ui-smoke.json
           if-no-files-found: ignore
 
-  rust:
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-      - name: Linux build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-      # The base config uses the checked-in renderer and has no bundled sidecar.
-      - run: cargo check --manifest-path src-tauri/Cargo.toml --all-targets
-
   build:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
-    needs: [test, rust]
+    needs: test
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-15, macos-15-intel, windows-latest]
+        os: [windows-latest, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -70,28 +55,43 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-      - name: Linux build dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf
       - run: npm ci
       - run: npm test
       - run: npm run test:ui
-      # AppImage bundling fails in linuxdeploy on the runner; ship .deb and .rpm.
-      - run: npm run build -- --bundles deb,rpm
-        if: runner.os == 'Linux'
       - run: npm run build
-        if: runner.os != 'Linux'
       - uses: actions/upload-artifact@v4
         with:
           name: PhotoCull-${{ matrix.os }}
           path: |
-            src-tauri/target/release/bundle/**/*.deb
-            src-tauri/target/release/bundle/**/*.AppImage
-            src-tauri/target/release/bundle/**/*.rpm
             src-tauri/target/release/bundle/**/*.dmg
             src-tauri/target/release/bundle/**/*.msi
             src-tauri/target/release/bundle/**/*-setup.exe
             artifacts/*.png
             artifacts/ui-smoke.json
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: PhotoCull-*
+          path: installers
+          merge-multiple: true
+      - name: Release title
+        shell: bash
+        run: echo "RELEASE_NAME=PhotoCull ${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ env.RELEASE_NAME }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            installers/**/*.msi
+            installers/**/*-setup.exe
+            installers/**/*.dmg

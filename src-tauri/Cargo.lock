@@ -4051,7 +4051,7 @@ dependencies = [
 
 [[package]]
 name = "photocull"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "dunce",
  "lightcraft-codecs",

@@ -1,7 +1,7 @@
 {
   "name": "photocull",
   "productName": "PhotoCull",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "description": "A local, preview-first RAW and JPEG culling desktop app",
   "scripts": {

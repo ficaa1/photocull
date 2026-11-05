@@ -17,7 +17,7 @@ npm start
 npm run build
 ```
 
-The outputs are `src-tauri/target/release/bundle/macos/PhotoCull.app` and a `.dmg` under `src-tauri/target/release/bundle/dmg/`. Build natively because sharp and ExifTool include platform-specific binaries. [.github/workflows/build.yml](../.github/workflows/build.yml) includes separate Apple Silicon and Intel Mac jobs.
+The outputs are `src-tauri/target/release/bundle/macos/PhotoCull.app` and a `.dmg` under `src-tauri/target/release/bundle/dmg/`. Build natively because sharp and ExifTool include platform-specific binaries. [.github/workflows/build.yml](../.github/workflows/build.yml) builds Apple Silicon installers on macOS 15; Intel Mac builds are currently manual.
 
 ## Opening an unsigned build
 

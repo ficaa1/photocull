@@ -6,7 +6,7 @@ A local desktop MVP for quickly reviewing camera RAW files and JPEGs. Connect a 
 
 ## Run
 
-Use Node.js 24, npm, Rust stable and the native Tauri build prerequisites for your OS. On macOS, install the Xcode command-line tools; on Windows, install the MSVC C++ build tools and WebView2. Linux needs WebKitGTK 4.1 and the other development packages listed in [.github/workflows/build.yml](.github/workflows/build.yml).
+Use Node.js 24, npm, Rust stable and the native Tauri build prerequisites for your OS. On macOS, install the Xcode command-line tools; on Windows, install the MSVC C++ build tools and WebView2. Linux needs WebKitGTK 4.1, libayatana-appindicator3, librsvg2, libxdo and patchelf development packages; Linux builds are currently manual.
 
 For desktop development:
 
@@ -181,7 +181,7 @@ The preparation script expects the specific Sony `sample-8563.ARW` and verifies 
 
 The benchmark reports scan, cold decode, memory-cache and disk-cache timings for generated JPEGs, or a supplied folder (`npm run benchmark -- /path/to/photos`). For the loupe, `node scripts/loupe-benchmark.cjs RAW_FOLDER` times the fit preview and the full-size representation of real RAWs in the backend. `node scripts/loupe-timing.cjs RAW_FOLDER` measures, in headless Chromium, the time from a key or click to the decoded image on screen for opening, next photo, click zoom, next photo while zoomed and a held-arrow burst, and counts the requests the burst issued. `scripts/viewer-ui-smoke.cjs - REPORT_FOLDER [SONY_FOLDER]` exercises the loupe: click zoom under the cursor, click vs drag, pan clamping, Z/Space/hold-Space, Ctrl +/-/0, Ctrl+wheel and scroll, Fill, the navigator, next photo keeping the zoom, fullscreen and the centre-on-click setting. These are backend measurements, not a Photo Mechanic comparison or a measurement of screen presentation latency. See [validation notes](docs/validation.md) and the [measured performance audit](docs/performance.md).
 
-[Build CI](.github/workflows/build.yml) runs `npm test`, `npm run test:ui` and `npm run build` on Ubuntu 22.04, macOS 15 (Apple Silicon and Intel) and Windows. It uploads `.deb`, `.AppImage`, `.rpm`, `.dmg`, `.msi` and `-setup.exe` bundles. The Tauri shell uses the system webview, while the bundled Node sidecar, sharp, ExifTool and WASM RAW decoder still add distribution size. Bundles are unsigned and not notarized.
+[Build CI](.github/workflows/build.yml) runs `npm test` and `npm run test:ui` on Windows and macOS 15 (Apple Silicon). Version tags and manual workflow runs also run `npm run build` and upload `.dmg`, `.msi` and `-setup.exe` installers. Version tags publish those installers in a GitHub release; manual runs produce artifacts only. Intel Mac and Linux builds are currently manual. The Tauri shell uses the system webview, while the bundled Node sidecar, sharp, ExifTool and WASM RAW decoder still add distribution size. Bundles are unsigned and not notarized.
 
 ## Research and REA
 
