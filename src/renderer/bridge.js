@@ -84,7 +84,7 @@
     },
     exportRecipes: async (id = null) => {
       let file = await host.pickSaveFile('recipes.photocull-recipe.json', 'PhotoCull recipe', 'photocull-recipe.json');
-      if (file && !file.endsWith('.photocull-recipe.json')) file = file.replace(/\.json$/i, '') + '.photocull-recipe.json';
+      if (file && !/\.photocull-recipe\.json$/i.test(file)) file = file.replace(/\.json$/i, '') + '.photocull-recipe.json';
       return file ? backend('export-recipes', file, id) : null;
     },
     developGet: (session, id) => backend('develop-get', session, id),

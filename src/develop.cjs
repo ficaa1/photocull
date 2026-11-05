@@ -124,7 +124,7 @@ class RecipeStore {
 }
 
 function checkRecipePath(file) {
-  if (typeof file !== 'string' || !path.isAbsolute(file) || !file.endsWith('.photocull-recipe.json')) throw new Error('Choose a .photocull-recipe.json file.');
+  if (typeof file !== 'string' || !path.isAbsolute(file) || !/\.photocull-recipe\.json$/i.test(file)) throw new Error('Choose a .photocull-recipe.json file.');
 }
 function parseRecipeFile(data) {
   if (typeof data !== 'string' || Buffer.byteLength(data) > MAX_RECIPE_FILE_BYTES) throw new Error('Recipe file is too large.');

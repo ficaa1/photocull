@@ -66,7 +66,7 @@
     const setChoices = (id, values) => $(id).replaceChildren(...Object.entries(values).map(([v, label]) => opt(v, label)));
     setChoices('format', Object.fromEntries(Object.entries(FORMATS).map(([v, spec]) => [v, spec.label])));
     setChoices('space', SPACES); setChoices('resize', MODES);
-    let presets = [];
+    let presets = [], presetSaving = false;
     const presetName = () => $('preset-name').value.trim();
     const selectedPreset = () => presets.find(p => p.id === $('preset').value);
     function presetChoices(id = $('preset').value) {
@@ -80,10 +80,14 @@
       $('preset-reset').disabled = !p?.builtin;
     }
     async function storePresets(next, id) {
-      state.settings = await api.settings({ exportPresets: next }); presetChoices(id);
+      const controls = ['preset', 'preset-name', ...['save','rename','duplicate','delete','up','down','reset'].map(v=>'preset-'+v)];
+      presetSaving = true; controls.forEach(v=>$(v).disabled=true); refresh();
+      try { state.settings = await api.settings({ exportPresets: next }); }
+      finally { presetSaving = false; controls.forEach(v=>$(v).disabled=false); presetChoices(id); refresh(); }
     }
     const uniqueName = name => { let v = name; for(let n=2;presets.some(p=>p.name.toLowerCase()===v.toLowerCase());n++)v=`${name.slice(0,72)} (${n})`;return v; };
     for (const action of ['save', 'rename', 'duplicate', 'delete', 'up', 'down', 'reset']) $('preset-' + action).onclick = async () => {
+      if (presetSaving || running) return;
       try {
         const p = selectedPreset(), next = structuredClone(presets), index = next.findIndex(v => v.id === p?.id);
         let id = p?.id;
@@ -158,7 +162,7 @@
       $('metadata-note').textContent = `Preset: ${state.settings.presets?.find(p => p.id === state.settings.activePreset)?.name || 'Current'} · nonempty creator, copyright, title, caption and keywords apply within the selected policy.`;
       $('destination-path').textContent = destination || 'Choose folder…';
       if (document.activeElement !== $('folder')) $('folder').value = destination;
-      $('start').disabled = running || !items.length || !destination || !api.canDevelop || state.pendingSaves > 0 || state.deleting || state.copy.running;
+      $('start').disabled = running || presetSaving || !items.length || !destination || !api.canDevelop || state.pendingSaves > 0 || state.deleting || state.copy.running;
       $('cancel').hidden = !running; $('close').disabled = running;
       void preview();
     }

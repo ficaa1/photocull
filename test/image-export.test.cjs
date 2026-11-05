@@ -138,3 +138,12 @@ test('saved export presets migrate once across settings restart and edits preser
   assert.equal(reopened.snapshot().exportPresets.filter(p=>p.id==='migrated-last-export').length,1);
   assert.throws(()=>normalizeSettings({exportPresets:[{...migrated,id:'user',name:'Full-size JPEG'}]}),/reserved/);
 });
+
+test('legacy WebP remains lossless when last options migrate into an export preset', async t => {
+  const {root} = await fixture(t), {SettingsStore} = require('../src/settings.cjs');
+  await fs.writeFile(path.join(root,'settings.json'),JSON.stringify({exportOptions:{format:'webp',colorSpace:'displayP3'}}));
+  const store = new SettingsStore(root); await store.init();
+  assert.equal(store.snapshot().exportOptions.webpLossless,true);
+  assert.equal(store.snapshot().exportPresets.find(p=>p.id==='migrated-last-export').options.webpLossless,true);
+  assert.equal(options({format:'webp'}).webpLossless,false);
+});

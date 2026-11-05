@@ -13,6 +13,8 @@ class SettingsStore {
     const migrate = input => {
       // Existing users who supplied a creator requested that metadata in copied files.
       if (!Object.hasOwn(input, 'copyMetadata') && input.metadata?.creator) input.copyMetadata = true;
+      // WebP was always lossless before quality-based encoding was introduced.
+      if (input.exportOptions?.format === 'webp' && !Object.hasOwn(input.exportOptions, 'webpLossless')) input.exportOptions.webpLossless = true;
       return normalizeSettings(input);
     };
     await fs.mkdir(this.presetsFolder, { recursive: true });

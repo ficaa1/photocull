@@ -6,7 +6,8 @@ const METADATA = { writeRatings: true, writeLabels: true, rejectRating: true, pi
   creator: '', copyright: '', title: '', caption: '', keywords: [] };
 const NAMING = { template: '{filename}', text: '', start: 1 };
 const FOLDERS = { mode: 'flat', name: '' };
-const EXPORT_PRESETS = require('./renderer/export.js').PRESETS.map(p => ({ ...p, naming: NAMING, subfolder: '', conflict: 'unique' }));
+const exportLogic = require('./renderer/export.js');
+const EXPORT_PRESETS = exportLogic.PRESETS.map(p => ({ ...p, options: exportLogic.options(p.options), naming: NAMING, subfolder: '', conflict: 'unique' }));
 const DEFAULTS = { version: 1, zoomPercent: 100, zoomClickCenter: false, rawRendering: 'missing', previewCacheGB: 2, autoAdvance: true, recursive: false, autoOpenCards: true, deleteMode: 'trash',
   copyJpeg: false, copyXmp: false, copyMetadata: false, folders: FOLDERS,
   // Develop and export: the Dehancer plugin executable ('' = its default location), the recipe new photos start

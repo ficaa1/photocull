@@ -47,6 +47,7 @@ async function main() {
       const s = await api.openPath(fixture, false); loadSession(s);
       syncSettings(await api.settings({ metadata: { creator: 'PhotoCull Export Test', copyright: 'Copyright PhotoCull Export Test', title: 'Export verification', caption: 'Real Sony and Dehancer export', keywords: ['PhotoCull', 'export-test'] } }));
     }, {fixture, edited});
+    await page.evaluate(()=>{window.__nativeExportProgress=[];api.onExportProgress(p=>window.__nativeExportProgress.push(p.done));});
     console.log('Loaded real Sony session');
     await page.evaluate(() => { document.querySelector('#image-export-close').click(); document.querySelector('#image-export').click(); });
     await page.waitForFunction(() => document.querySelector('#image-export-dialog').open);
@@ -61,6 +62,8 @@ async function main() {
     await page.waitForFunction(() => !state.busy && !!document.querySelector('#image-export-status').textContent, null, { timeout: 180000, polling: 500 });
     const status = await page.locator('#image-export-status').innerText(); console.log(status);
     assert.match(status, new RegExp(`${sources.length} exported · 0 skipped · 0 failed`));
+    const progress=await page.evaluate(()=>window.__nativeExportProgress);
+    assert.equal(progress.at(-1),sources.length);assert.ok(progress.every((n,i)=>!i||n>=progress[i-1]),'Export progress must be monotonic.');
     // Capture via CDP (WebView2 implements this in the debug-enabled Windows test app).
     try { await page.screenshot({ path: path.join(reports, 'tauri-export-batch.png'), timeout: 10000 }); } catch (e) { console.log('Screenshot: ' + e.message); }
     for (const name of await fs.readdir(output)) if (/\.jpg$/i.test(name)) {
@@ -95,6 +98,14 @@ async function main() {
       results.push(result); await fs.writeFile(path.join(reports, 'results.json'), JSON.stringify({ output, errors, results }, null, 2));
       console.log(`${label}: ${result.ms} ms, ${result.bytes} bytes`);
     }
+    const blocked=path.join(output,'blocked.jpg');await fs.mkdir(blocked);
+    const mixed=await page.evaluate(async({output,blocked})=>{
+      const photos=state.session.items.filter(i=>i.raw).slice(0,2),items=[];
+      for(const [index,p] of photos.entries())items.push({id:p.id,dest:index?output+'\\mixed-good.jpg':blocked,settings:(await api.developGet(state.session.id,p.id)).settings});
+      const result=await api.exportPhotos(state.session.id,items,PhotoCullExport.options({format:'jpeg',resize:{mode:'longEdge',value:200}}),true);
+      return {ids:items.map(i=>i.id),results:result.results};
+    },{output,blocked});
+    assert.deepEqual(mixed.results.map(r=>r.id),mixed.ids);assert.deepEqual(mixed.results.map(r=>r.status),['failed','exported']);
     // Extra real-file controls: color conversion, metadata policies, JPEG byte limit, skip and cancellation.
     for (const policy of ['allExceptCamera', 'copyright', 'none']) {
       const r = await page.evaluate(async ({ output, policy }) => {
