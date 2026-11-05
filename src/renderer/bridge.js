@@ -74,6 +74,8 @@
 
   const api = {
     platform,
+    appInfo: () => backend('app-info'),
+    openProjectLink: url => tauri ? shell('open_project_link', { url }) : window.open(url, '_blank', 'noopener,noreferrer'),
     canDevelop: !!tauri,
     // Recipes and per-photo develop state (Node backend).
     recipes: () => backend('recipes'),

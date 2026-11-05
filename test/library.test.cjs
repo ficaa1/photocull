@@ -155,7 +155,7 @@ test('recursive scan is optional and skips symlinks', async t => {
   await fs.mkdir(path.join(photos, 'sub'), { recursive: true });
   await fs.writeFile(path.join(photos, 'a.jpg'), 'jpeg');
   await fs.writeFile(path.join(photos, 'sub', 'b.jpg'), 'jpeg');
-  await fs.symlink(photos, path.join(photos, 'cycle'));
+  await fs.symlink(photos, path.join(photos, 'cycle'), 'junction');
   const library = new Library(path.join(root, 'data'));
   assert.equal((await library.scan(photos)).items.length, 1);
   assert.equal((await library.scan(photos, true)).items.length, 2);
@@ -214,7 +214,7 @@ test('a deletion plan skips photos that changed since the scan and refuses a rep
   await fs.mkdir(photos); await fs.writeFile(path.join(photos, 'A.JPG'), 'fixture');
   await assert.rejects(library.deletionPlan(s.id, [id('A.JPG')]), /folder has changed/);
   // The folder replaced by a symlink to another one.
-  await fs.rm(photos, { recursive: true }); await fs.symlink(path.join(root, 'old'), photos);
+  await fs.rm(photos, { recursive: true }); await fs.symlink(path.join(root, 'old'), photos, 'junction');
   await assert.rejects(library.deletionPlan(s.id, [id('A.JPG')]), /folder has changed/);
 });
 

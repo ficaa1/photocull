@@ -884,6 +884,7 @@ function syncSettings(value) {
 }
 $('color-filter').onchange = () => { state.colorFilter = $('color-filter').value; render(true); };
 function setSettingsTab(name) {
+  if (name === 'about') void loadAbout();
   document.querySelectorAll('[data-settings-tab]').forEach(button => { const active = button.dataset.settingsTab === name; button.classList.toggle('active', active); button.setAttribute('aria-pressed', String(active)); });
   document.querySelectorAll('[data-settings-page]').forEach(section => { section.hidden = section.dataset.settingsPage !== name; });
 }
@@ -995,6 +996,20 @@ $('preview-cache-clear').onclick = async () => {
 $('settings-open').onclick = () => openSettings();
 $('copy-settings').onclick = () => openSettings('metadata');
 $('settings-folder').onclick = () => { void api.settingsFolder().catch(error => { $('settings-status').textContent = error.message; }); };
+let aboutLoaded = false;
+async function loadAbout() {
+  if (aboutLoaded) return;
+  try {
+    const info = await api.appInfo();
+    $('about-name').textContent = `${info.name} ${info.version}`;
+    $('about-copyright').textContent = info.copyright;
+    $('about-notices').textContent = info.notices;
+    aboutLoaded = true;
+  } catch (e) { $('about-status').textContent = e.message; }
+}
+document.querySelectorAll('[data-project-link]').forEach(link => { link.onclick = event => {
+  event.preventDefault(); void Promise.resolve(api.openProjectLink(link.href)).catch(e => { $('about-status').textContent = e.message; });
+}; });
 $('settings-cancel').onclick = () => $('settings-dialog').close();
 $('settings-save').onclick = async () => {
   $('settings-save').disabled = true;

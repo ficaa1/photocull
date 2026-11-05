@@ -58,8 +58,12 @@ test('TIFF handoff reserves unrelated files, repeated camera names and source im
   let result=await planTiffs(items,dir);assert.equal(result[0].tiff,path.join(dir,'IMG-2.tif'));assert.equal(result[1].tiff,path.join(dir,'img-3.tif'));assert.equal(result[0].exists,false);
   assert.equal(await fs.readFile(existing,'utf8'),'keep edits');
   items[0].develop={tiff:existing,edited:true};result=await planTiffs(items,dir);assert.equal(result[0].tiff,existing);assert.equal(result[0].exists,true);assert.equal(result[0].edited,true);assert.equal(result[0].own,true);
-  await fs.symlink(existing,path.join(dir,'NEW.tif'));result=await planTiffs(items,dir);assert.equal(result[2].tiff,path.join(dir,'NEW-2.tif'));
-  items[2].develop={tiff:path.join(dir,'NEW.tif')};result=await planTiffs(items,dir);assert.match(result[2].error,/regular/);
+  await t.test('file symlinks cannot become owned TIFFs',async t=>{
+    try { await fs.symlink(existing,path.join(dir,'NEW.tif')); }
+    catch(e) { if(process.platform==='win32' && ['EPERM','EACCES','ENOTSUP'].includes(e.code)) { t.skip('File symlinks require Windows Developer Mode or symlink privilege.'); return; } throw e; }
+    result=await planTiffs(items,dir);assert.equal(result[2].tiff,path.join(dir,'NEW-2.tif'));
+    items[2].develop={tiff:path.join(dir,'NEW.tif')};result=await planTiffs(items,dir);assert.match(result[2].error,/regular/);
+  });
   result=await planTiffs(items.slice(0,1),dir,[...items,{id:'source',path:existing}]);assert.match(result[0].error,/unshared/);
   result=await planTiffs(items.slice(0,1),dir,[...items,{id:'other',develop:{tiff:existing}}]);assert.equal(result[0].tiff,path.join(dir,'IMG-2.tif'));
   await assert.rejects(planTiffs(items,'relative'),/folder/);

@@ -4,6 +4,7 @@ version = "0.8.0"
 description = "A local, preview-first RAW and JPEG culling desktop app"
 edition = "2021"
 publish = false
+license = "MIT"
 
 [lib]
 name = "photocull_lib"

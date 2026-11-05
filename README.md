@@ -189,19 +189,36 @@ npm run build
 `npm test` checks loupe geometry (zoom around a point, pan clamping, click vs drag, zoom steps, position carried to the next photo), direction-aware prefetch ordering and representation choice, pairing, deletion planning and decision cleanup, autosave/undo, sidecar preservation, scheduling, orientation, candidate selection, render gates, cache recovery, failure persistence, retry and cancellation. Set `PHOTOCULL_RAW_FIXTURE` to a real RAW file to enable its source-checksum and embedded-preview test. `scripts/ui-smoke.cjs` uses `scripts/launch.cjs` to start the backend in browser mode and headless system Chromium with isolated test state and generated photos; if `artifacts/fixtures/iss030e122639.NEF` exists it also exercises RAW display. Set `CHROMIUM_PATH` to override the Chromium executable. Playwright cannot drive Tauri webviews, so these checks do not cover native dialogs, menus, Trash or real desktop fullscreen. For the user-authorized Sony test copies, reproduce preview stripping and browser UI checks with:
 
 ```sh
-node scripts/prepare-raw-cases.cjs /mnt/c/Users/alex/Pictures/photo-samples
-PHOTOCULL_RAW_CASES=/mnt/c/Users/alex/Pictures/photo-samples/photocull-cases npm test
-node scripts/raw-ui-smoke.cjs - /mnt/c/Users/alex/Pictures/photo-samples/photocull-cases artifacts/raw-validation
+node scripts/prepare-raw-cases.cjs /path/to/photo-fixtures
+PHOTOCULL_RAW_CASES=/path/to/photo-fixtures/photocull-cases npm test
+node scripts/raw-ui-smoke.cjs - /path/to/photo-fixtures/photocull-cases artifacts/raw-validation
 ```
 
 The preparation script expects the specific Sony `sample-8563.ARW` and verifies preview ranges do not overlap its sensor strip before zeroing JPEG payloads in new copies. It is a test helper, not a general RAW editor. The first `raw-ui-smoke.cjs` argument is retained for compatibility; the launcher always uses browser mode. Test photos, screenshots and reports are ignored by Git.
 
 The benchmark reports scan, cold decode, memory-cache and disk-cache timings for generated JPEGs, or a supplied folder (`npm run benchmark -- /path/to/photos`). For the loupe, `node scripts/loupe-benchmark.cjs RAW_FOLDER` times the fit preview and the full-size representation of real RAWs in the backend. `node scripts/loupe-timing.cjs RAW_FOLDER` measures, in headless Chromium, the time from a key or click to the decoded image on screen for opening, next photo, click zoom, next photo while zoomed and a held-arrow burst, and counts the requests the burst issued. `scripts/viewer-ui-smoke.cjs - REPORT_FOLDER [SONY_FOLDER]` exercises the loupe: click zoom under the cursor, click vs drag, pan clamping, Z/Space/hold-Space, Ctrl +/-/0, Ctrl+wheel and scroll, Fill, the navigator, next photo keeping the zoom, fullscreen and the centre-on-click setting. These are backend measurements, not a Photo Mechanic comparison or a measurement of screen presentation latency. See [validation notes](docs/validation.md) and the [measured performance audit](docs/performance.md).
 
-Checks and builds run locally: `npm test` and `npm run test:ui` before committing, `npm run build` on each machine for installers (Windows `.msi`/`-setup.exe`, Apple Silicon `.dmg`), uploaded to GitHub releases with `gh release`. The GitHub Actions workflow in `.github/workflows/build.yml` is commented out. The Tauri shell uses the system webview, while the bundled Node sidecar, sharp, ExifTool and WASM RAW decoder still add distribution size. Bundles are unsigned and not notarized.
+Checks and builds run locally: `npm test` and `npm run test:ui` before committing, `npm run build` on each machine for installers (Windows `.msi`/`-setup.exe`, Apple Silicon `.dmg`), uploaded to GitHub releases with `gh release`. The build workflow is disabled on GitHub and every job is guarded while the repository is private. The Tauri shell uses the system webview, while the bundled Node sidecar, sharp, ExifTool and WASM RAW decoder still add distribution size. Bundles are unsigned and not notarized.
 
 ## Research and REA
 
 See [Photo Mechanic investigation](docs/photomechanic-research.md) for observed binary evidence, inferred design principles, and limits. This implementation is written in this repository using general image-processing techniques; it does not include Photo Mechanic code or binaries.
 
-REA 6.8.0 is registered in this machine’s Codex configuration, with its workflow skill and a Linux Node PATH override. A separate MCP client verified initialization, all 229 advertised tools, and PE import inspection of the supplied executable. Restart/reconnect the coding agent to load REA into its tool list. The initial MVP investigation used static import/string inspection; the subsequent [RAW-loading investigation](docs/raw-loading-investigation.md) added local Ghidra 12.1.4/JDK 21 tools and traced the actual native loader and Windows rendering fallback through a separate REA session.
+The preview pipeline uses general image-processing techniques; no third-party application code or binaries are distributed.
+
+## License
+
+PhotoCull is available under the [MIT license](LICENSE). Third-party components retain their own licenses.
+
+## Third-party notices
+
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the runtime inventory and redistribution requirements. Notices and decoder sources ship with the app. Reproduce the inventory offline with `npm run notices`.
+
+## Trademarks
+
+Dehancer is a trademark of its owner; PhotoCull is not affiliated with or endorsed by Dehancer.
+Adobe and Lightroom are trademarks of Adobe; PhotoCull is not affiliated with or endorsed by Adobe.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, tests and contribution guidelines. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).

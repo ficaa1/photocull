@@ -104,6 +104,12 @@ async function main() {
     await page.waitForFunction(() => document.querySelector('#review-image').dataset.complete === 'yes');
     await page.screenshot({ path: path.join(screenshots, 'photocull-review.png') });
     await page.locator('#settings-open').click();
+    await page.locator('[data-settings-tab="about"]').click();
+    await page.waitForFunction(() => document.querySelector('#about-name').textContent.includes('0.8.0'));
+    assert.match(await page.locator('[data-settings-page="about"]').textContent(), /MIT License/);
+    assert.match(await page.locator('[data-settings-page="about"]').textContent(), /RAW engine: Lightcraft/);
+    assert.match(await page.locator('#about-notices').textContent(), /libvips|LibRaw/);
+    assert.equal(await page.locator('[data-project-link]').filter({ hasText: 'Website' }).getAttribute('href'), 'https://www.filipbiljic.com/photocull/');
     await page.locator('[data-settings-tab="metadata"]').click();
     await page.locator('#metadata-export summary').click();
     await page.locator('#export-xmp').click();

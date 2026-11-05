@@ -12,7 +12,7 @@ The changes target measured backend costs: preview extraction, repeated natural 
 | Group/sort 5,000 filenames | 27.11 ms | 13.03 ms | Median of three runs |
 | Scan 3,000 generated entries | 158.66 ms | 145.41 ms | One run; mostly filesystem work |
 
-These are observations on this WSL/Linux machine, not Mac timings or a Photo Mechanic comparison. The OS cache was warm, so “cold” means a new PhotoCull cache, not a cold SD card. Three files and a few runs do not establish a general speed guarantee. A repeated after run measured 316.91 ms median RAW preview, 6.51 ms for the save burst, and 12.44 ms filename grouping. Browser decode, GPU presentation and end-to-end keyboard latency are excluded.
+These are observations on a WSL/Linux test host, not Mac timings or a Photo Mechanic comparison. The OS cache was warm, so “cold” means a new PhotoCull cache, not a cold SD card. Three files and a few runs do not establish a general speed guarantee. A repeated after run measured 316.91 ms median RAW preview, 6.51 ms for the save burst, and 12.44 ms filename grouping. Browser decode, GPU presentation and end-to-end keyboard latency are excluded.
 
 ## Implemented
 
@@ -25,8 +25,7 @@ The GUI design pass additionally reuses filmstrip/rating nodes and supplies pane
 ## Reproduce
 
 ```sh
-source ~/.nvm/nvm.sh
-npm run perf:audit -- local /mnt/c/Users/alex/Pictures/photo-samples
+npm run perf:audit -- local /path/to/photo-fixtures
 ```
 
 This creates generated entries and state in a temporary directory and only reads the supplied RAW/JPEG folder. Reports are written under `artifacts/performance/`. The historical before/after JSON files are local, ignored artifacts.

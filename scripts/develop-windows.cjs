@@ -1,13 +1,16 @@
 // Verify the running Windows Tauri app through its WebView2 debug port.
 // Start npm start with WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9223.
-// node scripts/develop-windows.cjs [fixtureFolder] [newReportFolder]
+// node scripts/develop-windows.cjs FIXTURE_FOLDER [REPORT_FOLDER]
+// PHOTOCULL_FIXTURES may supply the fixture; reports default to artifacts/develop-windows.
 // Never launches Dehancer automatically; that round trip is an explicit manual check.
 const { chromium } = require('playwright-core');
 const fs = require('node:fs/promises'), path = require('node:path'), assert = require('node:assert/strict');
 const { createHash } = require('node:crypto'), sharp = require('sharp');
 async function main() {
-  const fixture = path.resolve(process.argv[2] || 'C:/Users/alex/Pictures/photo-samples');
-  const reports = path.resolve(process.argv[3] || path.join(fixture, 'develop-ui-test'));
+  const input = process.argv[2] || process.env.PHOTOCULL_FIXTURES;
+  assert.ok(input, 'Pass a copied fixture directory or set PHOTOCULL_FIXTURES.');
+  const fixture = path.resolve(input);
+  const reports = path.resolve(process.argv[3] || 'artifacts/develop-windows');
   await fs.mkdir(reports, { recursive: true });
   const sources = (await fs.readdir(fixture)).filter(n => /\.arw$/i.test(n));
   const hash = async file => createHash('sha256').update(await fs.readFile(file)).digest('hex');

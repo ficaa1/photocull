@@ -1,3 +1,5 @@
+// node scripts/image-export-windows.cjs SOURCE_FIXTURE_FOLDER
+// PHOTOCULL_FIXTURES may supply the source; all working copies/outputs use a new system-temp folder.
 // Real Tauri/WebView2 integration. Set PHOTOCULL_DATA_DIR to the same isolated temporary directory
 // as the app. Start it with a dedicated WEBVIEW2_USER_DATA_FOLDER and
 // WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9337 (or PHOTOCULL_CDP_PORT).
@@ -11,7 +13,8 @@ async function main() {
   if (process.platform !== 'win32') throw new Error('Run with Windows Node against the isolated Windows Tauri build.');
   assert.ok(process.env.PHOTOCULL_DATA_DIR, 'Set PHOTOCULL_DATA_DIR to the isolated app data directory.');
   assert.ok(path.resolve(process.env.PHOTOCULL_DATA_DIR).toLowerCase() !== path.resolve(process.env.LOCALAPPDATA, 'PhotoCull').toLowerCase(), 'Use isolated test data.');
-  const sourceFolder = process.argv[2] || 'C:/Users/alex/Pictures/photo-samples';
+  const sourceFolder = process.argv[2] || process.env.PHOTOCULL_FIXTURES;
+  assert.ok(sourceFolder, 'Pass a fixture directory or set PHOTOCULL_FIXTURES.');
   const root = await fs.mkdtemp(path.join(require('node:os').tmpdir(), 'photocull-export-windows-'));
   const fixture = path.join(root, 'fixtures'), output = path.join(root, 'output');
   const reports = path.resolve(process.argv[3] || 'artifacts/image-export-windows');

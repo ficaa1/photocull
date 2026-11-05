@@ -4,8 +4,14 @@
     "targets": "all",
     "category": "Photography",
     "shortDescription": "Preview-first RAW and JPEG culling",
-    "externalBin": ["binaries/node"],
-    "resources": { "backend/": "backend/" },
+    "externalBin": [
+      "binaries/node"
+    ],
+    "resources": {
+      "backend/": "backend/",
+      "../LICENSE": "LICENSE",
+      "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md"
+    },
     "macOS": {
       "minimumSystemVersion": "11.0",
       "entitlements": "../assets/entitlements.mac.plist"

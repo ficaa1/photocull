@@ -13,7 +13,8 @@
     "stage": "node scripts/stage-backend.cjs",
     "build": "node scripts/stage-backend.cjs && tauri build --config src-tauri/tauri.bundle.conf.json",
     "perf:audit": "node scripts/performance-audit.cjs",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "notices": "node scripts/notices.cjs"
   },
   "dependencies": {
     "@xmldom/xmldom": "^0.9.10",
@@ -24,5 +25,6 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.4",
     "playwright-core": "^1.58.2"
-  }
+  },
+  "license": "MIT"
 }

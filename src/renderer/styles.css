@@ -412,3 +412,6 @@ dialog::backdrop { background: #0a1015b0; }
 .handoff-storage p { margin: 0; }
 .handoff-storage button { text-align: left; }
 #develop-choice-dialog p { white-space: pre-wrap; max-height: 50vh; overflow: auto; }
+
+.about-notices { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; font-size: 12px; user-select: text; }
+[data-settings-page="about"] a { color: inherit; text-decoration: underline; }

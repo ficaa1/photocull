@@ -162,7 +162,7 @@
   <!-- End finished-image Export dialog. -->
   <dialog id="settings-dialog">
     <div class="dialog-header"><h2>Settings</h2><button class="close-dialog" aria-label="Close">×</button></div>
-    <nav class="settings-tabs" aria-label="Settings"><button data-settings-tab="general" class="active">General</button><button data-settings-tab="editors">External editors</button><button data-settings-tab="metadata">Metadata</button><button data-settings-tab="colors">Colors</button><button data-settings-tab="naming">File naming</button></nav>
+    <nav class="settings-tabs" aria-label="Settings"><button data-settings-tab="general" class="active">General</button><button data-settings-tab="editors">External editors</button><button data-settings-tab="metadata">Metadata</button><button data-settings-tab="colors">Colors</button><button data-settings-tab="naming">File naming</button><button data-settings-tab="about">About</button></nav>
     <section data-settings-page="editors" hidden>
       <div id="external-editors"></div>
       <div class="copy-actions"><button id="editor-add" class="button quiet" type="button">Add editor</button></div>
@@ -171,6 +171,15 @@
       <label class="toggle-row"><input type="checkbox" id="handoff-always"> Always use this folder (all sessions)</label>
       <label class="toggle-row"><input type="checkbox" id="handoff-delete-export"> Delete hand-off files after successful export</label>
       <p class="subtle small">Only hand-off files recorded by this session are cleaned up. External edits that have not been exported require an extra confirmation.</p>
+    </section>
+    <section data-settings-page="about" hidden>
+      <h3 id="about-name">PhotoCull</h3>
+      <p id="about-copyright">Copyright (C) 2026 Filip Biljic</p>
+      <p>MIT License · <a href="https://github.com/ficaa1/photocull" data-project-link>Repository</a> · <a href="https://www.filipbiljic.com/photocull/" data-project-link>Website</a></p>
+      <p>RAW engine: Lightcraft</p>
+      <p>Lens profiles: <a href="https://lensfun.github.io/" data-project-link>Lensfun contributors</a> · <a href="https://creativecommons.org/licenses/by-sa/3.0/" data-project-link>CC BY-SA 3.0</a>. Downloaded on request.</p>
+      <details><summary>Third-party notices</summary><pre id="about-notices" class="about-notices">Loading…</pre></details>
+      <p id="about-status" class="subtle small" role="status"></p>
     </section>
     <section data-settings-page="general">
       <!-- Develop preferences. -->

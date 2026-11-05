@@ -19,8 +19,10 @@ async function sample(input, rect) {
 }
 async function main() {
   assert.equal(process.platform,'win32');
+  assert.ok(process.argv[2], 'Pass an isolated temporary folder.');
   const root=path.resolve(process.argv[2]), pid=Number(process.argv[3]);
-  assert.ok(root && pid && !/[\\/]Pictures([\\/]|$)/i.test(root),'Use an isolated TEMP folder, never Pictures.');
+  const temp=path.resolve(require('node:os').tmpdir()), relative=path.relative(temp,root);
+  assert.ok(pid && relative && !relative.startsWith('..') && !path.isAbsolute(relative),'Use an isolated folder below the system temporary directory.');
   const input=path.join(root,'photos','sample-8582.tif'), reports=path.join(root,'verification');await fs.mkdir(reports,{recursive:true});
   const digest=async f=>createHash('sha256').update(await fs.readFile(f)).digest('hex');const before=await digest(input);
   const b=await chromium.connectOverCDP(`http://127.0.0.1:${process.argv[4]||9338}`);

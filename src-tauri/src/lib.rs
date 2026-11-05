@@ -21,7 +21,7 @@ use tauri_plugin_opener::OpenerExt;
 /// a file to remove or overwrite.
 const RENDERER_METHODS: &[&str] = &[
     "scan", "devices", "open-device", "test-destination", "copy-picks", "naming-preview", "cancel-copy", "decide", "decide-many",
-    "history", "metadata", "preview-status", "settings", "save-preset", "delete-preset", "settings-folder",
+    "app-info", "history", "metadata", "preview-status", "settings", "save-preset", "delete-preset", "settings-folder",
     "preview-settings", "preview-cache", "clear-preview-cache", "retry-preview", "focus", "visible", "export-xmp", "session-folder", "stats",
     "recipes", "save-recipe", "delete-recipe", "duplicate-recipe", "import-recipes", "export-recipes", "develop-get", "develop-set", "develop-folder", "develop-folder-check", "editor-preset", "editor-test", "handoff-usage", "develop-plan", "make-folder", "export-plan",
 ];
@@ -65,6 +65,16 @@ fn open_folder(app: AppHandle, path: String) -> Result<(), String> {
 }
 
 static FULLSCREEN: AtomicBool = AtomicBool::new(false);
+
+#[tauri::command]
+fn open_project_link(app: AppHandle, url: String) -> Result<(), String> {
+    if !["https://github.com/ficaa1/photocull", "https://www.filipbiljic.com/photocull/",
+        "https://lensfun.github.io/", "https://creativecommons.org/licenses/by-sa/3.0/"]
+        .contains(&url.as_str()) {
+        return Err("Unknown project link.".into());
+    }
+    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
 
 /// Query afresh for the window's current monitor. Source previews/cache/histograms
 /// are sRGB; WebView2 handles monitor changes and Windows ACM owns the final
@@ -217,7 +227,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![backend, pick_folder, pick_editor, pick_save_file, pick_recipe_file, open_folder, set_fullscreen, display_color_status, delete_photos, save_manifest,
+        .invoke_handler(tauri::generate_handler![backend, pick_folder, pick_editor, pick_save_file, pick_recipe_file, open_folder, open_project_link, set_fullscreen, display_color_status, delete_photos, save_manifest,
             develop::develop_result, develop::reveal_develop, develop::develop_info, develop::develop_render, develop::develop_tiffs, develop::develop_cancel, develop::edit_external, develop::clean_handoffs,
             develop::export_photos, develop::lens_database, develop::download_lens_database])
         .setup(|app| {

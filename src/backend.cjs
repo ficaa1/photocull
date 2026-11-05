@@ -82,6 +82,8 @@ async function start() {
   await recipes.init();
   previews.editorName = id => settings.value.editors.find(e=>e.id===id)?.name;
   const methods = {
+    'app-info': async () => ({ name: 'PhotoCull', version: require('../package.json').version, license: 'MIT',
+      copyright: 'Copyright (C) 2026 Filip Biljic', notices: await fs.readFile(path.join(__dirname, '..', 'THIRD_PARTY_NOTICES.md'), 'utf8') }),
     // Develop (rendering is in the shell, src-tauri/src/develop.rs).
     'recipes': () => ({ recipes: recipes.list(), defaultRecipe: settings.value.defaultRecipe, warning: recipes.warning }),
     'save-recipe': recipe => recipes.save(recipe || {}),

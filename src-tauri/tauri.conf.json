@@ -21,6 +21,8 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "license": "MIT",
+    "copyright": "Copyright (C) 2026 Filip Biljic"
   }
 }

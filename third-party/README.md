@@ -65,3 +65,14 @@ Lightcraft's existing decoder and lossless encoder. The added wrapper supplies
 quality-based lossy encoding; PhotoCull writes ICC, EXIF and XMP RIFF chunks.
 The wrapper's license texts and libwebp's BSD copyright and patent grant are
 included as `webp-LICENSE-*`, `libwebp-COPYING.txt`, `libwebp-PATENTS.txt`.
+
+## Complete runtime inventory
+
+[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) is generated offline by
+`scripts/notices.cjs`. `cargo-licenses.json` records lockfile-bound metadata and
+license texts; `rust-license-supplements.json` preserves omitted workspace
+licenses and provenance. `sources/*.crate` are unmodified MPL crate sources.
+Native versions and upstream sharp-libvips notices are recorded separately.
+The exact Windows ExifTool Strawberry Perl license archive is retained intact.
+See [licensing](../docs/licensing.md) for LGPL/native-runtime source requirements
+that must be resolved before distributing public installers.

@@ -14,12 +14,12 @@ async function temporary(t) { const dir = await fs.mkdtemp(path.join(os.tmpdir()
 test('settings migrate legacy preferences, persist custom presets and serialize concurrent edits', async t => {
   const dir = await temporary(t); await fs.writeFile(path.join(dir,'settings.json'),JSON.stringify({rawRendering:'small'}));
   const store = new SettingsStore(dir); await store.init(); assert.equal(store.value.rawRendering,'small');
-  const custom = normalizeSettings({ metadata: { creator:'Alex', keywords:['birds','birds'] }, naming:{template:'{text}_{seq:3}',text:'Trip',start:12} });
+  const custom = normalizeSettings({ metadata: { creator:'Test Photographer', keywords:['birds','birds'] }, naming:{template:'{text}_{seq:3}',text:'Trip',start:12} });
   const {preset} = await store.savePreset('Travel',custom);
   await store.update({...custom,activePreset:preset.id});
   await Promise.all([store.update({autoAdvance:false}),store.update({copyXmp:true})]);
   const reopened = new SettingsStore(dir); await reopened.init();
-  assert.equal(reopened.value.autoAdvance,false); assert.equal(reopened.value.copyXmp,true); assert.equal(reopened.value.metadata.creator,'Alex');
+  assert.equal(reopened.value.autoAdvance,false); assert.equal(reopened.value.copyXmp,true); assert.equal(reopened.value.metadata.creator,'Test Photographer');
   assert.equal(reopened.value.activePreset,preset.id); assert.deepEqual(reopened.value.metadata.keywords,['birds']);
   assert.equal(reopened.presets.find(p=>p.id===preset.id).naming.text,'Trip');
   assert.ok((await fs.readdir(path.join(dir,'settings','presets'))).includes(preset.id+'.json'));
@@ -34,10 +34,10 @@ test('disabled metadata fields preserve existing values; custom color mapping an
   const original=updateXmp('',{flag:'pick',rating:3},{metadata:{creator:'Original',keywords:['existing']}});
   const preserved=updateXmp(original,{flag:'reject',rating:1,color:'4'},{metadata:{writeRatings:false,writeLabels:false}});
   assert.deepEqual(readXmp(preserved),{flag:'pick',rating:3}); assert.match(preserved,/Original/);
-  const config=normalizeSettings({metadata:{creator:'Alex & friends',copyright:'© 2026',caption:'Bird <tree>',title:'Test',keywords:['existing','new'],rejectRating:false},colors:DEFAULTS.colors.map(c=>c.id==='4'?{...c,label:'To edit'}:c)});
+  const config=normalizeSettings({metadata:{creator:'Test Photographer & friends',copyright:'© 2026',caption:'Bird <tree>',title:'Test',keywords:['existing','new'],rejectRating:false},colors:DEFAULTS.colors.map(c=>c.id==='4'?{...c,label:'To edit'}:c)});
   const exported=updateXmp(original,{flag:'reject',rating:4,color:'4'},config);
   assert.match(exported,/xmp:Label="To edit"/); assert.match(exported,/xmp:Rating="4"/);
-  assert.match(exported,/Alex &amp; friends/); assert.match(exported,/Bird &lt;tree&gt;/);
+  assert.match(exported,/Test Photographer &amp; friends/); assert.match(exported,/Bird &lt;tree&gt;/);
   assert.equal((exported.match(/>existing</g)||[]).length,1); assert.match(exported,/>new</);
   const clear=updateXmp(exported,{flag:'pick',rating:2,color:''},config); assert.match(clear,/xmp:Label=""/);
 });
@@ -67,11 +67,11 @@ test('renamed RAW, companion and metadata share a stem; collisions skip every co
   for(const name of ['a.ARW','a.JPG','b.ARW'])await fs.writeFile(path.join(photos,name),name);
   const library=new Library(path.join(dir,'state')),session=await library.scan(photos);
   for(const item of session.items)await library.decide(session.id,item.id,{flag:'pick',color:'4',rating:5});
-  const config=normalizeSettings({metadata:{creator:'Alex'},naming:{template:'{text}_{capturedate}_{seq:3}',text:'Trip',start:7}});
+  const config=normalizeSettings({metadata:{creator:'Test Photographer'},naming:{template:'{text}_{capturedate}_{seq:3}',text:'Trip',start:7}});
   const copies=new TransferService({captureDate:async()=>'2026:09:26'});
   const result=await copies.copy(library.get(session.id),destination,{includeJpeg:true,includeXmp:true,naming:config.naming,metadataSettings:config});
   assert.equal(result.copied,2); assert.deepEqual((await fs.readdir(destination)).sort(),['Trip_20260926_007.ARW','Trip_20260926_007.JPG','Trip_20260926_007.xmp','Trip_20260926_008.ARW','Trip_20260926_008.xmp']);
-  const xmp=await fs.readFile(path.join(destination,'Trip_20260926_007.xmp'),'utf8');assert.match(xmp,/Alex/); assert.match(xmp,/xmp:Label="Blue"/);
+  const xmp=await fs.readFile(path.join(destination,'Trip_20260926_007.xmp'),'utf8');assert.match(xmp,/Test Photographer/); assert.match(xmp,/xmp:Label="Blue"/);
   const collision=await copies.copy(library.get(session.id),destination,{naming:{template:'same',text:'',start:1}});assert.equal(collision.skipped.length,2);assert.equal(collision.copied,0);
   assert.deepEqual((await fs.readdir(photos)).sort(),['a.ARW','a.JPG','b.ARW']);
 });
@@ -97,6 +97,6 @@ test('Dehancer camera-card folder defaults empty, requires an absolute path, and
   const dir=await temporary(t), store=new SettingsStore(dir); await store.init();
   assert.equal(store.value.handoffFolder,'');
   for(const value of ['relative/path','../Dehancer',123,'/tmp/bad\nfolder']) assert.throws(()=>normalizeSettings({dehancerFolder:value}));
-  for(const value of ['/tmp/Dehancer','C:\\Users\\alex\\Pictures\\Dehancer','\\\\server\\photos']) assert.equal(normalizeSettings({dehancerFolder:value}).handoffFolder,value);
+  for(const value of ['/tmp/Dehancer','C:\\PhotoFixtures\\Dehancer','\\\\server\\photos']) assert.equal(normalizeSettings({dehancerFolder:value}).handoffFolder,value);
   await store.update({dehancerFolder:dir});const reopened=new SettingsStore(dir);await reopened.init();assert.equal(reopened.value.handoffFolder,dir);
 });

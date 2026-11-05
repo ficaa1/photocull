@@ -918,10 +918,10 @@ mod export_tests {
             model: Some("camera".into()), serial_number: Some("serial".into()),
             city: Some("Paris".into()), keywords: vec!["existing".into()], ..Default::default()
         };
-        let overrides = json!({"creator": "Alex", "copyright": "Copyright", "title": "Title", "caption": "Caption", "keywords": ["existing", "new"]});
+        let overrides = json!({"creator": "Test Photographer", "copyright": "Copyright", "title": "Title", "caption": "Caption", "keywords": ["existing", "new"]});
         let o = ExportOptions { metadata: MetadataPolicy::AllExceptCamera, remove_location: true, ..Default::default() };
         let m = export_metadata(meta.clone(), &o, Some(&overrides), (120, 80)).unwrap();
-        assert_eq!(m.artist.as_deref(), Some("Alex"));
+        assert_eq!(m.artist.as_deref(), Some("Test Photographer"));
         assert_eq!(m.keywords, vec!["existing", "new"]);
         assert!(m.model.is_none() && m.serial_number.is_none() && m.city.is_none());
         assert_eq!((m.width, m.height), (Some(120), Some(80)));

@@ -74,8 +74,8 @@ test('export planner handles skip, overwrite, invalid names/dates and source pro
   const image = { id: 'c', name: 'IMG.jpg', path: path.join(root, 'IMG.jpg') };
   const protectedResult = await planExport([image], { folder: root, extension: 'jpg', conflict: 'overwrite' });
   assert.match(protectedResult[0].error, /replace a source/);
-  if (process.platform !== 'win32') {
-    const alias = path.join(root, 'alias'); await fs.symlink(root, alias);
+  {
+    const alias = path.join(root, 'alias'); await fs.symlink(root, alias, 'junction');
     assert.match((await planExport([image], { folder: alias, extension: 'jpg', conflict: 'overwrite' }))[0].error, /replace a source/);
   }
 });

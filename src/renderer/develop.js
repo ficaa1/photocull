@@ -80,7 +80,7 @@
       this.lensStatus = node('p',{id:'develop-lens-status',class:'subtle small'});
       this.lensDownload = button('Download lens database',() => this.downloadLens(),{id:'develop-lens-download'});
       lens.append(node('label',{class:'toggle-row'},[this.lensToggle,document.createTextNode(' Profile corrections')]),this.lensStatus,this.lensDownload,
-        node('p',{class:'subtle small',text:'Use manual Vignetting if the lens profile has no shading data.'})); this.addSliders(lens,'optics.');
+        node('p',{class:'subtle small',text:'Lensfun contributors · CC BY-SA 3.0. Downloaded on request, not bundled. Use manual Vignetting if the lens profile has no shading data.'})); this.addSliders(lens,'optics.');
       this.addSliders(this.group('Detail',false),'detail.');
       const many = this.group('Apply settings',true);
       this.pasteButton = button('Paste settings',() => this.paste(),{id:'develop-paste',disabled:''});

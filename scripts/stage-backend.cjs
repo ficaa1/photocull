@@ -17,13 +17,14 @@ function hostTriple() {
 }
 
 async function main() {
+  execFileSync(process.execPath, [path.join(__dirname, 'notices.cjs'), '--check'], { cwd: root, stdio: 'inherit' });
   const backend = path.join(tauri, 'backend');
   await fs.rm(backend, { recursive: true, force: true });
   await fs.mkdir(backend, { recursive: true });
   await fs.cp(path.join(root, 'src'), path.join(backend, 'src'), { recursive: true });
   // Decoder licenses and the LibRaw/WASM sources ship with the app (LGPL/CDDL).
   await fs.cp(path.join(root, 'third-party'), path.join(backend, 'third-party'), { recursive: true });
-  for (const file of ['package.json', 'package-lock.json']) await fs.copyFile(path.join(root, file), path.join(backend, file));
+  for (const file of ['package.json', 'package-lock.json', 'LICENSE', 'THIRD_PARTY_NOTICES.md']) await fs.copyFile(path.join(root, file), path.join(backend, file));
   const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
   execFileSync(npm, ['ci', '--omit=dev', '--no-audit', '--no-fund'], { cwd: backend, stdio: 'inherit', shell: process.platform === 'win32' });
 
