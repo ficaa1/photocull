@@ -114,7 +114,9 @@ function normalizeSettings(value = {}, base = DEFAULTS) {
     const ids = new Set(), names = new Set();
     result.exportPresets = value.exportPresets.map(p => {
       if (!p || typeof p.id !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(p.id) || ids.has(p.id)) throw new Error('Invalid export preset id.');
+      const builtin = EXPORT_PRESETS.find(b => b.id === p.id);
       const name = text(p.name, 80);
+      if (builtin && name !== builtin.name || !builtin && EXPORT_PRESETS.some(b => b.name.toLowerCase() === name.toLowerCase())) throw new Error('Built-in export preset names are reserved.');
       if (!name || names.has(name.toLowerCase())) throw new Error('Export preset names must be unique.');
       ids.add(p.id); names.add(name.toLowerCase());
       const normalized = normalizeSettings({ exportOptions: p.options || {}, naming: p.naming || NAMING, folders: { mode: p.subfolder ? 'named' : 'flat', name: p.subfolder || '' }, exportConflict: p.conflict || 'unique' }, { ...DEFAULTS, exportPresets: [] });
@@ -122,6 +124,7 @@ function normalizeSettings(value = {}, base = DEFAULTS) {
     });
     // Built-ins can be reset, but never removed (or relabeled as user presets).
     for (const preset of EXPORT_PRESETS) if (!ids.has(preset.id)) result.exportPresets.push(clone(preset));
+    if (result.exportPresets.length > 100) throw new Error('Use at most 100 export presets including built-ins.');
   } else if (base === DEFAULTS && 'exportOptions' in value) {
     result.exportPresets.push({ id: 'migrated-last-export', name: 'My last export', options: clone(result.exportOptions), naming: clone(result.naming), subfolder: result.exportSubfolder, conflict: result.exportConflict, builtin: false });
   }

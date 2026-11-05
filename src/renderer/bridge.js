@@ -83,7 +83,8 @@
       return file ? backend('import-recipes', file) : null;
     },
     exportRecipes: async (id = null) => {
-      const file = await host.pickSaveFile('recipes.photocull-recipe.json', 'PhotoCull recipe', 'json');
+      let file = await host.pickSaveFile('recipes.photocull-recipe.json', 'PhotoCull recipe', 'photocull-recipe.json');
+      if (file && !file.endsWith('.photocull-recipe.json')) file = file.replace(/\.json$/i, '') + '.photocull-recipe.json';
       return file ? backend('export-recipes', file, id) : null;
     },
     developGet: (session, id) => backend('develop-get', session, id),

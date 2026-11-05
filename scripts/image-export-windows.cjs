@@ -1,31 +1,48 @@
-// Real Tauri/WebView2 integration. Start npm start with a dedicated WEBVIEW2_USER_DATA_FOLDER and
-// WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9337. Never writes the fixtures.
+// Real Tauri/WebView2 integration. Set PHOTOCULL_DATA_DIR to the same isolated temporary directory
+// as the app. Start it with a dedicated WEBVIEW2_USER_DATA_FOLDER and
+// WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9337 (or PHOTOCULL_CDP_PORT).
+// Copies three RAW/JPEG pairs into a temporary fixture; never writes the source folder.
+// PHOTOCULL_EXPORT_QUICK=1 omits repeated full-size encodes; the initial real JPEG batch remains full size.
 const { chromium } = require('playwright-core');
 const fs = require('node:fs/promises'), path = require('node:path'), assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
 const { ExifTool } = require('exiftool-vendored');
 async function main() {
   if (process.platform !== 'win32') throw new Error('Run with Windows Node against the isolated Windows Tauri build.');
-  const fixture = process.argv[2] || 'C:\\Users\\alex\\Pictures\\photo-samples';
-  const output = path.join(fixture, 'export-ui-test', 'run-' + new Date().toISOString().replace(/[:.]/g, '-'));
-  const reports = path.resolve('artifacts/image-export-windows'); await fs.mkdir(output, { recursive: true }); await fs.mkdir(reports, { recursive: true });
-  const sources = (await fs.readdir(fixture)).filter(n => /\.arw$/i.test(n)).map(n => path.join(fixture, n));
-  const edited = path.join(fixture, 'dehancer-test', 'sample-8563.tif');
+  assert.ok(process.env.PHOTOCULL_DATA_DIR, 'Set PHOTOCULL_DATA_DIR to the isolated app data directory.');
+  assert.ok(path.resolve(process.env.PHOTOCULL_DATA_DIR).toLowerCase() !== path.resolve(process.env.LOCALAPPDATA, 'PhotoCull').toLowerCase(), 'Use isolated test data.');
+  const sourceFolder = process.argv[2] || 'C:/Users/alex/Pictures/photo-samples';
+  const root = await fs.mkdtemp(path.join(require('node:os').tmpdir(), 'photocull-export-windows-'));
+  const fixture = path.join(root, 'fixtures'), output = path.join(root, 'output');
+  const reports = path.resolve(process.argv[3] || 'artifacts/image-export-windows');
+  await fs.mkdir(fixture); await fs.mkdir(output); await fs.mkdir(reports, { recursive: true });
+  const names = (await fs.readdir(sourceFolder)).filter(n => /\.arw$/i.test(n)).sort().slice(0, 3);
+  for (const name of names) {
+    await fs.copyFile(path.join(sourceFolder, name), path.join(fixture, name));
+    const jpeg = name.replace(/\.arw$/i, '.JPG');
+    await fs.copyFile(path.join(sourceFolder, jpeg), path.join(fixture, jpeg));
+  }
+  const sources = names.map(n => path.join(fixture, n));
+  const edited = path.join(root, 'finished', 'sample-8563.tif'); await fs.mkdir(path.dirname(edited));
+  // A finished TIFF from a copied camera JPEG exercises the edited-image path without an editor round trip.
+  await require('sharp')(path.join(fixture, 'sample-8563.JPG')).tiff().toFile(edited);
   const hash = async file => createHash('sha256').update(await fs.readFile(file)).digest('hex');
   const before = await Promise.all([...sources, edited].map(hash));
   const { Library } = require('../src/library.cjs');
-  const testLibrary = new Library('C:\\Users\\alex\\src\\photocull-export-state');
+  const testLibrary = new Library(process.env.PHOTOCULL_DATA_DIR || path.join(root, 'state'));
   const prepared = await testLibrary.scan(fixture, false);
   const first = prepared.items.find(i => i.name === 'sample-8563.ARW');
   await testLibrary.developMark(prepared.id, first.id, { tiff: edited, edited: true });
   for (const i of prepared.items.filter(i => i.raw)) await testLibrary.decide(prepared.id, i.id, { flag: 'pick' });
-  const browser = await chromium.connectOverCDP('http://127.0.0.1:9337');
-  const page = browser.contexts()[0].pages().find(p => /127\.0\.0\.1/.test(p.url()));
+  const browser = await chromium.connectOverCDP('http://127.0.0.1:' + (process.env.PHOTOCULL_CDP_PORT || '9337'));
+  const page = browser.contexts()[0].pages().find(p => /127\.0\.0\.1|tauri\.localhost|tauri:\/\//.test(p.url()));
   assert.ok(page); page.setDefaultTimeout(30000);
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   const exif = new ExifTool(), results = [];
   try {
     await page.waitForFunction(() => window.photocull && window.PhotoCullExport);
+    const settingsFolder = await page.evaluate(async () => (await api.settings()).folder);
+    assert.equal(path.resolve(settingsFolder).toLowerCase(), path.resolve(process.env.PHOTOCULL_DATA_DIR, 'settings').toLowerCase(), 'Connected app must use the isolated test data directory.');
     await page.evaluate(async ({fixture, edited}) => {
       const s = await api.openPath(fixture, false); loadSession(s);
       syncSettings(await api.settings({ metadata: { creator: 'PhotoCull Export Test', copyright: 'Copyright PhotoCull Export Test', title: 'Export verification', caption: 'Real Sony and Dehancer export', keywords: ['PhotoCull', 'export-test'] } }));
@@ -58,9 +75,10 @@ async function main() {
       { label: 'tiff16', format: 'tiff', bitDepth: 16, tiffCompression: 'deflate' },
       { label: 'png16', format: 'png', bitDepth: 16 },
       { label: 'avif10', format: 'avif', bitDepth: 10, quality: 80 },
-      { label: 'webp', format: 'webp' },
+      { label: 'webp', format: 'webp', quality: 80 },
+      { label: 'webp-lossless', format: 'webp', webpLossless: true },
     ];
-    for (const source of ['edited', 'raw']) for (const resize of [false, true]) for (const config of configs) {
+    for (const source of ['edited', 'raw']) for (const resize of process.env.PHOTOCULL_EXPORT_QUICK ? [true] : [false, true]) for (const config of configs) {
       const label = `${source}-${resize ? '1200-screen' : 'full'}-${config.label}`;
       console.log('Exporting ' + label);
       const result = await page.evaluate(async ({ config, source, resize, output, label }) => {
@@ -123,7 +141,7 @@ async function main() {
     console.log('PASS native skip-existing, metadata policies, Display P3, JPEG size limit and cancellation');
     assert.deepEqual(await Promise.all([...sources, edited].map(hash)), before, 'Source fixtures changed');
     assert.deepEqual(errors, []);
-    await fs.writeFile(path.join(reports, 'results.json'), JSON.stringify({ passed: true, output, sourceHashesUnchanged: true, errors, results }, null, 2));
+    await fs.writeFile(path.join(reports, 'results.json'), JSON.stringify({ passed: true, output, sourceHashesUnchanged: true, fixture, temporaryRoot: root, errors, results }, null, 2));
     console.log('PASS real Windows Tauri exports; originals and Dehancer TIFF are byte-identical. ' + output);
   } finally { await exif.end(); await browser.close(); }
 }

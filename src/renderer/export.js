@@ -187,9 +187,9 @@
     $('destination').onclick = async () => { try { destination = await api.pickFolder('Export finished images to…') || destination; refresh(); } catch (e) { $('status').textContent = (e.message || String(e)); } };
     $('folder').oninput = () => { destination = $('folder').value.trim(); refresh(); };
     $('close').onclick = () => { if (!running) dialog.close(); };
-    dialog.addEventListener('cancel', e => { if (running) { e.preventDefault(); $('status').textContent = 'Cancel the export first. The current encoder must finish before it can stop.'; } });
+    dialog.addEventListener('cancel', e => { if (running) { e.preventDefault(); $('status').textContent = 'Cancel the export first. Active encoders must finish before it can stop.'; } });
     api.onExportProgress(p => { if (running) { $('progress').max = Math.max(1, p.total); $('progress').value = p.done; $('status').textContent = `${p.done} / ${p.total}${p.name ? ' · ' + p.name : ''}`; } });
-    $('cancel').onclick = async () => { cancelRequested = true; $('cancel').disabled = true; $('status').textContent = 'Cancelling after the current encoder finishes…'; try { await api.developCancel(); } catch (e) { $('status').textContent = (e.message || String(e)); } };
+    $('cancel').onclick = async () => { cancelRequested = true; $('cancel').disabled = true; $('status').textContent = 'Cancelling after active encoders finish…'; try { await api.developCancel(); } catch (e) { $('status').textContent = (e.message || String(e)); } };
     $('reveal').onclick = () => { void api.revealDestination(destination).catch(e => { $('status').textContent = (e.message || String(e)); }); };
     $('start').onclick = async () => {
       if (running || $('start').disabled || state.busy) return;
@@ -211,7 +211,8 @@
         state.settings = await api.settings({ exportOptions: o, exportSubfolder: $('subfolder').value, exportConflict: $('conflict').value, naming: readNaming('image-export') });
         lastUsed = o; $('progress').hidden = false; $('progress').value = 0; $('progress').max = Math.max(1, items.length);
         const result = items.length ? await api.exportPhotos(session, items, o, $('conflict').value === 'overwrite', state.settings.metadata) : { results: [] };
-        const rows = [...plan.filter(p => p.skip).map(p => ({ ...p, status: 'exists', error: p.reason })), ...result.results];
+        const completed = new Map(result.results.map(r => [r.id, r]));
+        const rows = plan.map(p => p.skip ? { ...p, status: 'exists', error: p.reason } : completed.get(p.id)).filter(Boolean);
         const count = status => rows.filter(r => status.includes(r.status)).length;
         $('status').textContent = `${count(['exported'])} exported · ${count(['exists', 'cancelled'])} skipped · ${count(['failed'])} failed`;
         $('results').textContent = rows.filter(r => r.status !== 'exported').map(r => `${snapshot.find(i => i.id === r.id)?.name || r.id}: ${r.error || (r.status === 'cancelled' ? 'Cancelled' : 'Already exists')}`).join('\n');
@@ -219,7 +220,7 @@
       } catch (e) { $('status').textContent = (e.message || String(e)); }
       finally {
         running = false; state.busy = false;
-        dialog.querySelectorAll('input,select,button').forEach(el => { el.disabled = false; }); refresh();
+        dialog.querySelectorAll('input,select,button').forEach(el => { el.disabled = false; }); presetChoices(); refresh();
       }
     };
     document.getElementById('image-export').onclick = open;

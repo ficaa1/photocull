@@ -125,3 +125,16 @@ test('export presets migrate last settings and retain every output and naming op
   assert.equal(options({format:'webp',webpLossless:true}).webpLossless,true);
   assert.equal(options({format:'avif'}).avifSpeed,'faster');
 });
+
+test('saved export presets migrate once across settings restart and edits preserve order', async t => {
+  const {root} = await fixture(t), {SettingsStore} = require('../src/settings.cjs');
+  await fs.writeFile(path.join(root,'settings.json'),JSON.stringify({exportOptions:{format:'tiff',bitDepth:16,colorSpace:'proPhoto',metadata:'copyright'},exportSubfolder:'Archive',exportConflict:'overwrite',naming:{template:'{filename}_{seq:3}',start:9}}));
+  const store = new SettingsStore(root); await store.init();
+  const migrated = store.snapshot().exportPresets.find(p=>p.id==='migrated-last-export');
+  assert.equal(migrated.options.colorSpace,'proPhoto');assert.equal(migrated.options.metadata,'copyright');assert.equal(migrated.conflict,'overwrite');
+  const ordered = [...store.snapshot().exportPresets].reverse(); await store.update({exportPresets:ordered});
+  const reopened = new SettingsStore(root); await reopened.init();
+  assert.deepEqual(reopened.snapshot().exportPresets.map(p=>p.id),ordered.map(p=>p.id));
+  assert.equal(reopened.snapshot().exportPresets.filter(p=>p.id==='migrated-last-export').length,1);
+  assert.throws(()=>normalizeSettings({exportPresets:[{...migrated,id:'user',name:'Full-size JPEG'}]}),/reserved/);
+});

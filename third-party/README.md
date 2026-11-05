@@ -54,3 +54,14 @@ models are not included by these UI adaptations.
 
 Lensfun data is not bundled. The native engine downloads it only on request,
 with its CC BY-SA 3.0 notice stored beside the downloaded data.
+
+## Lossy WebP
+
+`webp` 0.3.1 (MIT OR Apache-2.0), https://github.com/jaredforth/webp,
+wraps `libwebp-sys` 0.9.6. The latter compiles its bundled libwebp C sources
+with `cc` on Windows and macOS; no system WebP library or image crate is
+required (`webp`'s default image integration is disabled). PhotoCull uses
+Lightcraft's existing decoder and lossless encoder. The added wrapper supplies
+quality-based lossy encoding; PhotoCull writes ICC, EXIF and XMP RIFF chunks.
+The wrapper's license texts and libwebp's BSD copyright and patent grant are
+included as `webp-LICENSE-*`, `libwebp-COPYING.txt`, `libwebp-PATENTS.txt`.

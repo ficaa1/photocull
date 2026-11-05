@@ -11,8 +11,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out = PathBuf::from(args.next().expect("report directory")); std::fs::create_dir_all(&out)?;
     let mut files: Vec<_> = std::fs::read_dir(input)?.filter_map(Result::ok).map(|e| e.path()).filter(|p| p.extension().is_some_and(|s| s.eq_ignore_ascii_case("arw"))).collect(); files.sort(); files.truncate(3);
     assert_eq!(files.len(), 3);
+    let timings_only = args.next().as_deref() == Some("timings");
     let mut measurements = Vec::new();
-    for file in &files {
+    for file in files.iter().filter(|_| !timings_only) {
         let bytes = std::fs::read(file)?;
         let (src, mut info) = lightcraft_engine::files::load_bytes(&bytes, usize::MAX)?;
         let raw = lightcraft_raw::probe_info(&bytes)?;
@@ -36,12 +37,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("{row}"); measurements.push(row);
         }
     }
-    std::fs::write(out.join("recipes.json"), serde_json::to_vec_pretty(&measurements)?)?;
+    if !timings_only { std::fs::write(out.join("recipes.json"), serde_json::to_vec_pretty(&measurements)?)?; }
     let mut timings = Vec::new();
     for format in [ExportFormat::Jpeg, ExportFormat::Jxl, ExportFormat::Avif, ExportFormat::Webp] {
-        for after in [false, true] {
+        for mode in ["before", "after", "after-lossy"] {
+            if mode == "after-lossy" && format != ExportFormat::Webp { continue; }
+            let after = mode != "before";
             let start = Instant::now();
-            let encode = |file: &PathBuf| -> Result<u128, String> {
+            let encode = |file: &PathBuf| -> Result<serde_json::Value, String> {
                 let start = Instant::now();
                 let bytes = std::fs::read(file).map_err(|e|e.to_string())?;
                 let (src, mut info) = lightcraft_engine::files::load_bytes(&bytes, usize::MAX)?;
@@ -54,15 +57,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let size = lightcraft_pipeline::native_output_size(src.width,src.height,&s);
                 let r = lightcraft_pipeline::render(&src,&info,&s,&RenderRequest::fit(size.0.round() as usize,size.1.round() as usize));
                 // Lossless WebP in both batches isolates concurrency; also time the new lossy encoder below.
-                let extra = ExtraOptions {webp_lossless:true,..Default::default()};
+                let extra = ExtraOptions {webp_lossless:mode != "after-lossy",..Default::default()};
+                let encoder_start = Instant::now();
                 let bytes = if after {export_encode::encode_rendered(&r,&o,&extra,None)?} else {lightcraft_engine::export::encode_rendered(&r,&o,None)?};
-                std::fs::write(out.join(format!("{}-{}-{}.{}",file.file_stem().unwrap().to_string_lossy(), if after {"after"} else {"before"},"full",format.extension())),bytes).map_err(|e|e.to_string())?;
-                if after && format == ExportFormat::Webp {
-                    let t=Instant::now(); let b=export_encode::encode_rendered(&r,&o,&ExtraOptions::default(),None)?;
-                    println!("{}",json!({"file":file.file_name().unwrap().to_string_lossy(),"lossyWebpEncodeMs":t.elapsed().as_millis(),"bytes":b.len()}));
-                    std::fs::write(out.join(format!("{}-lossy.webp",file.file_stem().unwrap().to_string_lossy())),b).map_err(|e|e.to_string())?;
-                }
-                Ok(start.elapsed().as_millis())
+                let encoder_ms = encoder_start.elapsed().as_millis(); let encoded_bytes = bytes.len();
+                std::fs::write(out.join(format!("{}-{}-{}.{}",file.file_stem().unwrap().to_string_lossy(), mode,"full",format.extension())),bytes).map_err(|e|e.to_string())?;
+                Ok(json!({"file":file.file_name().unwrap().to_string_lossy(),"totalMs":start.elapsed().as_millis(),"encodeMs":encoder_ms,"bytes":encoded_bytes}))
             };
             let per_file: Vec<_> = if after {
                 // Same half-core, maximum-three policy as export_photos.
@@ -74,7 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 rows.into_iter().collect::<Result<Vec<_>,_>>()?
             } else {files.iter().map(encode).collect::<Result<Vec<_>,_>>()?};
-            let row=json!({"format":format,"after":after,"batchMs":start.elapsed().as_millis(),"perFileMs":per_file}); println!("{row}");timings.push(row);
+            let row=json!({"format":format,"mode":mode,"batchMs":start.elapsed().as_millis(),"files":per_file}); println!("{row}");timings.push(row);
             std::fs::write(out.join("timings.json"),serde_json::to_vec_pretty(&timings)?)?;
         }
     }

@@ -4,7 +4,8 @@ const {RecipeStore, parseRecipeFile} = require('../src/develop.cjs');
 test('recipe exchange validates version, schema, names, settings and size before writing', () => {
   const row = {type:'photocull-recipe',version:1,name:'My recipe',settings:{light:{exposure:0.2}}};
   assert.equal(parseRecipeFile(JSON.stringify(row))[0].name,'My recipe');
-  for(const patch of [{version:2},{type:'other'},{name:''},{settings:[]},{settings:null},{settings:{text:'a'.repeat(65536)}}])assert.throws(()=>parseRecipeFile(JSON.stringify({...row,...patch})));
+  for(const patch of [{version:2},{type:'other'},{name:''},{settings:[]},{settings:null},{settings:{light:{exposure:9}}},{settings:{light:'bad'}},{settings:{text:'a'.repeat(65536)}}])assert.throws(()=>parseRecipeFile(JSON.stringify({...row,...patch})));
+  assert.throws(()=>parseRecipeFile('{"type":"photocull-recipe","version":1,"name":"bad","settings":{"__proto__":{"x":1}}}'));
   assert.throws(()=>parseRecipeFile(' '.repeat(1024*1024+1)));
   assert.throws(()=>parseRecipeFile(JSON.stringify({type:'photocull-recipe-bundle',version:1,recipes:[row,{...row,name:''}]})));
 });

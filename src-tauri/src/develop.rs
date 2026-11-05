@@ -716,8 +716,7 @@ pub async fn export_photos(
         let dest = PathBuf::from(&item.dest);
         if !dest.is_absolute() { return Err("Export destinations must be absolute and unique.".into()); }
         let parent = dest.parent().ok_or("Invalid export destination.")?;
-        std::fs::create_dir_all(parent).map_err(|e|e.to_string())?;
-        let resolved = std::fs::canonicalize(parent).map_err(|e|e.to_string())?.join(dest.file_name().ok_or("Invalid export filename.")?);
+        let resolved = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf()).join(dest.file_name().ok_or("Invalid export filename.")?);
         if !destinations.insert(resolved.to_string_lossy().to_lowercase()) { return Err("Export destinations must be absolute and unique.".into()); }
     }
     let engine = engine.inner().clone();
@@ -857,11 +856,19 @@ mod export_tests {
         });
         assert_eq!(rows, (0..12).collect::<Vec<_>>()); assert!(peak.load(Ordering::SeqCst) <= 3); assert!(peak.load(Ordering::SeqCst) > 1);
         let cancelled = AtomicBool::new(false);
-        let rows = ordered_export_map((0..20).collect(), 1, |i| {
+        let barrier = std::sync::Barrier::new(3);
+        let rows = ordered_export_map((0..20).collect(), 3, |i| {
             if cancelled.load(Ordering::SeqCst) { return None; }
-            if i == 2 { cancelled.store(true, Ordering::SeqCst); } Some(i)
+            if i < 3 {
+                barrier.wait();
+                if i == 0 { cancelled.store(true, Ordering::SeqCst); }
+                barrier.wait();
+            }
+            Some(i)
         });
         assert_eq!(rows[..3], [Some(0), Some(1), Some(2)]); assert!(rows[3..].iter().all(Option::is_none));
+        let failures = ordered_export_map((0..5).collect(), 3, |i| if i == 2 { Err("codec error") } else { Ok(i) });
+        assert_eq!(failures, vec![Ok(0), Ok(1), Err("codec error"), Ok(3), Ok(4)]);
     }
 
     #[test]
