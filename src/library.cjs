@@ -12,7 +12,9 @@ const hash = s => createHash('sha256').update(s).digest('hex');
 const filenameOrder = new Intl.Collator(undefined, { numeric: true });
 const decision = (d = {}) => ({ flag: ['none', 'pick', 'reject'].includes(d.flag) ? d.flag : 'none',
   rating: Number.isInteger(d.rating) && d.rating >= 0 && d.rating <= 5 ? d.rating : 0,
-  color: d.color === '' || /^[1-8]$/.test(d.color) ? d.color : null });
+  color: d.color === '' || /^[1-8]$/.test(d.color) ? d.color : null,
+  // In PhotoCull's own Trash: hidden from the other views, still on disk.
+  trashed: d.trashed === true });
 
 function groupFiles(files) {
   const groups = new Map();
@@ -104,8 +106,8 @@ class Library {
   }
 
   publicSession(s) {
-    return { id: s.id, folder: s.folder, items: s.items.map(({ id, name, size, raw, companion, flag, rating, color, source, edited }) =>
-      ({ id, name, size, raw, paired: !!companion, flag, rating, color, source, edited })), warnings: s.warnings, recursive: s.recursive, removable: s.removable };
+    return { id: s.id, folder: s.folder, items: s.items.map(({ id, name, size, raw, companion, flag, rating, color, trashed, source, edited }) =>
+      ({ id, name, size, raw, paired: !!companion, flag, rating, color, trashed, source, edited })), warnings: s.warnings, recursive: s.recursive, removable: s.removable };
   }
 
   get(id) {

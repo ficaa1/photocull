@@ -43,7 +43,7 @@ class TransferService {
   async close() { this.cancel(); await this.active?.work?.catch(() => {}); await this.metadataWriter.close(); }
   async run(operation, session, destination, options) {
     // Capture decisions before any filesystem or destination-dialog delays.
-    const picks = session.items.filter(i => i.flag === 'pick').map(i => ({ ...i }));
+    const picks = session.items.filter(i => i.flag === 'pick' && !i.trashed).map(i => ({ ...i }));
     if (!picks.length) throw new Error('Pick at least one photo before copying.');
     const signal = operation.controller.signal;
     const root = await fs.realpath(destination), sourceRoot = await fs.realpath(session.folder);

@@ -30,6 +30,8 @@ matchMedia('(max-width: 900px)').addEventListener('change', applyPaneLayout);
 applyPaneLayout();
 const imageView = new PhotoCullView.ImageView($('image-viewport'), $('review-image'), { onToggle: point => toggleZoom(point) });
 
+// The open Del / Shift+Del confirmation, if any: { id, mode, session, filter }.
+let deletePrompt = null;
 function toast(message) {
   $('toast').textContent = message; $('toast').hidden = false;
   clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 5500);
@@ -38,8 +40,9 @@ function photo() { return state.session?.items.find(i => i.id === state.selected
 function reviewed(item) { return item.flag !== 'none' || item.rating > 0 || !!item.color; }
 function filtered() {
   return (state.session?.items ?? []).filter(item => {
-    const match = state.filter === 'all' || state.filter === 'unreviewed' && !reviewed(item) ||
-      state.filter === 'rated' && item.rating > 0 || item.flag === state.filter;
+    // Trashed photos only appear in the Trash view.
+    const match = state.filter === 'trash' ? item.trashed : !item.trashed && (state.filter === 'all' || state.filter === 'unreviewed' && !reviewed(item) ||
+      state.filter === 'rated' && item.rating > 0 || item.flag === state.filter);
     return match && (!state.colorFilter || colorOf(item) === state.colorFilter) && item.name.toLowerCase().includes(state.query);
   });
 }
@@ -117,8 +120,9 @@ api.onDevices(receiveDevices);
 void api.devices().then(receiveDevices).catch(error => { state.deviceError = error.message; renderDevices(); });
 
 function renderCounts() {
-  const items = state.session?.items ?? [];
+  const all = state.session?.items ?? [], items = all.filter(i => !i.trashed);
   const count = items.filter(reviewed).length;
+  $('count-trash').textContent = all.length - items.length;
   $('count-all').textContent = items.length;
   $('count-unreviewed').textContent = items.length - count;
   for (const flag of ['pick', 'reject']) $(`count-${flag}`).textContent = items.filter(i => i.flag === flag).length;
@@ -141,14 +145,18 @@ function render() {
   $('review-mode').setAttribute('aria-pressed', String(state.mode === 'review')); $('grid-mode').setAttribute('aria-pressed', String(state.mode === 'grid'));
   $('review-mode').classList.toggle('active', state.mode === 'review');
   $('grid-mode').classList.toggle('active', state.mode === 'grid');
-  const titles = { all: 'Photos', unreviewed: 'Unreviewed', pick: 'Picks', reject: 'Rejects', rated: 'Rated' };
+  const titles = { all: 'Photos', unreviewed: 'Unreviewed', pick: 'Picks', reject: 'Rejects', rated: 'Rated', trash: 'Trash' };
   $('view-title').textContent = loaded ? titles[state.filter] : 'Photos';
   $('view-count').textContent = loaded ? `${items.length}` : '';
-  const rejects = state.session?.items.filter(i => i.flag === 'reject').length ?? 0;
+  const rejects = scopeItems('reject').length, trashed = scopeItems('trash').length, locked = state.busy || state.copy.running || state.deleting;
   $('delete-rejects').hidden = !loaded || state.filter !== 'reject' || !rejects;
-  $('delete-rejects').disabled = state.busy || state.copy.running || state.deleting;
+  $('delete-rejects').disabled = locked;
   $('delete-rejects').querySelector('span').textContent = `Delete ${rejects} reject${rejects === 1 ? '' : 's'}`;
-  if (state.filter !== 'pick') hideDeletePrompt();
+  $('trash-restore').hidden = !loaded || state.filter !== 'trash' || !trashed;
+  $('empty-trash').hidden = !loaded || state.filter !== 'trash' || !trashed;
+  $('trash-restore').disabled = $('empty-trash').disabled = locked;
+  // A prompt is about one photo in one view; it goes away once either changes.
+  if (deletePrompt && (state.filter !== deletePrompt.filter || state.selected !== deletePrompt.id)) hideDeletePrompt();
   renderSelection();
   if (state.mode === 'grid') requestGrid();
 }
@@ -393,13 +401,15 @@ function navigate(delta) {
 }
 function setMode(mode) { if (mode === 'grid' && state.fullscreen) void setFullscreen(false); state.generation++; state.mode = mode; state.zoom = false; render(); }
 
-async function decide(patch) {
-  const item = photo(); if (!item) return;
+async function decide(patch, item = photo()) {
+  if (!item) return;
   const sessionId = state.session.id;
   const items = filtered(), index = items.findIndex(i => i.id === item.id);
   const nextId = items[index + 1]?.id ?? items[index - 1]?.id;
   Object.assign(item, patch, { edited: true });
-  if (patch.flag && state.settings.autoAdvance && nextId) state.selected = nextId;
+  // Trashing or restoring takes the photo out of the current view.
+  if ('trashed' in patch && state.selected === item.id) state.selected = nextId ?? null;
+  else if (patch.flag && state.settings.autoAdvance && nextId) state.selected = nextId;
   state.pendingSaves++; setStatus('Saving…');
   render();
   try {
@@ -505,7 +515,7 @@ $('export').onclick = () => {
   $('export-dialog').showModal();
 };
 function renderCopyOptions() {
-  const picks = state.session?.items.filter(i => i.flag === 'pick') || [];
+  const picks = state.session?.items.filter(i => i.flag === 'pick' && !i.trashed) || [];
   const total = picks.reduce((bytes, i) => bytes + i.size, 0);
   $('copy-scope').textContent = `${picks.length} pick${picks.length === 1 ? '' : 's'} · ${fileSize(total)}${$('copy-jpeg').checked ? ' + JPEGs' : ''}`;
   $('copy-start').disabled = state.copy.running || state.deleting || state.pendingSaves > 0 || !picks.length || !state.copy.destination || $('copy-folder-mode').value === 'named' && !$('copy-folder-name').value.trim();
@@ -608,7 +618,16 @@ document.addEventListener('keydown', event => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); void history(event.shiftKey ? 'redo' : 'undo'); return; }
   if (event.altKey && /^[0-8]$/.test(event.key)) { event.preventDefault(); void decide({ color: event.key === '0' ? '' : event.key }); return; }
   if (event.ctrlKey || event.metaKey || event.altKey) return;
-  if ((event.key === 'Delete' || event.key === 'Backspace') && state.filter === 'pick') { event.preventDefault(); showDeletePrompt(); return; }
+  if (event.key === 'Delete' || event.key === 'Backspace') {
+    // Del moves the photo to PhotoCull's Trash; in the Trash view it deletes
+    // for real. Shift+Del always asks to delete permanently.
+    event.preventDefault();
+    if (event.shiftKey) showDeletePrompt('permanent');
+    else if (state.filter === 'trash') showDeletePrompt(deleteMode());
+    else void moveToTrash();
+    return;
+  }
+  if (event.key.toLowerCase() === 'r' && state.filter === 'trash') { event.preventDefault(); void restoreFromTrash(); return; }
   if (event.key.toLowerCase() === 'b') { event.preventDefault(); togglePane('sources'); return; }
   if (event.key.toLowerCase() === 'i') { event.preventDefault(); togglePane('details'); return; }
   if (event.key === 'ArrowLeft') { event.preventDefault(); navigate(-1); }
@@ -634,7 +653,8 @@ document.addEventListener('keydown', event => {
 
 // Deletion. Camera cards have no trash, so photos there are always deleted
 // permanently; elsewhere the user's last choice is remembered in settings.
-let deletePrompt = null;
+// PhotoCull's own Trash view is "Trash"; the operating system's is named here.
+const systemTrash = api.platform === 'win32' ? 'Recycle Bin' : 'system Trash';
 function trashAvailable() { return api.canTrash && !state.session?.removable; }
 function deleteMode() { return trashAvailable() ? state.settings.deleteMode || 'trash' : 'permanent'; }
 function plural(count, word) { return `${count} ${word}${count === 1 ? '' : 's'}`; }
@@ -642,12 +662,12 @@ async function deletePhotos(ids, mode) {
   if (!state.session || !ids.length || state.deleting || state.copy.running || state.busy) return null;
   const sessionId = state.session.id;
   // Copying or opening another folder mid-deletion is refused here and in the backend.
-  state.deleting = true; setDeleting(true); setStatus(mode === 'trash' ? 'Moving to Trash…' : 'Deleting…');
+  state.deleting = true; setDeleting(true); setStatus(mode === 'trash' ? `Moving to the ${systemTrash}…` : 'Deleting…');
   try {
     const result = await api.deletePhotos(sessionId, ids, mode);
     if (state.session?.id !== sessionId) return result;
     removeFromSession(result.deleted);
-    const done = mode === 'trash' ? `Moved ${plural(result.deleted.length, 'photo')} to Trash` : `Deleted ${plural(result.deleted.length, 'photo')}`;
+    const done = mode === 'trash' ? `Moved ${plural(result.deleted.length, 'photo')} to the ${systemTrash}` : `Deleted ${plural(result.deleted.length, 'photo')}`;
     toast(result.warning ? `${done}. ${result.warning}` : result.failures.length ? `${done}; ${result.failures.length} failed: ${result.failures[0].name}: ${result.failures[0].reason}` : done);
     setStatus(result.warning ? 'Session not saved' : 'Saved', !!result.warning);
     return result;
@@ -672,20 +692,33 @@ function removeFromSession(ids) {
   $('folder-detail').textContent = `${state.session.items.length} photos`;
   $('export').disabled = !state.session.items.length;
 }
-function showDeletePrompt() {
+async function moveToTrash() {
   const item = photo();
-  if (!item || item.flag !== 'pick' || state.deleting || state.copy.running || state.busy) return;
-  const mode = deleteMode();
-  deletePrompt = { id: item.id, mode, session: state.session.id };
-  $('delete-prompt-text').textContent = `${mode === 'trash' ? 'Move' : 'Permanently delete'} ${item.name}${item.paired ? ' + JPEG' : ''}${mode === 'trash' ? ' to Trash' : ''}?`;
+  if (!item || item.trashed || state.deleting) return;
+  await decide({ trashed: true }, item);
+  toast(`Moved ${item.name} to Trash · ${api.platform === 'darwin' ? '⌘' : 'Ctrl+'}Z to undo`);
+}
+async function restoreFromTrash() {
+  const item = photo();
+  if (!item?.trashed || state.deleting) return;
+  await decide({ trashed: false }, item);
+  toast(`Restored ${item.name}`);
+}
+$('trash-restore').onclick = () => void restoreFromTrash();
+function showDeletePrompt(mode) {
+  const item = photo();
+  if (!item || state.deleting || state.copy.running || state.busy) return;
+  if (!trashAvailable()) mode = 'permanent';
+  deletePrompt = { id: item.id, mode, session: state.session.id, filter: state.filter };
+  $('delete-prompt-text').textContent = `${mode === 'trash' ? 'Move' : 'Permanently delete'} ${item.name}${item.paired ? ' + JPEG' : ''}${mode === 'trash' ? ` to the ${systemTrash}` : ''}?`;
   $('delete-prompt').hidden = false;
 }
 function hideDeletePrompt() { deletePrompt = null; $('delete-prompt').hidden = true; }
 async function confirmDeletePrompt() {
-  const { id, mode, session } = deletePrompt; hideDeletePrompt();
-  // Only delete the photo the prompt named, and only while it is still a pick.
-  const item = state.session?.id === session && state.filter === 'pick' ? state.session.items.find(i => i.id === id) : null;
-  if (!item || item.flag !== 'pick' || document.querySelector('dialog[open]')) return;
+  const { id, mode, session, filter } = deletePrompt; hideDeletePrompt();
+  // Only delete the photo the prompt named, in the view it was asked from.
+  const item = state.session?.id === session && state.filter === filter && state.selected === id ? state.session.items.find(i => i.id === id) : null;
+  if (!item || document.querySelector('dialog[open]')) return;
   await deletePhotos([id], mode);
 }
 document.addEventListener('pointerdown', () => { if (deletePrompt) hideDeletePrompt(); }, true);
@@ -694,22 +727,31 @@ document.addEventListener('pointerdown', () => { if (deletePrompt) hideDeletePro
 let deleteChoice = 'trash', deleteSaves = 0;
 function renderDeleteMode() {
   const trash = trashAvailable(), mode = trash ? deleteChoice : 'permanent';
-  $('delete-mode-trash').disabled = !trash;
+  $('delete-mode-trash').disabled = !trash; $('delete-mode-trash').nextElementSibling.textContent = `Move to ${systemTrash}`;
   $('delete-mode-trash').checked = mode === 'trash'; $('delete-mode-permanent').checked = mode === 'permanent';
   $('delete-note').textContent = !api.canTrash ? 'The Trash is only available in the desktop app. Files are deleted permanently.'
     : state.session?.removable ? 'Camera cards have no Trash, so these files are deleted permanently.'
-    : mode === 'permanent' ? 'Files are deleted immediately and cannot be recovered.' : 'You can restore them from the Trash.';
-  $('delete-confirm').textContent = mode === 'trash' ? 'Move to Trash' : 'Delete permanently';
+    : mode === 'permanent' ? 'Files are deleted immediately and cannot be recovered.' : `You can restore them from the ${systemTrash}.`;
+  $('delete-confirm').textContent = mode === 'trash' ? `Move to ${systemTrash}` : 'Delete permanently';
 }
-$('delete-rejects').onclick = () => {
-  const rejects = state.session?.items.filter(i => i.flag === 'reject') ?? [];
+// The delete dialog empties either the Rejects view or PhotoCull's Trash.
+let deleteScope = 'reject';
+function scopeItems(scope) {
+  const items = state.session?.items ?? [];
+  return scope === 'trash' ? items.filter(i => i.trashed) : items.filter(i => i.flag === 'reject' && !i.trashed);
+}
+$('delete-rejects').onclick = () => openDeleteDialog('reject');
+$('empty-trash').onclick = () => openDeleteDialog('trash');
+function openDeleteDialog(scope) {
+  const rejects = scopeItems(scope);
   if (!rejects.length) return;
+  deleteScope = scope;
   const bytes = rejects.reduce((total, i) => total + i.size, 0), pairs = rejects.filter(i => i.paired).length;
-  $('delete-title').textContent = `Delete ${plural(rejects.length, 'rejected photo')}`;
+  $('delete-title').textContent = scope === 'trash' ? `Empty trash · ${plural(rejects.length, 'photo')}` : `Delete ${plural(rejects.length, 'rejected photo')}`;
   $('delete-scope').textContent = `${fileSize(bytes)}${pairs ? ` · ${plural(pairs, 'RAW + JPEG pair')}` : ''}. Companion JPEGs and XMP sidecars are deleted with them.`;
   $('delete-status').textContent = ''; $('delete-results').hidden = true; $('delete-confirm').disabled = false;
   deleteChoice = deleteMode(); renderDeleteMode(); $('delete-dialog').showModal(); $('delete-cancel').focus();
-};
+}
 for (const input of document.querySelectorAll('input[name=delete-mode]')) input.onchange = async () => {
   deleteChoice = input.value; renderDeleteMode();
   state.settings = { ...state.settings, deleteMode: input.value };
@@ -718,10 +760,10 @@ for (const input of document.querySelectorAll('input[name=delete-mode]')) input.
 };
 $('delete-cancel').onclick = () => $('delete-dialog').close();
 $('delete-confirm').onclick = async () => {
-  // Re-read the rejects at confirm time; flags may have changed since the dialog opened.
-  const ids = state.session?.items.filter(i => i.flag === 'reject').map(i => i.id) ?? [];
+  // Re-read the photos at confirm time; decisions may have changed since the dialog opened.
+  const ids = scopeItems(deleteScope).map(i => i.id);
   const mode = trashAvailable() ? deleteChoice : 'permanent';
-  $('delete-confirm').disabled = true; $('delete-status').textContent = mode === 'trash' ? 'Moving to Trash…' : 'Deleting…';
+  $('delete-confirm').disabled = true; $('delete-status').textContent = mode === 'trash' ? `Moving to the ${systemTrash}…` : 'Deleting…';
   const result = await deletePhotos(ids, mode);
   if (result && !result.failures.length && !result.warning) { $('delete-dialog').close(); return; }
   $('delete-status').textContent = result ? `${result.deleted.length} deleted · ${result.failures.length} failed${result.warning ? ` · ${result.warning}` : ''}` : 'Nothing was deleted.';

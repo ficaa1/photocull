@@ -90,7 +90,7 @@ async function start() {
     'naming-preview': async (session, naming) => {
       naming = normalizeSettings({ naming }).naming;
       const items = library.get(session).items;
-      const item = items.find(i => i.flag === 'pick') || items[0];
+      const item = items.find(i => i.flag === 'pick' && !i.trashed) || items[0];
       if (!item) return '';
       const captured = needsCapture(naming.template) ? (await previews.metadata(item)).captured : null;
       return renderName(item.name, naming, 0, { captured }).filename;

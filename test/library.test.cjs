@@ -141,7 +141,9 @@ test('a deletion plan skips photos that changed since the scan and refuses a rep
   const s = await library.scan(photos);
   const id = name => s.items.find(i => i.name === name).id;
   await fs.writeFile(path.join(photos, 'B.JPG'), 'another card');
+  // Same name and size, another file: a different card's photo has its own timestamp.
   await fs.rm(path.join(photos, 'C.JPG')); await fs.writeFile(path.join(photos, 'C.JPG'), 'fixture');
+  await fs.utimes(path.join(photos, 'C.JPG'), new Date('2001-01-01'), new Date('2001-01-01'));
   const plan = await library.deletionPlan(s.id, [id('A.JPG'), id('B.JPG'), id('C.JPG')]);
   assert.deepEqual(plan.photos.map(p => p.name), ['A.JPG']);
   assert.deepEqual(plan.skipped.map(p => p.name).sort(), ['B.JPG', 'C.JPG'], 'rewritten and replaced files are skipped');

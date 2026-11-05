@@ -77,23 +77,44 @@ async function main() {
     assert.equal(Number(await page.locator('#count-all').textContent()), total - 1);
     await assert.rejects(fs.access(path.join(photos, rejected)), 'the rejected file is removed from disk');
     assert.equal(await page.locator('#delete-rejects').isVisible(), false);
-    // Deleting a pick: Del asks, any other key cancels without acting, Enter confirms.
+    // Del moves a photo to PhotoCull's Trash without touching the disk; Ctrl+Z and R bring it back.
+    const count = id => page.locator(`#count-${id}`).textContent();
     await page.locator('[data-filter="pick"]').click();
     const picked = await page.locator('#photo-name').textContent();
     await page.keyboard.press('Delete');
+    await page.waitForFunction(() => document.querySelector('#count-trash').textContent === '1');
+    assert.equal(await count('pick'), '0'); assert.equal(Number(await count('all')), total - 2);
+    await fs.access(path.join(photos, picked));
+    await page.keyboard.press('Control+z');
+    await page.waitForFunction(() => document.querySelector('#count-trash').textContent === '0');
+    assert.equal(await count('pick'), '1');
+    await page.locator('[data-filter="pick"]').click(); await page.keyboard.press('Backspace');
+    await page.waitForFunction(() => document.querySelector('#count-trash').textContent === '1');
+    await page.locator('[data-filter="trash"]').click();
+    assert.equal(await page.locator('#photo-name').textContent(), picked);
+    await page.keyboard.press('r');
+    await page.waitForFunction(() => document.querySelector('#count-trash').textContent === '0');
+    assert.equal(await count('pick'), '1');
+    // Shift+Del asks to delete permanently from any view; any other key cancels without acting.
+    await page.locator('[data-filter="all"]').click();
+    await page.keyboard.press('Shift+Delete');
     await page.locator('#delete-prompt:not([hidden])').waitFor();
-    assert.match(await page.locator('#delete-prompt-text').textContent(), new RegExp(`Permanently delete ${picked.replace('.', '\\.')}`));
+    assert.match(await page.locator('#delete-prompt-text').textContent(), /^Permanently delete /);
     await page.keyboard.press('x');
     assert.equal(await page.locator('#delete-prompt').isVisible(), false);
-    assert.equal(await page.locator('#count-pick').textContent(), '1', 'the cancelling key is not applied');
-    assert.equal(await page.locator('#count-reject').textContent(), '0');
-    await page.keyboard.press('Backspace');
+    assert.equal(await count('reject'), '0', 'the cancelling key is not applied');
+    // In the Trash view Del deletes for real (permanently in browser mode), after Enter.
+    await page.locator('[data-filter="pick"]').click(); await page.keyboard.press('Delete');
+    await page.waitForFunction(() => document.querySelector('#count-trash').textContent === '1');
+    await page.locator('[data-filter="trash"]').click();
+    await page.keyboard.press('Delete');
     await page.locator('#delete-prompt:not([hidden])').waitFor();
+    assert.match(await page.locator('#delete-prompt-text').textContent(), new RegExp(`Permanently delete ${picked.replace('.', '\\.')}`));
     await page.screenshot({ path: path.join(screenshots, 'photocull-delete-prompt.png') });
     await page.keyboard.press('Enter');
-    await page.waitForFunction(() => document.querySelector('#count-pick').textContent === '0');
-    await assert.rejects(fs.access(path.join(photos, picked)), 'the picked file is removed from disk');
-    assert.equal(Number(await page.locator('#count-all').textContent()), total - 2);
+    await page.waitForFunction(() => document.querySelector('#count-trash').textContent === '0');
+    await assert.rejects(fs.access(path.join(photos, picked)), 'the trashed file is removed from disk');
+    assert.equal(Number(await count('all')), total - 2);
     await page.evaluate(folder => window.loadTestFolder(folder), photos);
     assert.equal(Number(await page.locator('#count-all').textContent()), total - 2, 'deleted photos stay gone after reopening');
     await page.locator('#search').fill('nothing-matches-this');
@@ -104,7 +125,7 @@ async function main() {
     assert.deepEqual(errors, []);
     const stats = await page.evaluate(() => window.photocull.stats());
     const report = { passed: true, imageCount: Number(await page.locator('#count-all').textContent()), renderedGridCards: cardCount,
-      checks: ['RAW preview display', 'keyboard picks and ratings', 'auto advance', 'undo/redo', 'reject', '100% zoom toggle', 'virtual grid', 'pick filter', 'XMP export', 'reopen persistence', 'delete rejects', 'delete pick prompt', 'search empty state', 'shortcut help'], stats, errors };
+      checks: ['RAW preview display', 'keyboard picks and ratings', 'auto advance', 'undo/redo', 'reject', '100% zoom toggle', 'virtual grid', 'pick filter', 'XMP export', 'reopen persistence', 'delete rejects', 'trash, restore and undo', 'permanent delete prompt', 'search empty state', 'shortcut help'], stats, errors };
     await fs.writeFile(path.join(screenshots, 'ui-smoke.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report, null, 2));
   } finally {
