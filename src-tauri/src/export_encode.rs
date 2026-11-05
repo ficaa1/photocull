@@ -26,8 +26,10 @@ pub fn encode_rendered(r: &Rendered, o: &ExportOptions, extra: &ExtraOptions, me
 }
 
 pub fn encode_deep_avif(deep: &lightcraft_pipeline::DeepImage, o: &ExportOptions, extra: &ExtraOptions, meta: Option<&lightcraft_meta::Metadata>) -> Result<Vec<u8>, String> {
-    let mut deep = deep.clone();
-    lightcraft_engine::export::output_sharpen_deep(&mut deep, o.sharpen, o.sharpen_amount);
+    let mut deep = std::borrow::Cow::Borrowed(deep);
+    if o.sharpen != lightcraft_engine::export::SharpenFor::None {
+        lightcraft_engine::export::output_sharpen_deep(deep.to_mut(), o.sharpen, o.sharpen_amount);
+    }
     let DeepSamples::U16(samples) = &deep.samples else { return Err("AVIF needs integer samples.".into()); };
     let exif = meta.map(lightcraft_meta::write_exif);
     let em = lightcraft_codecs::EncodeMeta { exif: exif.as_deref(), ..Default::default() };
@@ -38,8 +40,10 @@ pub fn encode_pixels(img: &Rgba8, o: &ExportOptions, extra: &ExtraOptions, meta:
     if !matches!(o.format, ExportFormat::Webp | ExportFormat::Avif) || o.format == ExportFormat::Webp && extra.webp_lossless {
         return lightcraft_engine::export::encode_with_metadata(img, o, meta);
     }
-    let mut img = img.clone();
-    lightcraft_engine::export::output_sharpen(&mut img, o.sharpen, o.sharpen_amount);
+    let mut img = std::borrow::Cow::Borrowed(img);
+    if o.sharpen != lightcraft_engine::export::SharpenFor::None {
+        lightcraft_engine::export::output_sharpen(img.to_mut(), o.sharpen, o.sharpen_amount);
+    }
     let profile = lightcraft_codecs::icc::write_named(lightcraft_engine::export::named_space(o.effective_space()));
     let exif = meta.map(lightcraft_meta::write_exif);
     let xmp = meta.map(|m| lightcraft_meta::write_xmp(m, None));
@@ -48,8 +52,8 @@ pub fn encode_pixels(img: &Rgba8, o: &ExportOptions, extra: &ExtraOptions, meta:
         return lightcraft_codecs::encode_avif(&lightcraft_codecs::EncodeImage::rgba8(&img), o.quality, extra.avif_speed.value(), &em).map_err(|e| e.to_string());
     }
     if img.width > 16383 || img.height > 16383 { return Err("WebP supports dimensions up to 16383 pixels.".into()); }
-    let rgba: Vec<u8> = img.data.iter().flatten().copied().collect();
-    let encoded = webp::Encoder::from_rgba(&rgba, img.width as u32, img.height as u32).encode_simple(false, o.quality as f32).map_err(|e| format!("WebP encoding failed: {e:?}"))?;
+    let rgba = img.data.as_flattened();
+    let encoded = webp::Encoder::from_rgba(rgba, img.width as u32, img.height as u32).encode_simple(false, o.quality as f32).map_err(|e| format!("WebP encoding failed: {e:?}"))?;
     let alpha = img.data.iter().any(|p| p[3] != 255);
     // Add standard extended RIFF chunks while retaining the encoder's image/alpha bitstream.
     let mut body = b"WEBP".to_vec();
