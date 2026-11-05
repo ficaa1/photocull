@@ -105,14 +105,13 @@ No photo data belongs in the repository; only measured numbers are retained.
 
 ## Windows measurements — 2026-11-06
 
-ThinkPad, Intel Core i7-12800H (20 logical processors), 16 GiB RAM; Windows
+Test host: Intel Core i7-12800H (20 logical processors), 16 GiB RAM; Windows
 Rust 1.99 debug application with optimized processing dependencies. Three
 copied full-resolution RAWs: sample-8563, sample-8565, sample-8566. One batch per case,
 warm dependencies/filesystem, sRGB, quality 90, no output sharpening. Before
 uses the pinned engine sequentially; after uses three jobs and AVIF Faster.
 Numbers include decode, render, encoding and writing; they exclude app/Node
-startup, destination planning and metadata embedding. Other overnight work
-on the same machine can affect timing. These are measurements, not a universal
+startup, destination planning and metadata embedding. Concurrent system load can affect timing. These are measurements, not a universal
 throughput guarantee.
 
 | Format | Before, 3 files | After, 3 files | Change | Before / after total bytes |
