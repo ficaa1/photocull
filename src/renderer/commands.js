@@ -1,7 +1,7 @@
 // One table owns shortcuts, search, help and keyboard preferences. Mod means
 // Command on macOS and Control elsewhere; both are accepted for shared editing shortcuts.
 (function(root) {
-  const ALL = ['review', 'grid', 'develop'];
+  const ALL = ['review', 'grid', 'develop', 'compare'];
   const table = [];
   const add = (id, title, category, keys, context = ALL, extra = {}) => table.push({ id, title, category, shortcuts: { default: keys, darwin: keys.map(k => k.replaceAll('Mod', 'Meta')), win32: keys.map(k => k.replaceAll('Mod', 'Ctrl')) }, context, ...extra });
   add('settings', 'Settings', 'Application', ['Mod+,'], ALL, { typing: true, ignoreShift: true, allowModifiers: ['Alt'] });
@@ -10,7 +10,7 @@
   add('fullscreen-key', 'Fullscreen (F11)', 'View', ['F11'], ALL, { typing: true, ignoreShift: true, allowModifiers: ['Ctrl','Meta','Alt'] });
   add('switch-view', 'Switch review / contact sheet', 'View', ['Ctrl+Tab'], ALL, { typing: true, ignoreShift: true, allowModifiers: ['Meta','Alt'] });
   add('edit', 'Edit in external editor…', 'Files', ['Mod+E'], ALL, { allowModifiers: ['Alt'] });
-  add('original', 'Show original / external edit', 'View', ['\\'], ['review','grid'], { ignoreShift: true });
+  add('original', 'Show original / external edit', 'View', ['\\'], ['review','grid','compare'], { ignoreShift: true });
   add('escape', 'Clear selection / exit fullscreen / fit', 'View', ['Escape'], ALL, { ignoreShift: true, allowModifiers: ['Ctrl','Meta','Alt'] });
   add('fullscreen', 'Toggle fullscreen', 'View', ['F'], ALL, { ignoreShift: true });
   add('fullscreen-system', 'System fullscreen', 'View', ['Ctrl+Meta+F'], ALL, { typing: true });
@@ -18,11 +18,11 @@
   add('redo', 'Redo', 'Edit', ['Mod+Shift+Z'], ALL, { allowModifiers: ['Alt'] });
   add('select-all', 'Select all visible photos', 'Selection', ['Mod+A'], ALL, { ignoreShift: true, primaryModifier: true, allowModifiers: ['Alt'] });
   for (let n=0;n<=8;n++) add('color-alt-'+n, n ? 'Set color '+n : 'Clear color', 'Labels', ['Alt+'+n], ALL, { ignoreShift: true, allowModifiers: ['Ctrl','Meta'] });
-  add('zoom-in', 'Zoom in', 'Zoom', ['Mod+=','Mod++','Mod+Shift+='], ['review'], { codes: ['Equal','NumpadAdd'], loupe: 'zoom-in' });
-  add('zoom-out', 'Zoom out', 'Zoom', ['Mod+-','Mod+_'], ['review'], { codes: ['Minus','NumpadSubtract'], loupe: 'zoom-out' });
-  add('fit', 'Fit photo', 'Zoom', ['Mod+0','Mod+Shift+0'], ['review'], { codes: ['Digit0','Numpad0'], loupe: 'fit' });
-  add('zoom-toggle', 'Toggle zoom', 'Zoom', ['Z'], ['review'], { ignoreShift: true, loupe: 'toggle' });
-  add('pan', 'Zoom / hold to pan', 'Zoom', ['Space'], ['review'], { ignoreShift: true, loupe: 'space' });
+  add('zoom-in', 'Zoom in', 'Zoom', ['Mod+=','Mod++','Mod+Shift+='], ['review','compare'], { codes: ['Equal','NumpadAdd'], loupe: 'zoom-in' });
+  add('zoom-out', 'Zoom out', 'Zoom', ['Mod+-','Mod+_'], ['review','compare'], { codes: ['Minus','NumpadSubtract'], loupe: 'zoom-out' });
+  add('fit', 'Fit photo', 'Zoom', ['Mod+0','Mod+Shift+0'], ['review','compare'], { codes: ['Digit0','Numpad0'], loupe: 'fit' });
+  add('zoom-toggle', 'Toggle zoom', 'Zoom', ['Z'], ['review','compare'], { ignoreShift: true, loupe: 'toggle' });
+  add('pan', 'Zoom / hold to pan', 'Zoom', ['Space'], ['review','compare'], { ignoreShift: true, loupe: 'space' });
   add('delete', 'Move to PhotoCull Trash / delete in Trash', 'Edit', ['Delete','Backspace']);
   add('delete-permanent', 'Delete permanently…', 'Edit', ['Shift+Delete','Shift+Backspace']);
   add('restore', 'Restore from PhotoCull Trash', 'Edit', ['R'], ALL, { ignoreShift: true, when: 'trash' });
@@ -43,6 +43,13 @@
   add('develop-paste','Paste develop settings','Develop',['Mod+Shift+V'],['develop']);
   add('clipping','Toggle clipping warnings','Develop',['J'],['develop'],{ignoreShift:true});
   add('before','Before / after adjustments','Develop',['\\'],['develop'],{ignoreShift:true});
+  // Culling shortcuts share this registry with palette, Help and customization.
+  add('focus-overlay','Toggle autofocus overlay','Culling',['A']);
+  add('focus-zoom','Zoom to autofocus point','Culling',['Shift+A']);
+  add('burst-stack','Expand / collapse burst','Culling',['S'],ALL,{ignoreShift:true});
+  add('burst-keep','Keep sharpest in burst…','Culling',[]);
+  add('view-compare','Compare selected photos','View',['C'],ALL,{ignoreShift:true});
+  add('develop-split','Split before / after (Shift+backslash)','Develop',['|'],['develop']);
   add('palette','Command palette','Application',['Mod+K','Mod+Shift+P'],ALL,{typing:true});
   add('go-photo','Go to photo by name','Navigation',[]);
   add('backup','Back up card or folder…','Files',[]);

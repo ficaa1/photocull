@@ -486,6 +486,7 @@ function select(id, event = {}) {
   }
 }
 function navigate(delta, extend = false) {
+  if(state.mode==='compare'){survey.swap(delta<0?-1:1);return;}
   const items = state.mode==='grid' ? stackItems(filtered()) : filtered(), index = items.findIndex(i => i.id === state.selected);
   const next = items[Math.max(0, Math.min(items.length - 1, index + delta))];
   if (next) select(next.id, { shiftKey: extend });
@@ -498,13 +499,13 @@ function nextSurvivor(items, ids) {
   return items.slice(last + 1).find(i => !ids.has(i.id)) ?? items.slice(0, last).reverse().find(i => !ids.has(i.id));
 }
 async function decide(patch) {
-  const targets = selection();
+  const targets = state.mode==='compare' ? (photo()?[photo()]:[]) : selection();
   if (!targets.length) return;
   const sessionId = state.session.id;
   const items = filtered(), ids = new Set(targets.map(i => i.id)), nextId = nextSurvivor(items, ids)?.id;
   for (const item of targets) Object.assign(item, patch, { edited: true });
   if('trashed' in patch)regroupBursts();
-  if ('trashed' in patch || targets.length === 1 && patch.flag && state.settings.autoAdvance && nextId) {
+  if ('trashed' in patch || state.mode!=='compare' && targets.length === 1 && patch.flag && state.settings.autoAdvance && nextId) {
     state.selected = nextId ?? null; resetSelection();
   }
   state.pendingSaves++; setStatus('Saving…');
@@ -684,10 +685,12 @@ $('export-json').onclick = async () => {
 $('grid').onscroll = requestGrid;
 new ResizeObserver(requestGrid).observe($('grid'));
 const commandActions = {
+  'focus-overlay': event => {if(!event.repeat)return toggleFocus();}, 'focus-zoom': () => zoomFocus(), 'burst-stack': event => {if(!event.repeat)toggleBurst();}, 'burst-keep': () => promptKeepSharpest(),
+  'view-compare': () => setMode(state.mode==='compare'?'review':'compare'), 'develop-split': () => developView.toggleSplit(),
   settings: () => openSettings(), open: () => openFolder(), export: () => imageExport.open(),
   'fullscreen-system': () => setFullscreen(), 'fullscreen-key': () => setFullscreen(), fullscreen: () => setFullscreen(),
   'switch-view': () => setMode(state.mode === 'review' ? 'grid' : 'review'), edit: () => developView.openBatch(), original: () => toggleOriginal(),
-  escape: () => { if (state.marked.size > 1) { resetSelection(); render(); } else if (state.fullscreen) return setFullscreen(false); else if (state.mode === 'review' && loupe.zoomed) loupe.fit(); },
+  escape: () => { if(state.mode==='compare'){setMode('review');return;}if (state.marked.size > 1) { resetSelection(); render(); } else if (state.fullscreen) return setFullscreen(false); else if (state.mode === 'review' && loupe.zoomed) loupe.fit(); },
   undo: () => history('undo'), redo: () => history('redo'), 'select-all': () => { state.marked = new Set(filtered().map(i => i.id)); render(); },
   delete: () => state.filter === 'trash' ? showDeletePrompt(deleteMode()) : moveToTrash(), 'delete-permanent': () => showDeletePrompt('permanent'), restore: () => restoreFromTrash(),
   sources: () => togglePane('sources'), details: () => togglePane('details'),
@@ -701,13 +704,13 @@ for (let n=0;n<=5;n++) commandActions['rating-'+n] = () => decide({ rating: n })
 for (let n=6;n<=9;n++) commandActions['color-'+n] = () => decide({ color: String(n-5) });
 for (const flag of ['pick','reject','none']) commandActions['flag-'+flag] = () => decide({ flag });
 for (const direction of ['left','right','up','down']) for (const extend of [false,true]) commandActions[(extend?'extend-':'navigate-')+direction] = () => navigate((['left','up'].includes(direction)?-1:1) * (['up','down'].includes(direction) && state.mode==='grid' ? gridLayout().columns : 1), extend && (!['up','down'].includes(direction) || state.mode==='grid'));
-for (const [id,action] of Object.entries({'zoom-in':'zoom-in','zoom-out':'zoom-out',fit:'fit','zoom-toggle':'toggle',pan:'space'})) commandActions[id] = event => loupe.handleKey(event, action);
+for (const [id,action] of Object.entries({'zoom-in':'zoom-in','zoom-out':'zoom-out',fit:'fit','zoom-toggle':'toggle',pan:'space'})) commandActions[id] = event => state.mode==='compare' ? survey.zoomAction(action) : loupe.handleKey(event, action);
 let recentCommands = [], panKey = null;
 const commands = PhotoCullCommands.create({ platform: api.platform, actions: Object.fromEntries(Object.entries(commandActions).map(([id,run]) => [id,event => {
   if(id==='pan'){if(!event.key)return loupe.handleKey(event,'toggle');panKey=event.code || event.key;}
   try { return Promise.resolve(run(event)).catch(error=>toast(error.message)); } catch(error) { toast(error.message); }
 }])), context: () => state.mode, custom: () => state.settings.shortcuts || {},
-  enabled: command => (!command.when || state.filter===command.when) && (!/^(flag-|rating-|color-|navigate-|extend-|delete|restore|select-all)/.test(command.id) || !!photo()) && (command.id!=='go-photo'||state.session?.items.some(item=>!item.trashed)) && (!['zoom-in','zoom-out','fit','zoom-toggle','pan','review-zoom'].includes(command.id) || !!photo()),
+  enabled: command => (!command.when || state.filter===command.when) && (!['burst-stack','burst-keep'].includes(command.id) || !!culling.byId.get(state.selected)) && (command.id!=='burst-keep' || !!bestIn(culling.byId.get(state.selected))) && (!/^(flag-|rating-|color-|navigate-|extend-|delete|restore|select-all)/.test(command.id) || !!photo()) && (command.id!=='go-photo'||state.session?.items.some(item=>!item.trashed)) && (!['zoom-in','zoom-out','fit','zoom-toggle','pan','review-zoom'].includes(command.id) || !!photo()),
   onRun: command => { if(command.id!=='palette'){ recentCommands=[command.id,...recentCommands.filter(id=>id!==command.id)].slice(0,12); try{localStorage.setItem('photocull-recent-commands',JSON.stringify(recentCommands));}catch{} } } });
 try { recentCommands=JSON.parse(localStorage.getItem('photocull-recent-commands')||'[]').filter(id=>commands.commands.some(c=>c.id===id)).slice(0,12); } catch {}
 document.addEventListener('keydown', event => {
@@ -1252,18 +1255,6 @@ const verifyLabel=workspaceNode('label',null,{class:'toggle-row'});verifyLabel.i
 
 $('copy-verify').onchange=()=>saveCopyDefaults();
 
-// Culling shortcut bindings: keep together for the shared shortcut registry.
-const CULLING_SHORTCUTS = Object.freeze({ overlay:'a', zoomFocus:'shift+a', stacks:'s', compare:'c', wipe:'shift+\\' });
-function handleCullingKey(event) {
-  if(event.ctrlKey || event.metaKey || event.altKey)return state.mode==='compare' && survey.key(event);
-  const key=event.key.toLowerCase();
-  if(event.shiftKey && (event.code==='Backslash' || key==='\\' || key==='|') && state.mode==='develop'){event.preventDefault();if(!event.repeat)developView.toggleSplit();return true;}
-  if(key===CULLING_SHORTCUTS.overlay) {event.preventDefault();if(!event.repeat){if(event.shiftKey)void zoomFocus();else void toggleFocus();}return true;}
-  if(key===CULLING_SHORTCUTS.stacks) {event.preventDefault();if(!event.repeat)toggleBurst();return true;}
-  if(key===CULLING_SHORTCUTS.compare) {event.preventDefault();if(!event.repeat)setMode(state.mode==='compare'?'review':'compare');return true;}
-  if(state.mode==='compare' && event.key==='Escape'){event.preventDefault();setMode('review');return true;}
-  return state.mode==='compare' && survey.key(event);
-}
 async function cullingMetadata(id,session=state.session?.id) {
   if(!session)return null;
   if(culling.metadata.has(id))return culling.metadata.get(id);
@@ -1352,8 +1343,8 @@ function promptKeepSharpest() {
   $('burst-summary').textContent=`Pick ${items.find(i=>i.id===best).name} and reject the other ${items.length-1} frame${items.length===2?'':'s'}. ${changes.length} flag${changes.length===1?'':'s'} will change.`;
   $('burst-changes').textContent=items.map(i=>`${i.name}: ${i.flag} → ${i.id===best?'pick':'reject'}`).join('\n');$('burst-dialog').showModal();
 }
-$('focus-toggle').onclick=()=>void toggleFocus();$('compare-mode').onclick=()=>setMode(state.mode==='compare'?'review':'compare');
-$('burst-stack').onclick=toggleBurst;$('burst-keep').onclick=promptKeepSharpest;
+$('focus-toggle').onclick=()=>commands.execute('focus-overlay');$('compare-mode').onclick=()=>commands.execute('view-compare');
+$('burst-stack').onclick=()=>commands.execute('burst-stack');$('burst-keep').onclick=()=>commands.execute('burst-keep');
 $('analysis-pause').onclick=()=>{if(culling.running){cancelCulling();culling.paused=true;$('analysis-status').textContent='Analysis paused';$('analysis-pause').textContent='Resume analysis';}else void analyzeCulling();};
 $('burst-cancel').onclick=()=>{$('burst-dialog').close();burstPrompt=null;};
 $('burst-dialog').addEventListener('cancel',()=>{burstPrompt=null;});

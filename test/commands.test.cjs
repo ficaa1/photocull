@@ -66,3 +66,14 @@ test('legacy global shortcut precedence survives extra modifiers and platform se
  assert.equal(f.press('ß',{ctrlKey:true,code:'Minus'}),'zoom-out');
  const custom=fixture('review',{'zoom-out':['Ctrl+L']});assert.equal(custom.press('ß',{ctrlKey:true,code:'Minus'}),null);
 });
+
+test('culling bindings and Compare actions participate in customization and conflict checks',()=>{
+ for(const mode of ['review','grid','develop','compare']){
+  const f=fixture(mode);assert.equal(f.press('a'),'focus-overlay');assert.equal(f.press('A',{shiftKey:true}),'focus-zoom');assert.equal(f.press('s'),'burst-stack');assert.equal(f.press('c'),'view-compare');
+  assert.equal(f.press('a',{}, {typing:true}),null);
+ }
+ assert.equal(fixture('develop').press('|',{shiftKey:true}),'develop-split');
+ assert.equal(fixture('review',{'focus-overlay':['H']}).press('a'),null);assert.equal(fixture('review',{'focus-overlay':['H']}).press('h'),'focus-overlay');
+ assert.equal(C.conflicts(C.table,{},'flag-pick',['A'])[0].id,'focus-overlay');
+ const compare=fixture('compare');assert.equal(compare.press('z'),'zoom-toggle');assert.equal(compare.press('0',{ctrlKey:true}),'fit');assert.equal(compare.press('p'),'flag-pick');assert.equal(compare.press('ArrowRight'),'navigate-right');
+});

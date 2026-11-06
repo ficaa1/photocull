@@ -63,6 +63,13 @@
         p.kind='full';const probe=new Image(),url=this.host.url(this.host.item(p.id),'full');probe.onload=()=>{if(this.panes.includes(p)){p.image.src=url;p.view.setSource({width:probe.naturalWidth,height:probe.naturalHeight},true);}};probe.src=url;
       }
     }
+    swap(delta) {this.state=C.swapCandidate(this.state,this.host.items(),delta);this.sync(true);this.activate(this.state.active);}
+    zoomAction(action) {
+      const p=this.panes[this.state.active];if(!p)return;
+      if(action==='fit')p.view.reset();
+      else if(action==='toggle' || action==='space')p.view.set(p.view.zoomed?{mode:'fit',percent:100}:{mode:'ratio',percent:100});
+      else {const next=V.stepPercent(p.view.percent(),action==='zoom-out'?-1:1,p.view.fitPercent());p.view.set(next===null?{mode:'fit',percent:100}:{mode:'ratio',percent:next});}
+    }
     zoomFocus(focus) {const p=this.panes[this.state.active];if(p && focus)p.view.set({mode:'ratio',percent:100},{centerOn:focus});}
     key(event) {
       if(this.root.hidden || event.altKey)return false;
