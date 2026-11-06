@@ -71,18 +71,7 @@
       else {const next=V.stepPercent(p.view.percent(),action==='zoom-out'?-1:1,p.view.fitPercent());p.view.set(next===null?{mode:'fit',percent:100}:{mode:'ratio',percent:next});}
     }
     zoomFocus(focus) {const p=this.panes[this.state.active];if(p && focus)p.view.set({mode:'ratio',percent:100},{centerOn:focus});}
-    key(event) {
-      if(this.root.hidden || event.altKey)return false;
-      const p=this.panes[this.state.active];if(!p)return false;
-      const key=event.key.toLowerCase();let handled=true;
-      if(!event.ctrlKey && !event.metaKey && ['ArrowLeft','ArrowRight'].includes(event.key)) {this.state=C.swapCandidate(this.state,this.host.items(),event.key==='ArrowRight'?1:-1);this.sync(true);this.activate(this.state.active);}
-      else if(!event.ctrlKey && !event.metaKey && ['p','x','u'].includes(key))void this.host.decide(p.id,{flag:{p:'pick',x:'reject',u:'none'}[key]});
-      else if(!event.ctrlKey && !event.metaKey && /^[0-5]$/.test(key))void this.host.decide(p.id,{rating:Number(key)});
-      else if(!event.ctrlKey && !event.metaKey && key==='z')p.view.set(p.view.zoomed?{mode:'fit',percent:100}:{mode:'ratio',percent:100});
-      else if((event.ctrlKey || event.metaKey) && ['+','=','-','0'].includes(key)) {if(key==='0')p.view.reset();else {const next=V.stepPercent(p.view.percent(),key==='-'?-1:1,p.view.fitPercent());p.view.set(next===null?{mode:'fit',percent:100}:{mode:'ratio',percent:next});}}
-      else handled=false;
-      if(handled)event.preventDefault();return handled;
-    }
+
   }
   window.PhotoCullSurvey={create:host=>new Survey(host)};
 })();
