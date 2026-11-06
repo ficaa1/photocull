@@ -21,7 +21,7 @@ A test earns its place by catching a regression a reader would care about. Befor
 
 The Tauri shell owns windows, native dialogs, deletion, Develop and finished-image encoding. The Node sidecar owns scanning, previews, decisions and copy planning. The plain JavaScript renderer uses its bridge only; preserve the Rust renderer method allowlist.
 
-Never overwrite a source or camera-card image. Metadata writes belong on destination copies unless the user explicitly requests source XMP publication. Keep Lensfun data as an opt-in runtime download with attribution, never a bundled database.
+Never overwrite a source or camera-card image. Embedded metadata writes belong on destination copies. Source XMP autosave follows the configured policy (ordinary folders by default, camera cards excluded); explicit source-XMP export is also available. Keep Lensfun data as an opt-in runtime download with attribution, never a bundled database.
 
 Preserve upstream notices and the offline license inventory. Do not enable workflows or change repository visibility without explicit authorization.
 

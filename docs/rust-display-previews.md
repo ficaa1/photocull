@@ -1,8 +1,7 @@
 # Rust display-preview migration investigation
 
 Pinned Lightcraft revision: `d58b4d67238ef1aafd8e3394a9f8428a3d91e561`.
-The production preview encoder remains sharp. The implementation first separates
-pixel encoding into `src/display-preview.cjs`, leaving source selection, queues,
+The production preview encoder remains sharp. Pixel encoding is separated into `src/display-preview.cjs`, leaving source selection, queues,
 pass-through and cache publication in `PreviewService`. The benchmark substitutes that module function in its own process; no renderer
 RPC or production test option is added.
 The existing color conversion and cache keys are unchanged.
@@ -55,8 +54,7 @@ Hashes are lowercase SHA-256 hex of the exact UTF-8 strings, using the existing
 JS interpolation of the fingerprint and item revision. Consumers should request
 `PreviewService.get(item, 'preview')` and use `service.key(item, kind)` after
 `displayItem(item)` when they need the disk representation; do not reproduce
-fingerprints in Rust. A future Rust sharpness command should receive the cache
-JPEG path chosen by Node, rather than deriving a second cache layout.
+fingerprints in Rust. The Rust sharpness command receives the preview-cache JPEG path chosen by Node, rather than deriving a second cache layout.
 
 - Source key: `hash('sources-v2:' + path + ':' + fingerprint)`.
   `<source>.inventory.json` version 2 records dimensions, orientation, ranges,
@@ -124,11 +122,10 @@ No packaging or third-party notice is removed on the strength of the probe.
 
 ## Reproduction
 
-Use Windows Rust 1.99 and Windows Node in an isolated checkout, with the shared
-Cargo target cache as described in the project build instructions. All photo
+Use a current stable Windows Rust toolchain and Node.js 24 in an isolated checkout. All photo
 arguments below must refer to disposable copies, except the benchmark's source
 folder, which is only read to create 102 copies in a fresh OS temporary folder.
-Do not run test code against the owner's live data directory.
+Use isolated app data for all app checks.
 
 ```sh
 cd src-tauri
@@ -188,11 +185,9 @@ Raw measurements: [timings](measurements/rust-preview-codecs.json) and
 The parity script intentionally exits nonzero when any patch exceeds three;
 its failing case is retained rather than weakening the gate.
 
-## Decision and next implementation steps
+## Production status and migration requirements
 
-Do not switch production display encoding yet. Keep the sRGB fix and the
-working browser-mode path. The safe partial implementation is the tested pixel
-encoder boundary and the independent export scheduling investigation.
+Production display encoding remains sharp, with explicit sRGB conversion and a shared browser-mode path. The pixel-encoder boundary and codec probe are available for further measurements.
 sharp/libvips remains installed and shipped; no license simplification is claimed.
 
 1. Agree on linear-light resize differences using textured photos at thumbnail

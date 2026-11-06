@@ -14,9 +14,9 @@ Import replaces the settings represented by the bundle; it does not merge confli
 
 ## Welcome and local diagnostics
 
-The first launch shows a nonmodal welcome with folder/card entry points, eight essential shortcuts and an external-editor setup link. Skip dismisses it permanently. Open it again from Help or the palette. Automated smoke tests suppress it unless `PHOTOCULL_TEST_WELCOME=1` is set.
+The first launch shows a modal welcome dialog with folder/card entry points, eight essential shortcuts and an external-editor setup link. Skip or Escape dismisses it and permits automatic card opening. Open folder, Choose camera card and external-editor setup suppress automatic opening for the rest of that launch, so a late card discovery cannot override the choice. Open it again from Help or the palette. Automated smoke tests suppress it unless `PHOTOCULL_TEST_WELCOME=1` is set.
 
-Help → Copy diagnostics collects the app/OS/runtime version, webview user agent, inexpensive GPU/display color information, a small settings summary and up to 200 recent log lines. Home directory prefixes and server tokens are redacted. Review the copied text before sharing it; diagnostics stay on the machine until you choose to paste them elsewhere. Help → Open log folder reveals the local logs. Shell and sidecar logs each retain a current file and three rotated files of about 1 MiB each in the app data `logs/` folder. No telemetry or remote logging is used.
+Help → Copy diagnostics collects the app/OS/runtime version, webview identification, inexpensive GPU/display color information, a small settings summary and up to 200 recent log lines. Home directory prefixes and server tokens are redacted. Review the copied text before sharing it; diagnostics stay on the machine until you choose to paste them elsewhere. Help → Open log folder reveals the local logs. Shell and sidecar logs each retain a current file and three rotated files of about 1 MiB each in the app data `logs/` folder. No telemetry or remote logging is used.
 
 ## Backing up an entire card
 
@@ -26,7 +26,7 @@ Each source and destination is checked with streaming SHA-256. Identical existin
 
 Verification records in the app data `card-backups/` folder contain volume identity, relative file paths, sizes, modification times, hashes and verified destination paths. A complete check shows **All N files backed up and verified — safe to format** on the card. Device refreshes compare the current source inventory and destination sizes/times with the saved verification record; new, changed or missing files remove that state and can be expanded in the sidebar. **Check verified backup** rereads every source and destination hash, including after possible corruption that preserves sizes/times. Empty cards never receive a safe-to-format claim. The state describes the last check: card/destination changes after a check require another check before formatting outside PhotoCull.
 
-The full card copy performs additional reads for verification and can be slower than Copy picks. A 64 MiB temporary-file measurement is recorded in the implementation validation report; performance depends on the card, destination and OS cache. SHA-256 uses Node's built-in crypto and adds no dependency.
+The full card copy performs additional reads for verification and can be slower than Copy picks. See [workspace validation](app-ux-validation.md) for a synthetic measurement; performance depends on the card, destination and OS cache. SHA-256 uses Node’s built-in crypto.
 
 **Copy picks → Verify copied files** optionally compares original/source bytes (and generated XMP bytes) with destination hashes. When Embed metadata is selected, this byte verification runs before the deliberate metadata transformation. It does not establish a complete-card backup record.
 

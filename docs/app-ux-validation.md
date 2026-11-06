@@ -1,11 +1,18 @@
-# Workspace changes — local validation
+# Commands, settings and backup validation
 
-Implemented searchable commands and recent/filename navigation; shortcut recording, conflict checks and resets; portable settings bundles with preview, mapping and backup; skippable welcome; local diagnostics/log rotation; verified resumable complete-card backup; optional verification for Copy picks; configurable card layouts/manual roots and backup naming.
+The [workspace guide](workspace.md) describes the user workflow. Automated checks use generated photos, temporary app data and mocked camera volumes; no physical card is required.
 
-Decisions: existing copy naming and finished-image export presets remain their defaults UI. Settings import replaces bundle-owned user configuration, with a complete restorable backup first. Portable export excludes editor paths, remembered hand-off folders and manual card roots; command arguments remain visible for review. SHA-256 uses built-in Node crypto. Conflicting destination files are kept and reported; no source files are deleted or formatted. Device refresh invalidates saved verification using source inventories and destination stamps; explicit Check verified backup rereads every hash. Symbolic links and empty cards never produce a complete backup claim. Keyboard defaults and aliases live in one declarative table; focus/widget controls remain native.
+## Coverage
 
-Local measurement, WSL, temporary 64 MiB binary: one SHA-256 read 263.8 ms (about 243 MiB/s); copy plus complete repeated source/destination verification 1864.4 ms. This is a cached local filesystem measurement, not SD-card throughput.
+- `npm test` covers shortcut conflicts, settings validation/import rollback, backup corruption detection, cancellation/resume, conflicts, links and changed files.
+- `node scripts/workspace-ui-smoke.cjs` covers palette keyboard operation and filename search, customized Help, import preview/backup, Welcome choices, menu focus and complete/changed-card status.
+- `npm run test:ui`, Develop and settings smokes cover the shared renderer and backend. See [validation](validation.md) for fixture-dependent arguments.
+- Native logging and shell integration require `cargo fmt --check`, `cargo test --locked` and `cargo build --locked` on a supported build platform.
 
-Node suite: 131 tests, 129 passed, two pre-existing optional RAW fixture skips. UI smokes: baseline, settings (temporary copied fixtures), Develop and workspace screens passed without renderer errors. Workspace smoke uses generated photos and a mocked card, and exercises palette, customized shortcuts/help, import preview/backup, welcome and changed-card detection. Backup tests inject corrupt copied bytes and cover restart, cancellation/resume, conflicts, links and new/changed files. Windows Rust tests passed (12 tests) and the build completed without warnings. After rebasing, the native checks are repeated against the final branch. Offline notices regenerate without changes. `cargo fmt --check` reports pre-existing formatting differences across the Rust tree, also reproduced on the main-branch snapshot; the new logging module is formatted without reformatting unrelated files.
+## Backup measurement
 
-No physical cards or owner settings were used. No new dependencies. Native macOS launch remains unverified; browser smokes exercise the shared renderer. Native file dialogs/clipboard and real-card throughput require an interactive desktop/card check.
+On a WSL host, a temporary 64 MiB file took 263.8 ms for one SHA-256 read (about 243 MiB/s), and 1864.4 ms for copying plus repeated source/destination verification. This is a cached local-filesystem measurement, not SD-card throughput.
+
+## Limits
+
+Browser smokes do not validate native dialogs, clipboard permissions, webviews or real-card throughput. Native macOS launch remains unverified. Settings bundles may include metadata and paths; review them before sharing. A verified-backup badge describes the last check, so changed storage needs another complete hash check before formatting outside PhotoCull.

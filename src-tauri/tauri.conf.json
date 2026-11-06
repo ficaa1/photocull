@@ -23,6 +23,8 @@
       "icons/icon.ico"
     ],
     "license": "MIT",
-    "copyright": "Copyright (C) 2026 Filip Biljic"
+    "copyright": "Copyright (C) 2026 Filip Biljic",
+    "homepage": "https://www.filipbiljic.com/photocull/",
+    "shortDescription": "Photo culling, RAW development and image export"
   }
 }

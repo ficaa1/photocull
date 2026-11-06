@@ -6,23 +6,35 @@ All notable changes to PhotoCull are documented here. This file follows [Keep a 
 
 ### Added
 
-- Searchable command palette, customizable shortcuts and portable settings bundles with import preview and backup.
-- Skippable welcome, local diagnostics with rotating logs, and configurable camera-card detection.
-- Resumable whole-card backups with SHA-256 verification and complete-backup status; optional verification for Copy picks.
-- Autofocus-point overlays, persisted visibility and 100% zoom centered on recorded focus coordinates.
-- Capture-time burst stacks, cached background sharpness ranking and confirmed, undoable keep-sharpest decisions.
+- Searchable command palette with recent commands and filename navigation, customizable shortcuts, and current bindings in Help.
+- Portable settings bundles with import preview, path mapping and a restorable backup; modal, skippable Welcome and local diagnostics with rotating logs.
+- Resumable whole-card backups with SHA-256 verification, complete-backup status and explicit rechecking; optional hash verification for Copy picks.
+- Configurable camera-card layouts, manual card folders and backup naming.
+- Portable XMP autosave for decisions, colors, RAW adjustments, effective recipe settings, external-editor attribution and hand-off records; source-write policy and newer-sidecar merging when reopening folders.
+- Autofocus-point overlays and focus-centered 100% zoom; capture-time burst stacks, cached preview-detail ranking and confirmed, undoable Keep sharpest.
 - Two-to-four-photo Compare with linked zoom/pan, and draggable Develop before/after splits.
+- Configurable external editors with TIFF/PNG/JPEG hand-offs, color space, multi-file launch, exit/watch save detection, destinations and confirmed cleanup.
+- Recipe duplication/import/export, finished-image export presets and lossy WebP export.
+- MIT license, contributor/security guidance, offline third-party inventory and in-app About credits.
+- Newcomer installation and workflow guide, documentation index and public project metadata.
 
-- MIT license, contributor and security guidance, third-party inventory and in-app About credits.
-- Guarded public-repository build workflow and portable Windows symlink checks.
-- Configurable external editors with format, color space, destination and cleanup controls.
-- Recipe duplication/import/export and persistent finished-image export presets.
-- Lossy WebP export, bounded parallel export jobs and faster AVIF encoding.
+### Changed
+
+- App bar, split menus, view toolbar, sidebars, thumbnail badges and dialogs use a consistent compact layout; the grid-size control stays in the status bar.
+- Tab/Shift+Tab moves focus; menus own keyboard input, support typeahead and return focus when closed. View switching uses G/E/D or Ctrl+Tab.
+- Finished-image exports run at half the logical core count, rounded down, with one to three simultaneous photos. AVIF defaults to Faster; lossless WebP remains available.
+- Builds and release checks run locally; hosted build automation remains disabled.
 
 ### Fixed
 
-- Explicit sRGB preview ICC encoding for color-managed displays.
-- Saved external-editor folder preferences and edited-result visibility across views.
+- Explicit sRGB conversion and ICC tagging for generated previews, including 16-bit TIFFs, while leaving display conversion to the webview/OS.
+- Remembered external-editor folders, saved-result visibility across views and preview file handles during replacement/cleanup.
+- XMP merges preserve unrelated application metadata and distinct RDF subjects; shared-sidecar conflicts and background write failures are reported without losing local decisions.
+- Relative hand-off paths survive moving photo trees; missing hand-offs fall back to original previews.
+- Compare selection stays valid across filters and sessions, linked zoom resets for each new comparison, and burst decisions refresh through undo/redo.
+- Autofocus overlays use orientation/crop-aware geometry, including Sony preview-coordinate dimensions.
+- Welcome holds automatic card opening until a choice is made; explicit folder/editor/card choices also prevent late discovery from overriding that launch.
+- Filename navigation works across empty filters, and system fullscreen shortcuts remain available while editing text.
 
 ## [0.8.0] - 2026-11-05
 

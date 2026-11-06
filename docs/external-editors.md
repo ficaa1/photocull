@@ -1,8 +1,8 @@
 # External editors
 
-The user workflow and editor setup are described in [Editing in other apps](../README.md#editing-in-other-apps).
+The user workflow and editor setup are described in [External editors](../README.md#external-editors) and the [detailed workflow](workflow.md#editing-in-other-apps).
 
-## Implementation decisions
+## Launching and protecting files
 
 - Preferences store `editors` and `defaultEditor`. Dehancer is a resettable built-in preset; executable paths and arguments remain editable. Legacy `dehancerExe` and `dehancerFolder` settings migrate without discarding the selected application or destination.
 - Sessions store `editedBy`, the current `tiff` path (retained as the field name for compatibility, including PNG/JPEG hand-offs), and a history of hand-off records. Old `develop.edited` sessions remain readable; new writes use `editedBy`. RAW adjustments remain independent of external edits.
@@ -13,18 +13,11 @@ The user workflow and editor setup are described in [Editing in other apps](../R
 - Cleanup derives every candidate from the current session's records. It rejects sources, source aliases, hard links, symlinks, and paths redirected since recording. Confirmation includes count, size and paths; unexported edits require a second warning. File stamps are checked again before deletion. Failed deletions remain recorded.
 - Export records the hand-off's size/mtime before encoding. Only successful publication of the same version permits automatic cleanup; later saves remain unexported. Files changed after a stopped edit wait also receive the extra cleanup warning. Automatic cleanup is off by default and retains previous hand-offs and failed/skipped export inputs.
 - PhotoCull suspends hand-off previews and releases libvips input caches around replacement, external editing and cleanup. This avoids retained Windows read handles preventing replacement/deletion. Short-lived file locks receive bounded retries; persistent failures are reported without deleting records.
-- No dependencies were added.
 
-## Local validation, 2026-11-06
+## Validation and limits
 
-Rebased onto `12d3f29` (latest main at validation).
+Browser smokes cover editor settings, default/alternate actions, selection in the contact sheet, Review and filmstrip, formats, destinations and cleanup warnings. Run `node scripts/develop-ui-smoke.cjs` and `node scripts/image-export-ui-smoke.cjs`.
 
-- WSL `npm test`: 112 passed, two optional camera-fixture tests skipped, zero failures.
-- WSL `scripts/develop-ui-smoke.cjs`: passed, including editor settings, alternate/default actions, Ctrl/Cmd+E, grid/Review/filmstrip selection, multi-file watch configuration, hand-off formats, remembered/always destinations, configurable subfolder and cleanup warnings.
-- WSL `scripts/image-export-ui-smoke.cjs` and `scripts/ui-smoke.cjs`: passed. Export smoke also verifies shared controls recover after automatic cleanup.
-- Windows `cargo test`: 11 passed, zero warnings. `cargo build --bin photocull-editors`: passed, zero warnings. The test binary used the unchanged main entry point under a temporary alternate name because the shared `photocull.exe` was running for another task; that process was not stopped.
-- Windows `test/editors.test.cjs`: 11 passed. The targeted preview-handle-release test also passed. An earlier full Windows Node run encountered existing tests requiring symlink privileges; the required full suite passed in WSL.
-- Windows `scripts/editors-windows.cjs`: passed through the real Tauri commands with copied Sony RAWs, isolated settings/WebView2 directories, and temporary Node-based editors. Verified an unchanged Cancel, multi-file exit detection, watch detection while the editor remains alive, path/argument spacing, rejection of unsaved editor ids, saved attribution, edited export, automatic cleanup, and manual cleanup of current/archived files.
-- Native format readback verified 16-bit uncompressed sRGB TIFF with ICC, 16-bit Display P3 PNG, 8-bit Display P3 JPEG, 16-bit Adobe RGB LZW TIFF, and 8-bit ProPhoto Deflate TIFF. TIFF compression tags were read directly. Source and copied RAW hashes were unchanged; no renderer errors occurred. Watch round-trip time was 3306 ms, including process/preview work.
+On Windows, `node scripts/editors-windows.cjs EXECUTABLE COPIED_RAW_FOLDER` exercises the real Tauri commands using temporary editors and isolated app data. It covers exit/watch detection, multi-file launch, arguments with spaces, saved-result attribution, edited export and cleanup. Read the script header before running it. The test editor modifies only temporary hand-offs and does not launch Dehancer.
 
-The test editor only modifies temporary hand-offs. Dehancer was never launched. The owner's photos, application data and installed app were not changed. macOS bundle integration could not be run because the Mac was unavailable; its launch/wait behavior is documented above for follow-up validation.
+Native readback has verified 16-bit uncompressed sRGB TIFF with ICC, 16-bit Display P3 PNG, 8-bit Display P3 JPEG, 16-bit Adobe RGB LZW TIFF and 8-bit ProPhoto Deflate TIFF. Source and fixture hashes were unchanged. These checks do not establish compatibility with every external editor. macOS bundle launching and waiting still require native integration validation.

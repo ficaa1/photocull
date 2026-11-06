@@ -24,10 +24,12 @@ npm start
 ```sh
 npm test
 npm run test:ui
+node scripts/workspace-ui-smoke.cjs
 node scripts/develop-ui-smoke.cjs
 node scripts/image-export-ui-smoke.cjs
 npm run notices
 cd src-tauri
+cargo fmt --check
 cargo test --locked
 cargo build --locked
 ```
@@ -48,6 +50,6 @@ When updating dependencies, refresh the reviewed license metadata and bundled te
 
 Contributions are distributed under the project's MIT license; retain upstream notices for reused code.
 
-## Build workflow
+## Releases
 
-The build workflow stays disabled on GitHub while the repository is private, and every job checks repository visibility. After publication, the maintainer can run `gh workflow enable build.yml`. Public pull requests/main pushes run Windows and macOS tests; `v*` tags and manual dispatch build installers. Manual dispatch requires an existing release tag and attaches its installers to that release.
+Checks and installer builds run locally on the target OS. Upload tested installers to an existing GitHub release; publication and repository settings are maintainer decisions. Do not enable hosted workflows as part of a contribution. Review [licensing prerequisites](docs/licensing.md#release-prerequisites-and-remaining-risks) before redistributing binaries.

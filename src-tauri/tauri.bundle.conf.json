@@ -3,7 +3,7 @@
     "active": true,
     "targets": "all",
     "category": "Photography",
-    "shortDescription": "Preview-first RAW and JPEG culling",
+    "shortDescription": "Photo culling, RAW development and image export",
     "externalBin": [
       "binaries/node"
     ],

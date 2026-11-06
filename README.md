@@ -2,247 +2,165 @@
 
 # PhotoCull
 
-A local desktop MVP for quickly reviewing camera RAW files and JPEGs. Connect a camera card, browse previews, pick your keepers, and copy their originals for editing. No catalog import or cloud service.
+PhotoCull is a local desktop app for culling photos, developing RAW files with editable adjustments, handing images to an external editor, and exporting finished images. It is a Lightroom replacement for that workflow: open a folder or camera card, choose keepers, adjust their RAW development, and finish them without importing a catalog or using a cloud service.
 
-## Run
+[Project page](https://www.filipbiljic.com/photocull/) · [Downloads](https://github.com/ficaa1/photocull/releases) · [Documentation](docs/README.md) · [Changelog](CHANGELOG.md)
 
-Use Node.js 24, npm, Rust stable and the native Tauri build prerequisites for your OS. On macOS, install the Xcode command-line tools; on Windows, install the MSVC C++ build tools and WebView2. Linux needs WebKitGTK 4.1, libayatana-appindicator3, librsvg2, libxdo and patchelf development packages; Linux builds are currently manual.
+## Status and installation
 
-For desktop development:
+PhotoCull is under active development. Windows is the locally validated desktop platform. Apple Silicon macOS is a packaging target, but native Mac launch, permissions and editor integration have **not yet been verified**. Intel Mac and Linux builds are manual; they are not validated release targets.
+
+Download an installer for your platform from [Releases](https://github.com/ficaa1/photocull/releases):
+
+- **Windows:** use the `.msi` or `-setup.exe` installer. Windows needs WebView2. Builds are unsigned, so SmartScreen may show an unknown-publisher warning; for a download you trust, use **More info → Run anyway** if Windows offers it.
+- **macOS Apple Silicon:** open the `.dmg` and move PhotoCull to Applications. Builds are unsigned and not notarized. Read [macOS setup](docs/macos.md) for Gatekeeper steps and the validation limits before using the app.
+
+The desktop bundle includes its Node runtime and image tools; Node and Rust are only needed when building from source. Use a backed-up folder for your first session.
+
+## Quick start
+
+1. **Open photos.** Choose **Open folder** or select a camera card under **Connected cards**. Welcome lets you choose before any card opens automatically. RAW + JPEG files with the same stem in the same directory are grouped when there is exactly one of each.
+2. **Cull.** Use arrows to navigate, `P` to pick, `X` to reject, `U` to clear a flag, and `0–5` for stars. `G` opens the contact sheet and `E` opens Review. Flags advance to the next photo by default for a single selection. Shift-click selects a range; Ctrl-click (Cmd-click on Mac) changes individual selections. Decisions apply to the selection and can be undone.
+3. **Back up a card.** Use **Back up card…** in Connected cards, or **Back up card or folder…** beside Open folder. This copies the whole hierarchy, including videos and sidecars, verifies it with SHA-256 and resumes identical files. **Copy picks** separately copies only picked originals to a chosen destination; companion JPEGs and hash verification are optional.
+4. **Develop RAWs.** Press `D`, choose a recipe and adjust white balance, light, tone, lens corrections or detail. Adjustments autosave and leave the original image unchanged. Copy/paste settings or apply them to selected RAWs or all RAW picks.
+5. **Edit in another app.** Configure an application in **Settings → External editors**, then use **Edit in…** or Ctrl/Cmd+E. PhotoCull develops a separate TIFF, PNG or JPEG and detects saves back to that file. A Dehancer preset is included.
+6. **Export finished images.** Use **Export…** or Ctrl/Cmd+Shift+E. It defaults to all picks, or choose Current selection. Saved external edits are used when available; otherwise RAWs are freshly developed. Choose format, sizing, color space, metadata, names and destination.
+
+`Delete` moves photos to PhotoCull’s in-app Trash without changing files on disk. Deleting from Trash, Empty trash, or Shift+Delete asks for disk deletion. That removes originals, paired JPEGs and associated XMP. Camera cards support permanent deletion only; ordinary folders also offer the system Trash/Recycle Bin. PhotoCull cannot undo disk deletion.
+
+## What it does
+
+### Review and choose
+
+- Preview-first RAW browsing plus JPEG, TIFF, PNG and WebP. Recognized RAW extensions include ARW, CR2/CR3, NEF/NRW, DNG, RAF, ORF, RW2, PEF, SRW, 3FR, FFF, IIQ and RWL; camera support depends on the decoders. HEIC, AVIF and JPEG XL are not imported.
+- Contact sheet, filmstrip, fullscreen Review, pixel-relative zoom, pan and a navigator. Camera JPEG previews are labeled; optional LibRaw fallback develops missing or small previews.
+- Picks, rejects, stars, eight customizable colors, filename search, filters, multi-selection and decision undo/redo.
+- Recorded autofocus-point overlays and focus-centered zoom where metadata is supported. Burst stacks, background preview-detail scores and confirmed, undoable Keep sharpest. Scores estimate preview detail, not subject quality.
+- Two-to-four-photo Compare with optional linked zoom and pan. Scoring needs the desktop shell; burst grouping and Compare also work in browser development mode.
+
+### Back up and organize
+
+- Resumable, hash-verified whole-card backups with explicit rechecking and a complete-backup status. A changed card or destination invalidates that status; recheck before formatting outside PhotoCull.
+- Copy picked originals with folder layout, filename templates, optional companion JPEGs, destination metadata and verification. Existing files are skipped rather than overwritten.
+- Local autosaved sessions, portable XMP state, metadata presets, settings import/export with preview and backup, and configurable camera-card folders.
+
+### Develop, edit and export
+
+- Lightcraft RAW development with Neutral, Camera look and Flat base recipes; per-photo adjustments, recipe duplication/import/export, interactive histogram, clipping warnings and draggable before/after split.
+- Configurable external editors, hand-off format/color/destination settings, saved-result previews across views, and confirmed cleanup of recorded hand-off files.
+- JPEG, JPEG XL, TIFF, PNG, AVIF and WebP export; sizing, output sharpening, color spaces, metadata/location controls, filename templates and saved export presets. AVIF remains comparatively slow. Export runs at half the logical core count, rounded down, with a minimum of one and maximum of three simultaneous photos.
+- Generated previews are converted and tagged as sRGB; the system webview handles display color management. Original upright JPEG previews may pass through with their existing profile.
+
+See the [workflow reference](docs/workflow.md) for zoom gestures, preview limits, naming, deletion and export options, and [recipes and export](docs/recipes-export.md) for formats and measured limits. Production display previews still use sharp/libvips; the [Rust preview investigation](docs/rust-display-previews.md) is an experiment, not a shipped replacement.
+
+## Keyboard shortcuts
+
+Ctrl/Cmd means Control on Windows/Linux and Command on macOS. Defaults are context-sensitive:
+
+| Keys | Action |
+| --- | --- |
+| Ctrl/Cmd+O | Open folder |
+| Arrows / Shift+arrows | Navigate / extend selection |
+| P / X / U | Pick / reject / clear flag |
+| 0–5 | Star rating |
+| 6–9 / Alt+1–8 / Alt+0 | First four colors / any color / clear color |
+| G / E / D / C | Contact sheet / Review / Develop / Compare |
+| Z / Space | Toggle zoom in Review; Space opens Review from the grid |
+| Ctrl/Cmd + plus / minus / 0 | Zoom in / out / Fit in Review or Compare |
+| A / Shift+A / S | AF overlay / focus-centered zoom / expand burst |
+| F or F11 | Fullscreen |
+| B / I | Toggle Sources / Details |
+| Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z | Undo / redo decisions |
+| Delete / R in Trash | Move to PhotoCull Trash / restore |
+| Ctrl/Cmd+E / Ctrl/Cmd+Shift+E | Edit in external app / export finished images |
+| Ctrl/Cmd+K or Ctrl/Cmd+Shift+P | Command palette |
+| Ctrl/Cmd+comma / ? | Settings / Help and current shortcuts |
+
+**Settings → Keyboard** records, clears and resets bindings, with conflict checks. The command palette searches actions; type `>` and a filename to find photos even outside the current filter. Tab/Shift+Tab moves focus through controls. Open menus and dialogs own the keyboard. See [commands and settings](docs/workspace.md).
+
+## External editors
+
+**Edit in…** starts from RAW photos. In **Settings → External editors**, add a name, browse to the executable (or a macOS `.app`) and set arguments, for example `["{file}"]`. Use `["{files}"]` with **Open all selected files in one invocation** for an editor that accepts a batch. Arguments are passed directly without a shell. Choose **Watch file writes** for an editor you keep open, or **After application exits** for one that closes after editing. Save to the recorded hand-off path; Save As elsewhere cannot be detected.
+
+The resettable **Dehancer** preset uses 16-bit uncompressed sRGB TIFF, one process per photo and exit detection. Dehancer must be installed separately; browse to it if its executable is not found. Hand-offs default to `_develop` beside ordinary source photos. Card sessions ask for a writable local folder. Cleanup is explicit; automatic cleanup after successful export is off by default. See [external editors](docs/external-editors.md) for configuration and safety details.
+
+## XMP and Lightroom interoperability
+
+Original image bytes are never changed by decisions, Develop or hand-offs. XMP files are separate:
+
+- By default, PhotoCull autosaves XMP **beside photos in ordinary folders**, but **not on recognized camera cards**. **Settings → General → Write XMP sidecars** selects Always, Except camera cards (default), or Never. Use **Treat folder as card** for an unrecognized card folder, or choose Never before reviewing a read-only source library.
+- Card copies generate XMP beside the **destination** photos by default, unless the policy is Never. For ordinary folder copies, the copy dialog’s XMP checkbox controls destination sidecars. Embedding metadata changes destination copies only.
+- **Settings → Metadata → Export metadata → Write source XMP** is an explicit source-sidecar write command, including when automatic writing is Never. Selecting Always also opts into automatic card-sidecar writes. Neither writes metadata into original image files.
+
+Sidecars use standard `xmp:Rating` and `xmp:Label` for ratings/rejects and labels. A label is not a universal Lightroom pick flag. PhotoCull also stores flags, original ratings, develop settings and hand-off records in its own namespace. Other applications do not interpret PhotoCull adjustments as their own RAW development settings.
+
+Existing unrelated Lightroom/darktable/Capture One XMP content is preserved. PhotoCull reads both `name.xmp` and `name.ext.xmp`, respects existing naming, backs up an existing sidecar on first write, and reports malformed or ambiguous sidecars. Reopening a folder merges newer sidecar state with locally saved decisions; this is not live synchronization. Keep sidecars and any hand-off subfolder with the photos when moving between computers. See [sidecars and portability](docs/workflow.md#sidecars-and-moving-between-computers).
+
+## Local data and privacy
+
+No account, telemetry or remote logging is used. Photo processing, sessions and diagnostics stay local. The app serves image bytes through a token-protected server bound to `127.0.0.1`; this is local traffic. The optional **Lensfun database download** makes outbound requests only when requested in the Lens panel. Project/license links open the system browser. External editors are separate applications with their own privacy behavior.
+
+Settings, sessions, preview caches, backup records and rotating logs live here:
+
+| Platform | Data directory |
+| --- | --- |
+| Windows | `%APPDATA%/PhotoCull/` |
+| macOS | `~/Library/Application Support/PhotoCull/` |
+| Linux | `$XDG_CONFIG_HOME/PhotoCull/`, or `~/.config/PhotoCull/` |
+
+`settings/` holds preferences, recipes and presets; `sessions/` holds autosaved decisions; `previews/` is disposable; `card-backups/` holds verification records; `logs/` holds local logs. Open the settings or log folder from the app. The preview disk cache defaults to 2 GiB with a configurable soft limit and **Clear preview cache** in General. Pane layout is stored in the webview’s local storage.
+
+The native Develop engine uses Tauri’s app-data directory under the identifier `app.photocull.desktop` for optional `lensfun/` data; decoded Develop images are held in memory. `PHOTOCULL_DATA_DIR` overrides both data roots for isolated testing. Diagnostics redact home-directory prefixes and tokens, but review them before sharing; exported settings and sidecars can contain metadata and paths.
+
+## Build from source
+
+Use **Node.js 24**, npm, a current stable Rust toolchain and the [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/): MSVC C++ build tools, Windows SDK and WebView2 on Windows; Xcode command-line tools on macOS; the distribution’s WebKitGTK 4.1/GTK development libraries and C/C++ tools on Linux. Use an official Node distribution for packaging; Homebrew Node is not relocatable.
 
 ```sh
+git clone https://github.com/ficaa1/photocull.git
+cd photocull
 npm ci
 npm start
 ```
 
-`npm start` runs `tauri dev`, using `node` on PATH and the checkout’s `src/` directory. The Tauri 2 Rust shell handles the window, native dialogs, fullscreen, Mac menus and deletion. Photo scanning, previews, decisions and copying run in a Node sidecar over JSON-lines RPC on stdio. Images are served from a token-protected HTTP server on `127.0.0.1`; `src/renderer/bridge.js` provides the shared UI API.
-
-To build an installable bundle:
+`npm start` runs `tauri dev`. To stage the bundled sidecar and build native installers:
 
 ```sh
 npm run build
 ```
 
-This stages `src/` and production dependencies in `src-tauri/backend/`, copies the running Node binary to `src-tauri/binaries/node-<triple>`, and runs Tauri with `src-tauri/tauri.bundle.conf.json`. Build natively on each target OS because sharp and ExifTool contain platform-specific binaries. Use an official Node build: Homebrew Node is not relocatable. Bundles are written under `src-tauri/target/release/bundle/` and are unsigned and not notarized.
+Build on the target OS because sharp and ExifTool contain platform-specific binaries. Installers appear under `src-tauri/target/release/bundle/`. `npm run web` runs the shared renderer/backend in a browser using the token-bearing loopback URL printed in the terminal. Native Develop, editor hand-off, finished-image export, system Trash and dialogs need the desktop shell; browser-mode disk deletion is permanent.
 
-For the UI in a normal browser:
-
-```sh
-npm run web
-```
-
-Open the token-bearing URL printed by the backend on port 5173. This runs `src/backend.cjs --web`; folder selection uses a path prompt and Move to Trash is unavailable. Browser-mode deletion is permanent.
-
-## macOS
-
-Build on an Apple Silicon or Intel Mac with `npm run build`. The `.app` and `.dmg` are under `src-tauri/target/release/bundle/macos/` and `dmg/`. Native Mac launch has not been verified yet. See [macOS setup and validation limits](docs/macos.md) for unsigned-app opening, permissions and Command shortcuts.
-
-## Workflow
-
-1. Connect a camera card. PhotoCull checks mounted drives every five seconds and opens a single detected camera card automatically when no session is open, including DCIM subfolders. With multiple cards, choose one under Connected cards. A newly connected card never replaces an active session. You can also open any folder manually. RAW + JPEG files with the same stem are grouped when there is exactly one of each in a directory.
-2. Review with arrow keys. `P` picks, `X` rejects, `U` clears the flag, and `0–5` sets the star rating. Assign an independent color with the inspector swatches or `Alt+1–8` (`Alt+0` clears); `6–9` also selects the first four colors. Filter with the color menu. Flags advance to the next image by default when one photo is selected. Shift+click selects a range in the grid or filmstrip; drag across the grid to select several. Ctrl+click (Cmd+click on macOS) adds/removes a photo; hold Shift or Ctrl/Cmd while dragging to add to the selection. Shift+arrows extends the range, Ctrl+A (Cmd+A) selects the current view, and Esc returns to only the current photo. The stronger outline identifies the photo shown in review and the inspector. Flags, ratings and colors apply to all selected photos as one undoable decision; multi-photo decisions keep your place.
-3. Press `G` for the virtualized contact sheet, `E` for review, and `D` for Develop (`Ctrl+Tab` also toggles views). `Tab` and `Shift+Tab` move keyboard focus through controls. Use `B`/`I` or the pane buttons to hide sources/details; the contact-sheet slider adjusts thumbnail size. Layout choices persist locally. Zoom and pan work like Lightroom Classic's loupe; see [Zoom and pan](#zoom-and-pan) below.
-4. Press `F`/`F11` or click the fullscreen icon for native fullscreen review. Zoom, panning, navigation and culling shortcuts work there too; while zoomed, a small navigator appears at the top right. Move to the bottom edge to reveal the filmstrip and decision controls; they hide when the pointer leaves. `Esc` clears a multi-selection first, then exits fullscreen while keeping the zoom, and a further `Esc` returns to Fit. `G` switches to the contact sheet and leaves fullscreen.
-5. `Ctrl+Z` undoes a decision; `Ctrl+Shift+Z` redoes it. Search, picks, rejects, rated, unreviewed and Trash filters are available. A rated or flagged image counts as reviewed.
-6. Press `Del`/`⌫` in any view to move the selected photos to PhotoCull’s **Trash** (the last section in the sidebar). Nothing changes on disk: the photo just leaves the other views and copies, and `Ctrl+Z` or `R` in the Trash view brings it back. In the Trash view, `Del` asks to delete the photo for real, and **Empty trash** deletes all of them. `Shift+Del` asks to delete the selected photos permanently from any view (one prompt for the selection). Prompts confirm with `Enter`; any other key cancels without applying that key’s action.
-7. In Rejects, **Delete N rejects** (and **Empty trash** in Trash) let you choose **Move to Recycle Bin/system Trash** or **Delete permanently**. The choice is remembered as `deleteMode`. Camera-card sessions, including folders under a detected card root, only allow permanent deletion because cards have no system Trash; the desktop shell also refuses it for those sessions. PhotoCull’s own Trash works the same on cards.
-8. Click **Copy picks**, choose your SSD/folder, and copy the picked originals. RAW + JPEG pairs copy just the RAW by default; companion JPEGs are optional; camera-card copies include XMP state by default. Standalone JPEG/image picks copy their original files. All picks in the session are included regardless of the current view/filter; ratings alone do not select a file for copying. You can also develop RAW picks in PhotoCull and edit them in a configured external app, then click **Export…** (`Ctrl/Cmd+Shift+E`) for finished images.
-
-### Zoom and pan
-
-The review view (`E`) and fullscreen (`F`) behave like Lightroom Classic's loupe. Zoom percentages are relative to the photo's real pixels on the physical display: 100% shows one photo pixel per screen pixel, also with Windows/macOS display scaling. The real size comes from the RAW's metadata, so 100% is the same size whether the camera's embedded JPEG or a RAW development is on screen.
-
-| Input | Action |
-| --- | --- |
-| Click a photo at Fit or Fill | Zoom to the click-zoom ratio, keeping the clicked point under the pointer. Settings → General → **Zoom clicked point to center** (off by default, as in Lightroom) moves it to the centre instead. |
-| Click a zoomed photo | Back to Fit (or Fill, if you chose Fill) |
-| Drag (more than 4 px) | Pan. A shorter press counts as a click. The photo can't be dragged out of view, and an axis smaller than the view stays centred. |
-| `Z` / `Space` | Toggle Fit ↔ click zoom. With the pointer over the photo it zooms around the pointer (as Lightroom does), otherwise to the last zoomed position (the centre at first). From the contact sheet, `Z` opens the photo zoomed. |
-| Hold `Space` while zoomed | Temporary hand: drag anywhere to pan. On release you stay zoomed if you dragged; a tap without dragging toggles back to Fit. |
-| `Ctrl`/`Cmd` `+` / `−` | Step through 12.5–1600% levels above Fit, around the view centre; stepping below the first level returns to Fit |
-| `Ctrl`/`Cmd` `0`, `Esc` | Fit (`Esc` first clears a multi-selection, then leaves fullscreen) |
-| `Ctrl`+wheel, trackpad pinch | Zoom smoothly around the pointer, from Fit up to 1600% |
-| Two-finger scroll / wheel | Pans a zoomed photo. At Fit the plain wheel does nothing (it never changes photos). |
-| **Fit** / **Fill** buttons | Fit the whole photo, or fill the view (cropping the overflow, which you can pan) |
-| Percentage menu | Choose the click-zoom ratio (12.5–1600%; 100/200/300/400/800% are Lightroom's click ratios) and zoom to it. It persists between launches. |
-| Navigator (Details pane) | Shows the whole photo with a frame for the visible area. Click or drag to move the view; a click at Fit zooms there. When the Details pane is hidden or in fullscreen it appears as an overlay while zoomed. |
-
-The chip beside **Fit** shows the current zoom level. Zoom changes animate for 150 ms unless the system asks for reduced motion. Moving to another photo keeps the zoom level and the relative position, as in Lightroom; photos open at Fit only if you were at Fit. Opening another folder starts at Fit.
-
-When the pixels on screen are the camera's JPEG (embedded in the RAW, or its companion JPEG) rather than a development of the sensor data, the top-right corner says **Camera preview**. Hover over it for which JPEG it is and what that means. The inspector's Preview/Source rows show the representation's size and origin. A small embedded preview still limits focus assessment; choose “Missing or small previews” in Settings to request RAW development when needed.
-
-Deletion removes the image, its paired JPEG and its XMP sidecar. The image is removed first; if that fails, its companion and sidecar are left alone. A sidecar shared by same-stem RAWs is removed only after all of them are deleted. Each file is checked against the folder scan first; photos that changed since (for example a different card in the same reader) are skipped, and a replaced folder is refused until it is opened again. Copying and deleting never run at the same time. Deleted photos leave undo history and saved decisions. PhotoCull cannot undo deletion from disk; files moved to the Recycle Bin or system Trash can be restored there.
-
-The copy dialog’s **Folder** menu defaults to **No subfolder**, which copies files directly into the chosen destination. **Named subfolder** creates the name you enter and puts the picks there. **Keep source folders** retains paths such as `100MSDCF`. The layout and folder name persist and are included in export presets. Flattened filename collisions are reported; a sequence filename template can make names unique. Existing files cause that photo group to be skipped rather than overwritten. A conflicting companion or sidecar also skips the group. Repeated same-stem RAW sidecars are reported as conflicts. Source changes, card removal, destination failures, and cancellation are reported; cancellation removes the current incomplete photo group and keeps completed groups. Only one copy can run at once. A size check and disk flush verify each completed file; this is not a full destination checksum pass.
-
-### Sidecars and moving between computers
-
-PhotoCull autosaves decisions locally and, by default, writes XMP beside photos **except on camera cards**. Settings → General → **Write XMP sidecars** offers **Always**, **Except camera cards** (default), and **Never**. The card rule uses the session’s removable-device status: open a card from the camera-card panel so it is recognized. Writes run in a debounced background queue, use atomic replacement, and skip read-only locations. Source image bytes are never changed by sidecar writing. A source-XMP write failure appears as a notice and is included in the session warnings; local decisions remain saved.
-
-Keep the photos and neighboring `.xmp` files together on the NAS or when moving folders. New sidecars use `filename.xmp` for RAWs and other images, matching Lightroom/Capture One. Existing darktable-style `filename.ext.xmp` files are respected. PhotoCull reads both names, writes the newest existing one, and favors `filename.xmp` on a timestamp tie. RAW + JPEG pairs share the RAW decision. Multiple unpaired photos sharing one sidecar name are reported instead of overwriting each other.
-
-Opening or reopening a folder merges sidecars even when a local session already exists. The newest of the sidecar’s `photocull:modified` timestamp and filesystem modification time is compared with the photo’s saved decision timestamp; strictly newer sidecars win, and equal timestamps keep the local session. Standard ratings and labels changed in another app are imported when there is no newer local decision. Older sessions without timestamps start at zero. Reopen the folder after editing XMP in another application; this is not live synchronization. Keep laptop clocks synchronized, and avoid editing the same folder simultaneously from two computers.
-
-Standard `xmp:Rating` uses 0–5 stars and −1 for rejects; `xmp:Label` uses the Lightroom default names Red, Yellow, Green, Blue, and Purple for the first five colors. The Standard preset maps picks to Green and rejects to Red; an explicit per-photo color takes priority. The eight-color palette and preset mappings remain customizable, and presets can disable standard rating/label writes. The versioned `photocull:` namespace (`https://www.filipbiljic.com/photocull/ns/1.0/`) also stores the explicit pick/reject decision, original star rating, color id, develop recipe/settings, external-editor id, hand-off records, export state, and modification timestamp. Thus a reject can retain its positive rating within PhotoCull. Other apps may ignore these properties; PhotoCull develop settings are not translated into another app’s develop engine. Sidecars include the recipe’s effective settings so a custom recipe’s look travels even when that recipe is not installed on the other computer.
-
-Hand-off files inside the opened photo tree (including a root `_develop` folder when scanning recursively, or another configured subfolder) are stored as relative paths with `/` separators. Copy that subfolder with the photos to let Windows and Mac resolve their own NAS mount paths. Hand-offs outside the photo tree keep absolute paths and need the same location or a new hand-off on the other machine. Missing hand-offs are reported when opening the folder and original previews stay available. Editor executables remain machine-specific settings.
-
-Copying picks from a camera-card session generates XMP beside the destination photos even with the copy dialog’s XMP checkbox off, unless **Write XMP sidecars** is **Never**. The checkbox still explicitly requests XMP for any copy. Copies preserve the existing sidecar naming style and apply current state; they do not write back to the card. Copying does not transfer external-editor hand-off files: copy their folder separately. For ordinary folders, the checkbox controls destination XMP. **Never** disables automatic source and card-copy writes; Settings → Metadata → **Export metadata** → **Write source XMP** remains an explicit write command, and JSON export includes the entire session.
-
-Unrelated existing XMP content, including Lightroom/darktable develop properties and Capture One metadata, is retained byte-for-byte; only the properties being updated are replaced. New properties merge into the photo’s existing RDF Description, and distinct RDF subjects remain separate. Empty metadata-preset fields preserve existing values and keywords merge. Capture One’s separate adjustment/catalog files must travel separately. A first-write `*.xmp.photocull-backup` retains the original sidecar. Malformed sidecars, symlink destinations and ambiguous shared sidecars are left intact and reported. Explicit source-XMP export includes photos with decisions or develop state edited in PhotoCull; cleared decisions also export. Editor support for labels, flags and JPEG sidecars varies. Direct iPad XMP import is not verified.
-
-## Focus, bursts and Compare
-
-Press **A** or the **AF** button to show recorded autofocus coordinates in Review, fullscreen, Develop and Compare. The setting persists. **Shift+A** opens 100% Review centered on the focus point (or centers the focused Compare pane). Supported metadata includes Sony FocusLocation/focal-plane coordinates, Nikon AF areas, Canon in-focus areas, Fujifilm FocusPixel, Olympus/OM AF selections and Panasonic AF positions. Missing or invalid geometry produces no box. Camera orientation and declared sensor crops are applied; Sony's JPEG coordinate dimensions take precedence over the larger RAW sensor dimensions. External edits that change geometry cannot be aligned from the original AF metadata alone.
-
-Consecutive captures from the same camera form a burst when their capture-time gap is at most one second, including sub-seconds. Change **Settings → General → Burst gap** (0.1–10 seconds). A count badge identifies each stack in the contact sheet and filmstrip; **S** or **Expand burst** expands/collapses the current stack. Review still visits every frame and shows its position within the burst. Filtering retains matching frames, and a selected frame remains the collapsed representative.
-
-The desktop app ranks original display previews in the background using luminance Laplacian variance, with extra weight near a recorded focus point. One low-priority worker decodes cached previews with Lightcraft. Scores persist in the preview cache by file/representation identity; **Pause analysis** cancels work, and **Resume analysis** continues. Switching folders cancels old work. Details shows the numeric preview-detail score. The **Sharpest** badge appears only after every frame in a burst has a score. This is a preview-detail measure: camera sharpening, noise and subject movement affect it. Browser mode groups bursts and supports Compare but needs the desktop app for scores. **Keep sharpest** shows each flag change before picking the highest-scoring frame and rejecting the others; one Undo restores the entire burst. It never deletes files.
-
-Select two to four photos in the contact sheet or filmstrip and press **C** or **Compare**. With a single photo selected, Compare adds its neighbour. Zoom/pan are linked by default; uncheck **Link zoom & pan** for independent inspection. Click or Tab to focus a pane; **P/X/U** and **0–5** affect that pane, and **←/→** swaps its candidate without duplicating another pane. **Z**, **Ctrl/Cmd +/-/0**, dragging and pinch/scroll use the same geometry as Review. **C** or **Esc** returns to Review.
-
-Develop offers **Split view** or **Shift+\** for a draggable before/after divider; focus the divider for arrow-key adjustments, Home/End, or Shift+arrow for larger steps. The left side is the recipe baseline, the right side the current development. For an external edit, the left side is the saved RAW development and the right side the edit. **\** retains the before/after toggle and leaves split mode.
-
-The [Rust preview migration investigation](docs/rust-display-previews.md) records codec coverage, the stable cache contract, color checks and measured helper performance. Display previews currently retain sharp with explicit sRGB conversion.
-
-## Develop
-
-In the desktop app, press **D** for Develop. Choose a RAW, pick a recipe, and adjust its live preview. Neutral, Camera look and Flat base (for film emulation) are included. The flat base was derived from Dehancer’s ACR quick guide and adjusted for Lightcraft’s tone mapping using real RAW measurements; see [recipes and export](docs/recipes-export.md). Profile, white balance, Light, parametric tone curve, lens corrections and Detail are grouped in collapsible panels. Sharpening and noise reduction start at zero; the point curve starts linear. Each photo autosaves its own settings. Save named recipes or reset a photo to its recipe beside the recipe selector; the **Recipe library…** menu duplicates, imports/exports versioned `.photocull-recipe.json` files, updates/deletes custom recipes and sets a default. Settings → General includes the default recipe. Settings → External editors configures application hand-offs.
-
-Sliders have numeric entry and keyboard arrows. Double-click a slider or its label to reset to the recipe value; Shift-drag gives one tenth speed. Draft previews use a 1600 px edge, followed by 2560 px after 250 ms idle. One render runs at a time; intermediate changes coalesce. The histogram uses Lightcraft’s five-bin smoothing and square-root display scale. Hover to read Blacks, Shadows, Exposure, Highlights or Whites; drag horizontally to adjust that zone, Shift for fine control, or double-click to reset it. The corner triangles light above 0.3% channel clipping. Click either triangle or press **J** for blue shadow/red highlight warnings computed from the displayed preview. JPEG preview warnings are approximate; they do not measure unrendered sensor headroom. **\** switches between the recipe rendering and the adjusted photo.
-
-**Copy settings / Paste settings** (`Ctrl/Cmd+Shift+C/V`) transfers adjustments between photos. Apply the current settings to selected RAWs or all RAW picks. Thumbnail badges show ± for adjusted, H for a developed hand-off, and E for external edits (hover for the editor name). Browser mode and non-RAW photos explain why development is unavailable.
-
-## Editing in other apps
-
-Click **Edit in [editor]…** or press **Ctrl/Cmd+E** to edit the current selection in the default external editor. The arrow beside it opens a menu of the other configured editors and **Configure editors…**. These actions work in Develop, Review/loupe, the contact sheet and filmstrip. The dialog can also choose all RAW picks. Hand-offs currently start from RAW photos.
-
-In **Settings → External editors**, add an editor, enter its name, browse to the executable, and set arguments as a JSON array, for example `["{file}"]` or `["--open", "{files}"]`. Arguments are passed directly without a shell; do not add shell quoting around paths. `{file}` can appear inside an argument; `{files}` must be a whole argument and expands into separate paths. Enable **Open all selected files in one invocation** for a multi-file editor, using `{files}`. Editors can be duplicated or removed and one is the default. The built-in Dehancer preset can be reset rather than removed. **Test** checks that the application exists and is executable without launching it. Scripts can use an interpreter executable as the application, with the script path as a separate argument.
-
-Choose TIFF (8/16-bit; uncompressed, LZW or Deflate), PNG (8/16-bit), or JPEG (8-bit, quality 1–100), and sRGB, Display P3, Adobe RGB, ProPhoto RGB or Rec. 2020. The saved editor settings determine the next hand-off. For editors that save in place and close, **After application exits** compares file size/mtime. For applications that stay running, **Watch file writes** marks a result after a changed, nonempty file has been quiet for one second; it returns after all selected files have settled, or the application exits. Save back to the recorded hand-off path; Save As to a different file cannot be detected. Stop in watch mode stops waiting and leaves the editor running. Exit mode Skip/Stop closes only the process launched for this hand-off, so save pending changes first.
-
-On macOS, browse to an `.app` bundle (or enter an executable path). Bundles launch with `/usr/bin/open -W -a <bundle> <files>` and optional `--args` for fixed arguments. Use `{file}` or `{files}` as separate arguments for bundles. Exit detection waits for the application to quit, including an already-running instance; choose watch detection for editors normally left open. Stop cancels the `open` helper and leaves the application running. This bundle behavior still needs a macOS machine for integration validation.
-
-Dehancer is the only built-in editor preset: **16-bit uncompressed TIFF, sRGB**, exit detection, one process per photo. Its default Windows path is `C:\Program Files\Dehancer Lightroom Plugin\DehancerLightroom.exe`; PhotoCull fills it only if it exists, otherwise use **Browse…**. Apply overwrites the hand-off TIFF and Cancel leaves it unchanged. The observed Dehancer workflow retains 16-bit data and its sRGB ICC profile. Dehancer is a trademark of its owner; PhotoCull is not affiliated with Dehancer.
-
-The default hand-off destination is `_develop` beside the source photos. Change the subfolder name in settings. Camera-card sessions remember a writable local folder; missing folders prompt again. **Always use this folder** applies the remembered folder to all sessions. Unrelated files get numbered names such as `sample-01-2.tif`; only a photo’s own recorded file can be reused. Choose **Edit existing files** or **Re-develop and replace files**. Replacement warns when a file contains an external edit. Changing format or folder retains earlier hand-offs in the session’s cleanup records.
-
-Saved results display throughout Develop, Review/zoom, contact sheet and filmstrip. Badges and Details identify the editor; **External edits** filters results. **Show in folder**, **View result**, and **Edit in [editor] again** use the existing file. **\** or **Show originals** compares source previews with saved results. RAW adjustments remain separate until explicit re-development replaces the hand-off.
-
-The Sources sidebar shows this session’s recorded hand-off count and total disk usage. **Clean up hand-off files…** lists paths, count and size before deletion, with a second warning for external edits that have not been exported. Cleanup only removes recorded regular hand-off images; it refuses source files, links and redirected paths. **Delete hand-off files after successful export** is off by default. When enabled, it removes the current hand-off only for photos successfully exported using it (or an unedited hand-off successfully exported from RAW); failed/skipped exports and earlier hand-offs are retained. After cleanup, RAW adjustments and sources remain, while deleted external edits cannot be recovered by PhotoCull. Old sessions and Dehancer preferences migrate automatically. Implementation decisions and local results are in [external editor validation](docs/external-editors.md). Run `node scripts/editors-windows.cjs <debug-photocull.exe> <RAW-fixture>` from the Windows checkout for the isolated native round trip; it copies the fixture and never launches Dehancer.
-
-Lensfun data is downloaded only when requested from the Lens panel, with its size displayed; it is never bundled. Profiles may lack vignetting data (including the FE 40mm F2.5 G), so manual Vignetting and Midpoint remain available. RAW source bytes are never modified by Develop or external-editor hand-off.
-
-Run `node scripts/develop-ui-smoke.cjs` for the mocked native-API browser smoke (set `CHROMIUM_PATH` if needed). Histogram, zone, fine-drag, settings merge and render scheduling unit tests run with `npm test`.
-
-## Export finished images
-
-Click **Export…** beside Copy picks, or press **Ctrl/Cmd+Shift+E**. Export defaults to all picks in the session, regardless of the current filter; choose **Current selection** for a smaller batch. Trashed photos are excluded. Copy picks remains the separate action for copying originals.
-
-By default Export uses a saved external edit when available; otherwise it freshly develops the RAW using that photo’s current settings. **Always develop from RAW** bypasses saved TIFFs. Standalone JPEG, TIFF, PNG and WebP originals can also be decoded and re-encoded. This is a desktop feature; browser mode explains that a native engine is required. PhotoCull interprets unprofiled TIFFs as sRGB and converts finished pixels into the chosen output space. Wider spaces or greater bit depth cannot recover colors or precision already lost in the saved TIFF.
-
-File settings include JPEG, JPEG XL (lossy or lossless, Fast/Normal effort, progressive), TIFF (uncompressed/Deflate), PNG, AVIF (Faster/Balanced/Smaller speed) and WebP (lossy quality or lossless). JPEG offers a maximum file size in KB. PNG and JPEG XL offer 8/16-bit; TIFF offers 8/16-bit and 32-bit linear float; AVIF offers 8/10-bit and is much slower. AVIF output is sRGB with container color information rather than an ICC profile. Other supported output spaces are Display P3, Adobe RGB, ProPhoto RGB and Rec. 2020; Lightcraft’s lossy JPEG XL encoder substitutes Rec. 2020 for Adobe RGB/ProPhoto and the dialog discloses this.
-
-Choose full size, long/short edge, width, height, width & height, dimensions, megapixels or percent, with optional **Don’t enlarge**. Width & height fits the displayed orientation; Dimensions fits either orientation. Output sharpening is applied after resizing for screen, matte or glossy paper, with Low/Standard/High amount. PPI sets the print-resolution metadata independently of pixel dimensions.
-
-Metadata policies are All, All except camera & camera-raw info, Copyright & creator only, or None. **Remove location** also removes descriptive city/state/country fields. The active PhotoCull metadata preset supplies nonempty creator (mapped to Artist), copyright, title and caption; keywords merge. The policy applies afterward, so Copyright excludes title/caption/keywords and None excludes these overrides. RAW camera/lens/capture metadata comes from the RAW even when pixels come from an external edit. These are Lightcraft’s supported metadata fields, not a byte-for-byte preservation of proprietary maker notes or arbitrary camera-raw settings.
-
-File naming reuses PhotoCull’s naming templates/presets and live preview with the new extension. Choose or paste a destination folder, optionally add one named subfolder, and select unique names, skip existing files or overwrite. Duplicate/invalid planned names stop the batch before writing. Source images and recorded hand-off images cannot be replaced. Each completed file is staged, flushed and published; failures retain an existing destination. Cancellation waits for active encoders, keeps completed files and reports cancelled photos as skipped. Exports run in bounded parallelism: at most half the logical cores, capped at three photos, to bound full-resolution RAW memory. Results include exported/skipped/failed counts, reasons and **Show in folder**.
-
-The dialog includes resettable Full-size JPEG, Web 2048 px JPEG (sRGB with screen sharpening), JPEG XL and 16-bit TIFF archive presets. Save the current dialog as a named export preset; rename, duplicate, delete or reorder user presets. Presets capture output options, metadata policy, naming, subfolder and conflict policy. Existing saved settings migrate into My last export. [Recipe and export details, measurements and limits](docs/recipes-export.md).
-
-See [Develop, Dehancer and export validation](docs/validation.md#develop-dehancer-and-export-2026-11-05) for test coverage, timings, readback results and known limits. Run `node scripts/image-export-ui-smoke.cjs` for the mocked renderer/real Node-planning smoke. `test/image-export.test.cjs` covers option mapping and destination planning; export-only Rust tests are in `develop.rs`. `scripts/image-export-windows.cjs` exercises the real Windows Tauri app using a dedicated WebView2 debug profile, copies three RAW/JPEG pairs and writes output into a fresh temporary folder, reads output metadata and verifies source hashes. Follow with `node scripts/image-export-readback.cjs` for codec readback and a contact sheet; AVIF is read with sharp/libheif because Lightcraft has no AV1 decoder. It requires the explicitly configured isolated test data directory documented in the script; it does not drive ordinary production app instances.
-
-## Settings, presets and filenames
-
-Press **Ctrl/Cmd+K** or **Ctrl/Cmd+Shift+P** for the searchable command palette and filename navigation. Settings → Keyboard customizes shortcuts; Help shows the active bindings and offers Welcome, Copy diagnostics and Open log folder. Settings → Import / export moves a complete settings bundle between computers with validation, path mapping and a backup before import. **Back up card…** copies and hash-verifies every card file, resumes identical copies, and reports when all files are backed up. Camera detection layouts and backup folder defaults are configurable. See [commands, settings sync and verified backup](docs/workspace.md).
-
-**Settings** contains General, External editors, Metadata, Colors, File naming, Keyboard, and Import / export tabs. General controls auto advance, subfolder scanning, card auto-open, RAW rendering and copy defaults. Changes apply with Save; Cancel discards the draft. Settings and saved presets live in `%APPDATA%/PhotoCull/settings/` on Windows (`settings.json` plus `presets/<id>.json`), accessible through **Open settings folder**. The old top-level `settings.json` is migrated on first launch; sessions and caches are retained. Manual file edits are loaded on restart.
-
-Built-in metadata presets are Standard, Ratings only and Labels only. Use **Save as** in Metadata for a named custom preset. Presets include metadata rules, eight color definitions and filename naming rules. Creator, copyright, title and caption replace only the nonempty fields you supply; blank fields preserve existing metadata. Keywords merge with existing keywords. Disabled rating/label writes preserve existing values. Source image bytes are always unchanged; optional embedding modifies only destination copies. Pick/reject state remains a local culling decision; a color label is not a universal Lightroom pick flag.
-
-The compact copy dialog selects the preset and optionally overrides **File naming**, with a live preview from the first picked photo. Formats include original filename, custom text + sequence, capture date + filename, export date + sequence, or a custom template. Available tokens:
-
-| Token | Value |
-| --- | --- |
-| `{filename}` | Original base name, without extension |
-| `{text}` | Custom text |
-| `{seq}` / `{seq:3}` | Sequence number, default four digits or specified padding 1–6 |
-| `{capturedate}` | EXIF capture date as YYYYMMDD |
-| `{year}` / `{month}` / `{day}` | EXIF capture-date components |
-| `{date}` | Local export date as YYYYMMDD |
-
-For example, `{text}_{capturedate}_{seq:3}` with text `Trip` and start 7 creates `Trip_20260926_007.ARW`, its optional companion `.JPG`, and `.xmp`. Extensions are retained; folder layout follows the Folder menu. Numbering follows the naturally sorted picked photos and restarts from the configured start on each export; skipped/failed selections consume their planned number. Missing capture dates cause a reported failure for that photo rather than silently using a different date. Unsafe names and paths are refused. Naming collisions among selected groups cause all affected groups to be skipped; existing destination groups are skipped without overwriting. Copy checkboxes, folder layout and naming choices persist between launches.
-
-### Embedded metadata and Windows Properties
-
-XMP sidecars are separate files. Windows Explorer’s Properties panel for an ARW does not read its neighboring XMP, so sidecar Creator will not appear as Authors there. **Embed metadata** in the copy dialog writes the current preset directly into the exported image copies, independently of the XMP checkbox. This option changes the copied file’s metadata/bytes, while source images stay untouched. When it is off, image copies remain byte-identical. Older settings that already contain a Creator enable embedding on migration; other users opt in with the checkbox. You can disable it at any time.
-
-On Sony ARW and JPEG, embedding writes Creator plus EXIF Artist/XPAuthor for Windows, with the applicable rating, label, title, copyright, caption and keywords. Existing keywords merge and disabled fields are preserved. The author is read back after writing. Unsupported metadata writes fail that photo group and remove its new copies rather than silently pretending the metadata was applied. Support for other RAW formats and their Windows property handlers varies. This was verified through Windows’ actual `System.Author` and `System.Rating` properties for the user’s Sony ARW/JPEG; it is not a guarantee for every RAW codec.
-
-Existing exports are skipped by the normal no-overwrite rule, so enabling embedding applies to fresh copies. This application does not automatically rewrite arbitrary existing exports or originals.
-
-## Preview pipeline
-
-- RAW extensions recognized: CR2, CR3, NEF, NRW, ARW, DNG, RAF, ORF, RW2, PEF, SRW, 3FR, FFF, IIQ, RWL. Camera-specific support depends on ExifTool preview extraction and LibRaw decoding; recognizing an extension does not guarantee support.
-- Embedded candidates include `JpgFromRaw`, `PreviewImage`, `OtherImage`, `ThumbnailTIFF` and `ThumbnailImage`, plus a same-stem companion JPEG. Thumbnail requests favor small images; review/zoom requests seek larger representations. Already-extracted candidates are selected by dimensions. Unusable candidates are recorded so they are not repeatedly extracted.
-- Settings → General's **RAW rendering** setting persists: **Missing previews** (default), **Missing or small previews**, or **Off**. Off ignores previous RAW renders. Missing renders only if no valid embedded/companion image exists. Small also renders if the selected representation falls below the requested resolution; a usable thumbnail always remains a fast stand-in. A failed upgrade keeps the smaller preview visible.
-- Rendering uses LibRaw 0.22.1 in an isolated single-threaded WASM worker, with camera white balance, sRGB 8-bit output and bilinear interpolation. Fit requests use half-size development; zoom requests use full-size development. This implementation differs from Photo Mechanic's inspected Adobe DNG Converter path. Colors and detail can differ from the camera JPEG or an editor's RAW processing.
-- Only one sensor render runs at once, separately from the three ordinary image jobs and two extraction jobs. Each render has a 45-second deadline, a 256 MiB source-file limit and a 160 MP reported-image limit. Workers are disposed after each render. The first sensor render is much slower than reading an embedded JPEG; WASM starts with a 256 MiB heap, with additional decoder/image buffers during development.
-- Rendered JPEGs persist separately from resized previews. Keys include source path, fingerprint, decoder version and half/full profile; a full render can satisfy a smaller request. Unsupported/corrupt files get persistent failure records. Timeouts/worker failures have a 60-second cooldown; source/storage/cancellation failures do not blacklist. **Retry preview** clears the failure and rechecks candidates; reopening a modified source gives it a new identity. Cached smaller fallback images can still require explicit retry after a temporary failure.
-- sharp/libvips handles JPEG decode, shrink-on-load, all eight EXIF orientations, and sRGB conversion. TIFF, PNG and WebP originals can also be browsed. RAW parent orientation is used when an embedded image has none. When ExifTool supplies usable JPEG/TIFF offsets, PhotoCull reads a bounded byte range directly; invalid ranges fall back to ExifTool extraction.
-- [Preview colour management](docs/display-color.md) converts and tags generated previews as sRGB, including 16-bit TIFFs; the webview/OS matches them to the display. Histograms and exports stay in their output space. Windows ACM performs the final conversion when enabled; macOS keeps WKWebView's native colour management.
-- A 400 px thumbnail appears before the 2560 px fit preview. The loupe asks for the full-size representation only when the drawn photo needs more than 2560 device pixels (zoom, or Fit on a very large display). It reuses anything already loaded that is at least as large as the drawn size (scaling down, never up), and while a larger one loads it shows the best one it has, so zooming shows pixels at once.
-- Fit previews are prepared for the next five photos in the direction you are moving and one behind (plus the next full-size image when the view needs full size). They have lower priority than the photo on screen, run at most two at a time so the on-screen request never waits for a connection, and are canceled when obsolete. If you leave a photo within 0.25 s (a held or quickly tapped arrow key), the next photo shows cached previews at once but only requests new work after it has stayed 0.12 s. Pending work for photos you have passed is dropped. Running jobs finish, except shutdown aborts the active sensor render. The grid mounts only nearby rows; capture metadata is read incrementally for burst detection.
-- A full-size request for an upright embedded or original JPEG is served as is rather than decoded and re-encoded (about 9 ms instead of about 255 ms for an A7C II `JpgFromRaw`).
-- The compressed-image memory cache targets 96 MiB, libvips 48 MiB, and the shared image/render disk cache defaults to 2 GiB. Settings → General offers 1, 2, 5 or 10 GB, shows current use and has **Clear preview cache**. Pruning removes the least recently used files first (reading a cached preview or render refreshes it). It runs at most once a minute, and immediately when the limit is lowered. Entries from the last minute are protected, so the limit is soft. Failure records are retained until retry/source-identity change; clearing the cache removes them too, so blocked RAWs are retried. Browser/GPU memory and in-flight RAW buffers are additional.
-
-On Windows, card discovery queries mounted removable/fixed volumes, then checks removable roots and DCIM folders. This also accommodates USB readers reported as fixed drives. On macOS, external mounted volumes under `/Volumes` are identified with `diskutil`; internal volumes and disk images are excluded. On Linux, mounted removable/USB/MMC partitions are discovered via `lsblk`; WSL additionally checks accessible Windows drive mounts. Empty/unmounted readers and phones exposed only through MTP are not supported. Discovery only reads directory information; automatic formatting/ejection is not implemented. A disconnected-card notice preserves the current decisions.
-
-App state keeps the same per-user data directory as before the Tauri port (`%APPDATA%/PhotoCull` on Windows, `~/Library/Application Support/PhotoCull` on macOS, `~/.config/PhotoCull` on Linux), so existing settings and sessions carry over. `sessions/` contains autosaved decisions; `previews/` contains disposable image caches. Reopening the folder rescans source identities and merges newer sidecar state using per-photo timestamps, including when a saved session exists.
-
-## Validation and packaging
+Run local checks before contributing:
 
 ```sh
 npm test
 npm run test:ui
-npm run benchmark
-npm run build
+node scripts/workspace-ui-smoke.cjs
+node scripts/develop-ui-smoke.cjs
+node scripts/image-export-ui-smoke.cjs
+npm run notices
+cd src-tauri
+cargo fmt --check
+cargo test --locked
+cargo build --locked
 ```
 
-`npm test` checks loupe geometry (zoom around a point, pan clamping, click vs drag, zoom steps, position carried to the next photo), direction-aware prefetch ordering and representation choice, pairing, deletion planning and decision cleanup, autosave/undo, sidecar preservation, scheduling, orientation, candidate selection, render gates, cache recovery, failure persistence, retry and cancellation. Set `PHOTOCULL_RAW_FIXTURE` to a real RAW file to enable its source-checksum and embedded-preview test. `scripts/ui-smoke.cjs` uses `scripts/launch.cjs` to start the backend in browser mode and headless system Chromium with isolated test state and generated photos; if `artifacts/fixtures/iss030e122639.NEF` exists it also exercises RAW display. Set `CHROMIUM_PATH` to override the Chromium executable. Playwright cannot drive Tauri webviews, so these checks do not cover native dialogs, menus, Trash or real desktop fullscreen. For the user-authorized Sony test copies, reproduce preview stripping and browser UI checks with:
+Browser smokes need system Chrome/Chromium; set `CHROMIUM_PATH` if it is not discovered. They use generated photos and temporary app data. They do not validate native webviews or dialogs. See [CONTRIBUTING](CONTRIBUTING.md) and [validation](docs/validation.md) for platform checks and optional disposable RAW fixtures. Checks and releases are run locally.
 
-```sh
-node scripts/prepare-raw-cases.cjs /path/to/photo-fixtures
-PHOTOCULL_RAW_CASES=/path/to/photo-fixtures/photocull-cases npm test
-node scripts/raw-ui-smoke.cjs - /path/to/photo-fixtures/photocull-cases artifacts/raw-validation
-```
+### Project layout
 
-The preparation script expects the specific Sony `sample-01.ARW` and verifies preview ranges do not overlap its sensor strip before zeroing JPEG payloads in new copies. It is a test helper, not a general RAW editor. The first `raw-ui-smoke.cjs` argument is retained for compatibility; the launcher always uses browser mode. Test photos, screenshots and reports are ignored by Git.
+- `src/renderer/`: plain JavaScript UI using `bridge.js` for desktop/browser calls.
+- `src/`: Node sidecar for scanning, previews, decisions, backups and copy planning.
+- `src-tauri/`: Tauri shell for windows, native dialogs, deletion, Lightcraft Develop, external-editor launching and finished-image encoding. Its renderer method allowlist gates backend calls.
+- `scripts/`, `test/`, `docs/`, `third-party/`: local validation/build tools, tests, reference docs and license inventory.
 
-The benchmark reports scan, cold decode, memory-cache and disk-cache timings for generated JPEGs, or a supplied folder (`npm run benchmark -- /path/to/photos`). For the loupe, `node scripts/loupe-benchmark.cjs RAW_FOLDER` times the fit preview and the full-size representation of real RAWs in the backend. `node scripts/loupe-timing.cjs RAW_FOLDER` measures, in headless Chromium, the time from a key or click to the decoded image on screen for opening, next photo, click zoom, next photo while zoomed and a held-arrow burst, and counts the requests the burst issued. `scripts/viewer-ui-smoke.cjs - REPORT_FOLDER [SONY_FOLDER]` exercises the loupe: click zoom under the cursor, click vs drag, pan clamping, Z/Space/hold-Space, Ctrl +/-/0, Ctrl+wheel and scroll, Fill, the navigator, next photo keeping the zoom, fullscreen and the centre-on-click setting. These are backend measurements, not a Photo Mechanic comparison or a measurement of screen presentation latency. See [validation notes](docs/validation.md) and the [measured performance audit](docs/performance.md).
+The shell and sidecar use JSON-lines RPC over stdio; images travel over authenticated loopback HTTP.
 
-Checks and builds run locally: `npm test` and `npm run test:ui` before committing, `npm run build` on each machine for installers (Windows `.msi`/`-setup.exe`, Apple Silicon `.dmg`), uploaded to GitHub releases with `gh release`. The build workflow is disabled on GitHub and every job is guarded while the repository is private. The Tauri shell uses the system webview, while the bundled Node sidecar, sharp, ExifTool and WASM RAW decoder still add distribution size. Bundles are unsigned and not notarized.
+## Contributing, security and license
 
-## Research and REA
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup and contribution guidelines. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
-See [Photo Mechanic investigation](docs/photomechanic-research.md) for observed binary evidence, inferred design principles, and limits. This implementation is written in this repository using general image-processing techniques; it does not include Photo Mechanic code or binaries.
+PhotoCull-owned code is [MIT licensed](LICENSE). Dependencies retain their own terms: sharp’s bundled libvips is LGPL-3.0; ExifTool and its native runtime have separate licenses; Lightcraft uses MIT/Apache-2.0 components. Optional Lensfun data is downloaded separately with attribution under CC BY-SA 3.0, never bundled. Read [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [licensing requirements](docs/licensing.md), including corresponding-source requirements before redistributing installers. Regenerate the inventory offline with `npm run notices`.
 
-The preview pipeline uses general image-processing techniques; no third-party application code or binaries are distributed.
-
-## License
-
-PhotoCull is available under the [MIT license](LICENSE). Third-party components retain their own licenses.
-
-## Third-party notices
-
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the runtime inventory and redistribution requirements. Notices and decoder sources ship with the app. Reproduce the inventory offline with `npm run notices`.
-
-## Trademarks
-
-Dehancer is a trademark of its owner; PhotoCull is not affiliated with or endorsed by Dehancer.
-Adobe and Lightroom are trademarks of Adobe; PhotoCull is not affiliated with or endorsed by Adobe.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, tests and contribution guidelines. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+Dehancer and Adobe Lightroom are trademarks of their respective owners. PhotoCull is not affiliated with or endorsed by them.
