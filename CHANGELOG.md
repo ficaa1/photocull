@@ -4,6 +4,8 @@ All notable changes to PhotoCull are documented here. This file follows [Keep a 
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-06
+
 ### Added
 
 - Searchable command palette with recent commands and filename navigation, customizable shortcuts, and current bindings in Help.
@@ -23,7 +25,6 @@ All notable changes to PhotoCull are documented here. This file follows [Keep a 
 - App bar, split menus, view toolbar, sidebars, thumbnail badges and dialogs use a consistent compact layout; the grid-size control stays in the status bar.
 - Tab/Shift+Tab moves focus; menus own keyboard input, support typeahead and return focus when closed. View switching uses G/E/D or Ctrl+Tab.
 - Finished-image exports run at half the logical core count, rounded down, with one to three simultaneous photos. AVIF defaults to Faster; lossless WebP remains available.
-- Builds and release checks run locally; hosted build automation remains disabled.
 
 ### Fixed
 
@@ -73,7 +74,8 @@ All notable changes to PhotoCull are documented here. This file follows [Keep a 
 
 0.7.0 is reconstructed from the versioned Tauri migration commits; it has no release tag. 0.6.0 and 0.8.0 correspond to the repository tags and 0.8.0 release notes.
 
-[Unreleased]: https://github.com/ficaa1/photocull/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/ficaa1/photocull/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/ficaa1/photocull/releases/tag/v0.9.0
 [0.8.0]: https://github.com/ficaa1/photocull/releases/tag/v0.8.0
 [0.7.0]: https://github.com/ficaa1/photocull/commit/134f146
 [0.6.0]: https://github.com/ficaa1/photocull/releases/tag/v0.6.0

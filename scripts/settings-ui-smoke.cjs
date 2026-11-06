@@ -5,6 +5,7 @@ const path = require('node:path');
 const os = require('node:os');
 const assert = require('node:assert/strict');
 const { updateXmp } = require('../src/xmp.cjs');
+const { version } = require('../package.json');
 async function main() {
   const executable = process.argv[2], reports = path.resolve(process.argv[3]), fixture = path.resolve(process.argv[4]);
   await fs.mkdir(reports,{recursive:true}); const root=await fs.mkdtemp(path.join(os.tmpdir(),'photocull-settings-ui-'));
@@ -23,7 +24,7 @@ async function main() {
     await launch();
     await page.locator('#settings-open').click();
     await page.locator('[data-settings-tab="about"]').click();
-    await page.waitForFunction(()=>document.querySelector('#about-name').textContent.includes('0.8.0'));
+    await page.waitForFunction(v=>document.querySelector('#about-name').textContent.includes(v),version);
     assert.match(await page.locator('[data-settings-page="about"]').textContent(),/MIT License/);
     assert.match(await page.locator('[data-settings-page="about"]').textContent(),/RAW engine: Lightcraft/);
     assert.match(await page.locator('#about-notices').textContent(),/LibRaw/);

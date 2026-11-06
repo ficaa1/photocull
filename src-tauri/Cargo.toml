@@ -1,6 +1,6 @@
 [package]
 name = "photocull"
-version = "0.8.0"
+version = "0.9.0"
 description = "Local photo culling, editable RAW development, external-editor hand-off and image export"
 repository = "https://github.com/ficaa1/photocull"
 homepage = "https://www.filipbiljic.com/photocull/"
