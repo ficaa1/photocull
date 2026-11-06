@@ -35,8 +35,9 @@ test('source destinations, unsafe templates and links are refused; empty cards a
   if(process.platform!=='win32'){await fs.symlink(path.join(source,'movie.mp4'),path.join(source,'link'));const result=await backup.start(source,dest,options);assert.equal(result.status.safe,false);assert.ok(result.failures.some(f=>/links/.test(f.reason)));}
 });
 test('SHA-256 streams a temporary file and copy-picks can verify originals and generated sidecars',async t=>{
-  const {root,source,dest}=await fixture(t);const file=path.join(source,'movie.mp4');assert.equal((await hashFile(file)).hash.length,64);
+  const {root,source,dest}=await fixture(t),linked=path.join(root,'linked-card');await fs.symlink(await fs.realpath(source),linked,'junction');const file=path.join(linked,'DCIM','photo.raw');assert.equal((await hashFile(file)).hash.length,64);
   const {TransferService}=require('../src/transfer.cjs'),stat=await fs.stat(file),service=new TransferService();t.after(()=>service.close());
-  const result=await service.copy({folder:source,items:[{id:'1',name:'movie.mp4',path:file,sidecar:file+'.xmp',flag:'pick',size:stat.size,mtimeMs:stat.mtimeMs,rating:0}]},dest,{verify:true,includeXmp:true});
+  const result=await service.copy({folder:linked,items:[{id:'1',name:'photo.raw',path:file,sidecar:file+'.xmp',flag:'pick',size:stat.size,mtimeMs:stat.mtimeMs,rating:0}]},dest,{verify:true,includeXmp:true,folders:{mode:'preserve'}});
   assert.equal(result.copied,1);assert.equal(result.verified,2);assert.equal(result.failures.length,0);
+  assert.equal(await fs.readFile(path.join(dest,'DCIM','photo.raw'),'utf8'),'raw-bytes');assert.equal(await fs.readFile(file,'utf8'),'raw-bytes');assert.equal(await fs.stat(file+'.xmp').then(()=>true,()=>false),false);
 });

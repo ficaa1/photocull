@@ -11,7 +11,7 @@ const { TransferService } = require('../src/transfer.cjs');
 const { updateXmp, readXmp, writeXmp, portablePath, resolveDevelop, shouldWriteSidecars } = require('../src/xmp.cjs');
 
 async function setup(t, settings = {}, names = ['photo.ARW']) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'photocull-sidecars-'));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'photocull-sidecars-')));
   const photos = path.join(root, 'photos'), data = path.join(root, 'state');
   await fs.mkdir(photos);
   for (const name of names) await fs.writeFile(path.join(photos, name), 'synthetic photo');
@@ -151,17 +151,29 @@ test('both naming styles are read; newest existing style is written and RAW+JPEG
 
 test('relative handoffs, recipe settings, editor and export state relocate with the photo folder', async t => {
   const { root, photos, library } = await setup(t);
-  const s = await library.scan(photos), id = s.items[0].id, folder = path.join(photos, '_develop');
+  const linked = path.join(root, 'linked-photos'); await fs.symlink(photos, linked, 'junction');
+  const s = await library.scan(linked), id = s.items[0].id, folder = path.join(linked, '_develop');
   await fs.mkdir(folder); const tiff = path.join(folder, 'photo-edit.tif'); await fs.writeFile(tiff, 'tiff');
   await library.developSet(s.id, [id], { recipe: 'camera', settings: { light: { exposure: 1.25 } } });
   await library.developMark(s.id, id, { tiff }); await library.developMark(s.id, id, { editedBy: 'affinity' }); await library.flushSidecars();
   const xml = await fs.readFile(path.join(photos, 'photo.xmp'), 'utf8');
   assert.equal(state(xml).develop.tiff, '_develop/photo-edit.tif'); assert.ok(!xml.includes(root));
+  const saved = JSON.parse(await fs.readFile(library.get(s.id).store, 'utf8')).decisions[id].develop;
+  assert.equal(saved.tiff, '_develop/photo-edit.tif'); assert.equal(saved.handoffs[0].path, saved.tiff); assert.equal(saved.handoffs[0].realPath, saved.tiff);
+  const outside = path.join(root, 'outside'); await fs.mkdir(outside);
+  const outsideLink = path.join(root, 'linked-outside'); await fs.symlink(outside, outsideLink, 'junction');
+  const external = path.join(outsideLink, 'external.tif'); await fs.writeFile(external, 'external');
+  const pending = path.join(linked, '_develop', 'pending.tif');
+  for (const absolute of [external, pending]) {
+    await library.developMark(s.id, id, { tiff: absolute }); await library.flushSidecars();
+    assert.equal(state(await fs.readFile(path.join(photos, 'photo.xmp'), 'utf8')).develop.tiff, absolute);
+  }
+  await library.developMark(s.id, id, { tiff, editedBy: 'affinity' }); await library.flushSidecars();
   const moved = path.join(root, 'nas-new-mount'); await fs.rename(photos, moved);
   const fresh = new Library(path.join(root, 'laptop-two')), again = await fresh.scan(moved), item = fresh.item(again.id, again.items[0].id);
   assert.equal(item.develop.tiff, path.join(moved, '_develop', 'photo-edit.tif')); assert.equal(item.develop.editedBy, 'affinity');
   assert.equal(item.develop.settings.light.exposure, 1.25); assert.equal(item.develop.recipe, 'camera'); assert.equal(item.develop.missing, false);
-  assert.equal(item.develop.handoffs[0].realPath, item.develop.tiff);
+  assert.equal(item.develop.handoffs.find(r => r.path === item.develop.tiff).realPath, item.develop.tiff);
   await fs.rm(item.develop.tiff); const missing = await fresh.scan(moved);
   assert.equal(missing.items[0].handoffMissing, true); assert.equal(missing.items[0].externalEdit, false);
   assert.equal(fresh.developGet(missing.id, missing.items[0].id).missing, true);
@@ -175,8 +187,9 @@ test('recursive photo trees relocate root handoff folders and include effective 
   await fs.mkdir(path.join(photos, 'DCIM')); await fs.writeFile(path.join(photos, 'DCIM', 'nested.ARW'), 'photo');
   await fs.mkdir(path.join(photos, 'Edits')); const tiff = path.join(photos, 'Edits', 'nested.tif'); await fs.writeFile(tiff, 'tiff');
   const library = new Library(data, { recipeSettings: id => id === 'custom-look' ? { light: { contrast: 12 } } : null });
-  const s = await library.scan(photos, true), item = s.items.find(i => i.name === 'nested.ARW');
-  await library.developSet(s.id, [item.id], { recipe: 'custom-look' }); await library.developMark(s.id, item.id, { tiff }); await library.close();
+  const linked = path.join(root, 'linked-photos'); await fs.symlink(photos, linked, 'junction');
+  const s = await library.scan(linked, true), item = s.items.find(i => i.name === 'nested.ARW');
+  await library.developSet(s.id, [item.id], { recipe: 'custom-look' }); await library.developMark(s.id, item.id, { tiff: path.join(linked, 'Edits', 'nested.tif') }); await library.close();
   const xml = await fs.readFile(path.join(photos, 'DCIM', 'nested.xmp'), 'utf8');
   assert.equal(state(xml).develop.tiff, '../Edits/nested.tif'); assert.equal(state(xml).develop.settings.light.contrast, 12);
   const moved = path.join(root, 'moved'); await fs.rename(photos, moved);

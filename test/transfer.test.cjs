@@ -104,10 +104,17 @@ test('malformed source XMP fails the image cleanly; source and destination symli
   await fs.writeFile(path.join(photos, 'sub', 'a.xmp'), 'bad xml');
   let result = await new TransferService().copy(session, destination, { includeXmp: true });
   assert.equal(result.failures.length, 1); assert.deepEqual(await fs.readdir(destination), []);
-  if (process.platform === 'win32') return; // Creating symlinks needs Developer Mode on Windows.
-  const outside = path.join(root, 'outside'); await fs.mkdir(outside); await fs.symlink(outside, path.join(destination, 'sub'));
+  const outside = path.join(root, 'outside'), linked = path.join(photos, 'linked-outside'); await fs.mkdir(outside);
+  await fs.writeFile(path.join(outside, 'a.ARW'), 'original'); await fs.symlink(outside, linked, 'junction');
+  const escaped = { ...session, items: session.items.map(item => ({ ...item, path: path.join(linked, 'a.ARW') })) };
+  result = await new TransferService().copy(escaped, destination);
+  assert.equal(result.failures.length, 1); assert.match(result.failures[0].reason, /outside the source/);
+  assert.deepEqual(await fs.readdir(destination), []);
+  await fs.symlink(outside, path.join(destination, 'sub'), 'junction');
   result = await new TransferService().copy(session, destination, { folders: {mode:'preserve',name:''} });
-  assert.equal(result.failures.length, 1); assert.deepEqual(await fs.readdir(outside), []);
+  assert.equal(result.failures.length, 1); assert.deepEqual(await fs.readdir(outside), ['a.ARW']);
+  assert.equal(await fs.readFile(path.join(outside, 'a.ARW'), 'utf8'), 'original');
+  if (process.platform === 'win32') return; // File symlinks need Developer Mode on Windows.
   await fs.rm(path.join(destination, 'sub'));
   await fs.rename(path.join(photos, 'sub', 'a.ARW'), path.join(root, 'original.ARW'));
   await fs.symlink(path.join(root, 'original.ARW'), path.join(photos, 'sub', 'a.ARW'));
