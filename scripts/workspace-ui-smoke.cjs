@@ -13,7 +13,7 @@ async function main(){
  let app;const errors=[];
  try{
   app=await launch({env:{...process.env,PHOTOCULL_DATA_DIR:data,PHOTOCULL_TEST_DEVICES:deviceFile,PHOTOCULL_TEST_DESTINATION:dest}});
-  const page=await app.firstWindow();page.on('pageerror',e=>errors.push(e.message));await page.locator('#backup-open').waitFor();
+  const page=await app.firstWindow();page.on('pageerror',e=>errors.push(e.message));await page.locator('#backup-open').waitFor({state:'attached'});
   assert.equal(await page.locator('#welcome-panel').isVisible(),false,'onboarding suppressed in automated tests');
   await page.waitForFunction(()=>document.querySelector('#count-all').textContent==='4');
   await page.evaluate(async()=>syncSettings(await photocull.settings({writeSidecars:'never'})));
@@ -26,6 +26,11 @@ async function main(){
   await page.keyboard.press('u');const before=await page.locator('#count-pick').textContent();await page.keyboard.press('p');assert.equal(await page.locator('#count-pick').textContent(),before);await page.keyboard.press('Control+Shift+y');await page.waitForFunction(n=>document.querySelector('#count-pick').textContent!==n,before);
   await page.keyboard.press('?');await page.locator('#help-dialog[open]').waitFor();assert.match(await page.locator('#help-dialog').textContent(),/Ctrl\+Shift\+Y/);await page.keyboard.press('Escape');
   await page.keyboard.press('Control+k');await page.locator('#command-query').fill('welcome');await page.keyboard.press('Enter');await page.locator('#welcome-panel:not([hidden])').waitFor();await page.locator('#welcome-skip').click();await page.waitForFunction(()=>state.settings.welcomeDismissed===true);assert.equal((await page.evaluate(()=>photocull.settings())).welcomeDismissed,true);
+  // Source actions live in a keyboard menu; its arrow keys must not reach photo navigation.
+  const current=await page.evaluate(()=>state.selected);await page.locator('#source-menu-button').focus();await page.keyboard.press('ArrowDown');await page.keyboard.press('ArrowDown');
+  assert.equal(await page.evaluate(()=>document.activeElement.id),'backup-open');assert.equal(await page.evaluate(()=>state.selected),current);
+  await page.keyboard.press('Escape');assert.equal(await page.locator('#source-menu').isVisible(),false);assert.equal(await page.evaluate(()=>document.activeElement.id),'source-menu-button');
+  await page.locator('#source-menu-button').click();await page.locator('#backup-open').click();await page.locator('#backup-dialog').waitFor({state:'visible'});await page.locator('#backup-close').click();
   await page.locator('#device-list .device-backup button').click();await page.locator('#backup-destination-choose').click();await page.locator('#backup-folder-template').fill('ui-backup');await page.locator('#backup-start').click();await page.waitForFunction(()=>document.querySelector('#backup-status').textContent.includes('safe to format'),null,{timeout:30000});
   assert.equal(await fs.readFile(path.join(dest,'ui-backup','camera.dat'),'utf8'),'all files, not just photos');await page.locator('#backup-close').click();assert.match(await page.locator('#device-list').textContent(),/All 5 files backed up and verified/);
   await fs.writeFile(path.join(card,'changed.txt'),'new file');await page.locator('#device-list .device-backup button').click();await page.locator('#backup-check').click();await page.waitForFunction(()=>document.querySelector('#backup-failures').textContent.includes('changed.txt'));assert.doesNotMatch(await page.locator('#backup-status').textContent(),/safe to format/);await page.locator('#backup-close').click();

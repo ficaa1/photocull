@@ -1,5 +1,7 @@
 # PhotoCull UI redesign
 
+Current tokens, components and layout rules are in [interface design notes](ui.md); the colour values below describe the earlier design.
+
 ## Plan
 
 PhotoCull is a fast photography workbench: the photograph is the focal point, and the primary sequence is source → review → copy picks. The user explicitly wants less text and useful controls rather than decorative UI.

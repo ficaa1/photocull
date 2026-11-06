@@ -7,6 +7,7 @@ const gridNodes = new Map(), filmNodes = new Map();
 let filmSignature = '';
 const culling = { metadata:new Map(), jobs:new Map(), scores:new Map(), bursts:[], byId:new Map(), expanded:new Set(), epoch:0, paused:false, running:false };
 let survey, burstPrompt=null;
+const menus = [];
 let layoutPrefs = { sources: true, details: true, gridSize: 205 };
 try { const saved = JSON.parse(localStorage.getItem('photocull-layout') || '{}'); layoutPrefs = { sources: saved.sources !== false, details: saved.details !== false, gridSize: Math.min(320, Math.max(160, Number(saved.gridSize) || 205)) }; } catch {}
 const glyph = paths => `<svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
@@ -126,7 +127,9 @@ function renderDevices() {
   $('devices-panel').hidden = !state.devices.length && !state.deviceError && !removed;
   $('device-list').replaceChildren(...state.devices.map(device => {
     const button = document.createElement('button'); button.className = 'device-button';
-    button.textContent = `${device.label} · ${device.root}`;
+    const name = document.createElement('span'), where = document.createElement('span');
+    name.className = 'device-name'; name.textContent = device.label; where.className = 'device-path'; where.textContent = device.root;
+    button.append(name, where); button.setAttribute('aria-label', `Open ${device.label} · ${device.root}`);
     button.title = device.photoRoot;
     button.disabled = state.busy || state.copy.running || state.deleting;
     button.onclick = () => openDevice(device);
@@ -327,23 +330,28 @@ function renderFilmstrip(items, index) {
     }
     button.classList.toggle('selected', state.marked.has(item.id)); button.classList.toggle('current', item.id === state.selected); button.setAttribute('aria-current', String(item.id === state.selected));
     button.querySelector('.film-label').textContent = String(start + i + 1).padStart(2, '0');
-    button.querySelectorAll('.mini-flag, .mini-color, .develop-badges, .burst-badge, .sharpest-badge').forEach(node => node.remove()); addFlag(button, item); return button;
+    button.querySelectorAll('.badge-row').forEach(node => node.remove()); addFlag(button, item); return button;
   });
   if (signature !== filmSignature) { $('filmstrip').replaceChildren(...nodes); filmSignature = signature; }
   const retained = new Set(nearby.map(item => item.id)); for (const id of filmNodes.keys()) if (!retained.has(id)) filmNodes.delete(id);
 
 }
 
+function badgeRow(node, place) {
+  let row = node.querySelector(`:scope > .badge-row.${place}`);
+  if (!row) { row = document.createElement('span'); row.className = `badge-row ${place}`; node.append(row); }
+  return row;
+}
 function addFlag(node, item) {
   addBurstBadges(node,item);
   const marks = [item.adjusted && 'Adjusted', item.developed && 'Hand-off', item.externalEdit && `Edited in ${editorName(item.editedBy)}`].filter(Boolean);
-  if (marks.length) { const badge = document.createElement('span'); badge.className = 'develop-badges'; badge.textContent = marks.map(m => m === 'Adjusted' ? '±' : m === 'Hand-off' ? 'H' : 'E').join(' '); badge.title = marks.join(' · '); node.append(badge); }
+  if (marks.length) { const badge = document.createElement('span'); badge.className = 'develop-badges'; badge.textContent = marks.map(m => m === 'Adjusted' ? '±' : m === 'Hand-off' ? 'H' : 'E').join(' '); badge.title = marks.join(' · '); badgeRow(node, 'bottom').append(badge); }
   const color = state.settings.colors.find(c => c.id === colorOf(item));
-  if (color) { const dot = document.createElement('span'); dot.className = 'mini-color'; dot.style.setProperty('--label-color', color.hex); dot.title = color.name; node.append(dot); }
+  if (color) { const dot = document.createElement('span'); dot.className = 'mini-color'; dot.style.setProperty('--label-color', color.hex); dot.title = color.name; badgeRow(node, 'top').append(dot); }
   if (item.flag !== 'none' || item.rating) {
     const flag = document.createElement('span'); flag.className = `mini-flag${item.flag === 'reject' ? ' rejected' : ''}`;
     flag.textContent = `${item.flag === 'pick' ? '⚑' : item.flag === 'reject' ? '×' : ''}${item.rating ? '★'.repeat(item.rating) : ''}`;
-    node.append(flag);
+    badgeRow(node, 'bottom').append(flag);
   }
 }
 
@@ -1074,15 +1082,37 @@ function renderEditorActions() {
   $('edit-external').textContent = editor ? `Edit in ${editor.name}…` : 'Edit in…';
   $('edit-external').disabled = busy || !state.session || !selection().some(i=>i.raw && !i.trashed);
   developView.batchButton.textContent = $('edit-external').textContent;developView.batchButton.disabled=$('edit-external').disabled;
-  const menu = $('external-editor-menu'), signature = JSON.stringify(state.settings.editors?.map(e=>[e.id,e.name]));
-  if(menu.dataset.editors!==signature){menu.dataset.editors=signature;menu.replaceChildren(option('','▾'),...(state.settings.editors || []).map(e=>option(e.id,`Edit in ${e.name}…`)));}
-  menu.disabled = $('edit-external').disabled;
+  const menu = $('external-editor-list'), signature = JSON.stringify(state.settings.editors?.map(e=>[e.id,e.name]));
+  if(menu.dataset.editors!==signature){menu.dataset.editors=signature;menu.replaceChildren(...(state.settings.editors || []).map(e=>menuItem(`Edit in ${e.name}…`,()=>developView.openBatch(e.id))),menuSeparator(),menuItem('Configure editors…',()=>openSettings('editors')));}
+  $('external-editor-menu').disabled = $('edit-external').disabled;
+  if($('external-editor-menu').disabled)closeMenus();
   $('handoff-cleanup').disabled = !state.session || busy;
   const usageKey = state.session ? `${state.session.id}:${state.session.items.map(i=>i.developRevision || 0).join(',')}` : '';
   if(usageKey!==handoffUsageKey){handoffUsageKey=usageKey;const generation=++handoffUsageGeneration;$('handoff-usage').textContent='';if(state.session)void api.handoffUsage(state.session.id).then(u=>{if(generation===handoffUsageGeneration)$('handoff-usage').textContent=`Hand-off files: ${u.count} · ${fileSize(u.bytes)}`;}).catch(e=>toast(e.message));}
 }
 $('edit-external').onclick=()=>{void developView.openBatch().catch(e=>toast(e.message));};
-$('external-editor-menu').onchange=()=>{const id=$('external-editor-menu').value;$('external-editor-menu').value='';if(id)void developView.openBatch(id).catch(e=>toast(e.message));};
+// Menu buttons: arrow keys move within the menu and never reach the photo shortcuts.
+function menuItem(text,run,id) {const el=document.createElement('button');el.type='button';el.className='menu-item';el.setAttribute('role','menuitem');el.tabIndex=-1;el.textContent=text;if(id)el.id=id;el.onclick=()=>{closeMenus();Promise.resolve().then(run).catch(e=>toast(e.message));};return el;}
+function menuSeparator() {const el=document.createElement('div');el.className='menu-separator';el.setAttribute('role','separator');return el;}
+function closeMenus(except) {for(const m of menus)if(m!==except&&!m.menu.hidden){m.menu.hidden=true;m.button.setAttribute('aria-expanded','false');}}
+function bindMenu(button,menu) {
+  const entry={button,menu};menus.push(entry);
+  const items=()=>[...menu.querySelectorAll('[role=menuitem]:not(:disabled)')];
+  const open=index=>{if(button.disabled)return;closeMenus(entry);menu.hidden=false;button.setAttribute('aria-expanded','true');const list=items();list[(index+list.length)%list.length]?.focus();};
+  const close=()=>{menu.hidden=true;button.setAttribute('aria-expanded','false');button.focus();};
+  button.onclick=()=>menu.hidden?open(0):close();
+  button.addEventListener('keydown',e=>{if(['ArrowDown','ArrowUp'].includes(e.key)){e.preventDefault();e.stopPropagation();open(e.key==='ArrowUp'?-1:0);}});
+  menu.addEventListener('keydown',e=>{
+    const list=items(),index=list.indexOf(document.activeElement);
+    if(['ArrowDown','ArrowUp','Home','End'].includes(e.key)){e.preventDefault();list[e.key==='Home'?0:e.key==='End'?list.length-1:(index+(e.key==='ArrowDown'?1:-1)+list.length)%list.length]?.focus();}
+    else if(e.key==='Escape'){e.preventDefault();close();}
+    else if(e.key==='Tab')closeMenus();
+    else if(e.key!=='Enter'&&e.key!==' ')return;
+    e.stopPropagation();
+  });
+}
+document.addEventListener('pointerdown',e=>{for(const m of menus)if(!m.menu.hidden&&!m.menu.contains(e.target)&&!m.button.contains(e.target))closeMenus();});
+bindMenu($('external-editor-menu'),$('external-editor-list'));
 $('handoff-cleanup').onclick=async()=>{
   try {
     const session=state.session.id, usage=await api.handoffUsage(session);
@@ -1235,7 +1265,7 @@ async function copyDiagnostics() {
   try{await navigator.clipboard.writeText(text);toast('Diagnostics copied.');}catch{const dialog=workspaceNode('dialog',null,{'aria-label':'Copy diagnostics'}),area=workspaceNode('textarea',text,{rows:'18',cols:'70','aria-label':'Diagnostics'});dialog.append(area,workspaceButton('Close',()=>{dialog.close();dialog.remove();}));document.body.append(dialog);dialog.showModal();area.focus();area.select();}
 }
 const backupDialog=workspaceNode('dialog',null,{id:'backup-dialog','aria-labelledby':'backup-title'});
-backupDialog.innerHTML='<h2 id="backup-title">Back up card or folder</h2><p>Copies every regular file, including videos and sidecars. Each file is verified with SHA-256. Existing identical copies are verified and skipped. Source files are never formatted or deleted.</p><label>Source folder<input id="backup-source" readonly></label><button id="backup-source-choose" class="button quiet">Choose card / folder…</button><label>Destination<input id="backup-destination" readonly></label><button id="backup-destination-choose" class="button quiet">Choose destination…</button><label>Folder template<input id="backup-folder-template"></label><div class="copy-actions"><button id="backup-start" class="button primary">Back up & verify</button><button id="backup-check" class="button quiet">Check verified backup</button><button id="backup-cancel" class="button quiet" hidden>Cancel backup</button><button id="backup-close" class="button quiet">Close</button></div><progress id="backup-progress" max="1" value="0" hidden></progress><p id="backup-status" role="status" aria-live="polite"></p><pre id="backup-failures"></pre>';
+backupDialog.innerHTML='<div class="dialog-header"><h2 id="backup-title">Back up card or folder</h2></div><p class="dialog-lead">Copies every regular file, including videos and sidecars. Each file is verified with SHA-256. Existing identical copies are verified and skipped. Source files are never formatted or deleted.</p><div class="field-row"><label for="backup-source">Source folder</label><input id="backup-source" readonly><button id="backup-source-choose" class="button">Choose…</button></div><div class="field-row"><label for="backup-destination">Destination</label><input id="backup-destination" readonly placeholder="Choose a backup drive or folder"><button id="backup-destination-choose" class="button">Choose…</button></div><div class="field-row"><label for="backup-folder-template">Folder template</label><input id="backup-folder-template"></div><div class="copy-actions dialog-actions"><button id="backup-check" class="button quiet">Check verified backup</button><button id="backup-cancel" class="button quiet" hidden>Cancel backup</button><button id="backup-close" class="button">Close</button><button id="backup-start" class="button primary">Back up & verify</button></div><progress id="backup-progress" max="1" value="0" hidden></progress><p id="backup-status" role="status" aria-live="polite"></p><pre id="backup-failures"></pre>';
 document.body.append(backupDialog);let backupRunning=false;const cardStatuses=new Map();
 function openBackup(source=state.session?.deviceRoot||state.session?.folder||'') {if(document.querySelector('dialog[open]'))return;$('backup-source').value=source;$('backup-folder-template').value=state.settings.backupTemplate||'{date}-{card}';$('backup-status').textContent='';$('backup-failures').textContent='';backupDialog.showModal();}
 $('backup-source-choose').onclick=async()=>{const folder=await api.pickFolder('Choose a card or folder to back up');if(folder)$('backup-source').value=folder;};
@@ -1248,9 +1278,10 @@ $('backup-start').onclick=async()=>{setBackupBusy(true);try{const source=$('back
 $('backup-check').onclick=async()=>{setBackupBusy(true);$('backup-status').textContent='Checking every source and destination hash…';try{const source=$('backup-source').value,status=await api.backupStatus(source);cardStatuses.set(source,status);$('backup-status').textContent=backupStatusText(status);$('backup-failures').textContent=status.missing.map(f=>`${f.name}: ${f.reason}`).join('\n');}catch(e){$('backup-status').textContent=e.message;cardStatuses.set($('backup-source').value,{safe:false,total:0,verified:0,missing:[{name:'Card',reason:e.message}]});}finally{setBackupBusy(false);}};
 $('backup-cancel').onclick=()=>api.backupCancel();$('backup-close').onclick=()=>backupDialog.close();backupDialog.addEventListener('cancel',e=>{if(backupRunning)e.preventDefault();});
 async function treatCard(){if(!state.session)return toast('Open a folder first.');receiveDevices(await api.manualCard(state.session.folder));state.session.removable=true;toast('Folder is now treated as a camera card.');}
-function deviceBackupRow(device){const row=workspaceNode('div',null,{class:'device-backup'}),status=cardStatuses.get(device.root) || device.backup;row.append(workspaceButton('Back up card…',()=>openBackup(device.root)));if(status){row.append(workspaceNode('p',backupStatusText(status),{class:status.safe?'backup-safe':'subtle small'}));if(status.missing.length){const detail=workspaceNode('details');detail.append(workspaceNode('summary','Files needing backup'),workspaceNode('pre',status.missing.map(f=>`${f.name}: ${f.reason}`).join('\n')));row.append(detail);}}return row;}
+function deviceBackupRow(device){const row=workspaceNode('div',null,{class:'device-backup'}),status=cardStatuses.get(device.root) || device.backup;row.append(workspaceButton('Back up card…',()=>openBackup(device.root)));if(status){row.append(workspaceNode('p',backupStatusText(status),{class:status.safe?'backup-safe':'backup-pending'}));if(status.missing.length){const detail=workspaceNode('details');detail.append(workspaceNode('summary','Files needing backup'),workspaceNode('pre',status.missing.map(f=>`${f.name}: ${f.reason}`).join('\n')));row.append(detail);}}return row;}
 // Add discoverable entry points alongside the existing folder controls.
-$('open-folder').after(workspaceButton('Back up…',()=>openBackup(),'backup-open'),workspaceButton('Treat folder as card',treatCard,'treat-card'));
+$('source-menu').append(menuItem('Open folder…',openFolder),menuSeparator(),menuItem('Back up card or folder…',()=>openBackup(),'backup-open'),menuItem('Treat folder as card',treatCard,'treat-card'));
+bindMenu($('source-menu-button'),$('source-menu'));
 const verifyLabel=workspaceNode('label',null,{class:'toggle-row'});verifyLabel.innerHTML='<input id="copy-verify" type="checkbox"> Verify copied files (SHA-256)';$('copy-naming').before(verifyLabel);
 
 $('copy-verify').onchange=()=>saveCopyDefaults();
@@ -1295,8 +1326,9 @@ function bestIn(burst) {return burst && PhotoCullCulling.sharpest(burst.ids,cull
 function burstSignature(item) {const b=culling.byId.get(item.id);return b ? `${b.id}:${b.ids.length}:${culling.expanded.has(b.id)}:${bestIn(b)}` : '';}
 function addBurstBadges(node,item) {
   const b=culling.byId.get(item.id);if(!b)return;
-  const badge=document.createElement('span');badge.className='burst-badge';badge.textContent=`${culling.expanded.has(b.id)?'▾':'▸'} ${b.ids.length}`;badge.title='Burst · S to expand or collapse';node.append(badge);
-  if(bestIn(b)===item.id){const star=document.createElement('span');star.className='sharpest-badge';star.textContent='◆ Sharpest';star.title='Highest preview sharpness in this burst';node.append(star);}
+  const badge=document.createElement('span');badge.className='burst-badge';badge.textContent=`${culling.expanded.has(b.id)?'▾':'▸'} ${b.ids.length}`;badge.title='Burst · S to expand or collapse';
+  if(bestIn(b)===item.id){const star=document.createElement('span');star.className='sharpest-badge';star.append('◆',Object.assign(document.createElement('span'),{className:'badge-label',textContent:' Sharpest'}));star.title='Highest preview sharpness in this burst';badgeRow(node,'top').append(star);}
+  badgeRow(node,'top').append(badge);
 }
 function renderCulling() {
   const burst=culling.byId.get(state.selected),available=!!burst;
@@ -1311,6 +1343,7 @@ function toggleBurst() {
   if(culling.expanded.has(burst.id))culling.expanded.delete(burst.id);else culling.expanded.add(burst.id);
   filmSignature='';render();
 }
+function setAnalysis(text,phase) {$('analysis-status').textContent=text;$('analysis-status').dataset.phase=phase;}
 function cancelCulling() {culling.epoch++;culling.running=false;void api.cancelSharpness().catch(()=>{});}
 async function analyzeCulling() {
   cancelCulling();culling.paused=false;culling.running=true;const epoch=culling.epoch,session=state.session?.id,items=[...(state.session?.items || [])];
@@ -1321,7 +1354,7 @@ async function analyzeCulling() {
     for(const [index,item] of items.entries()) {
       if(!current())return;try{await cullingMetadata(item.id,session);}catch{failures++;}
       if(!current())return;
-      if(index%8===0 || index===items.length-1){regroupBursts();filmSignature='';render();$('analysis-status').textContent=`Metadata ${index+1}/${items.length}`;}
+      if(index%8===0 || index===items.length-1){regroupBursts();filmSignature='';render();setAnalysis(`Metadata ${index+1}/${items.length}`,'running');}
       await yieldUI();
     }
     if(api.canAnalyze) {
@@ -1330,10 +1363,10 @@ async function analyzeCulling() {
         if(!current())return;if(culling.scores.has(item.id))continue;
         try{const score=await api.sharpness(session,item.id);if(!current())return;if(Number.isFinite(score))culling.scores.set(item.id,score);}catch{if(current())failures++;}
         if(!current())return;
-        $('analysis-status').textContent=`Focus ${culling.scores.size}/${items.length}`;filmSignature='';render();await yieldUI();
+        setAnalysis(`Focus ${culling.scores.size}/${items.length}`,'running');filmSignature='';render();await yieldUI();
       }
     }
-    if(current()){$('analysis-status').textContent=failures?`${failures} unavailable`:api.canAnalyze?'Focus ready':'Desktop scores';$('analysis-pause').hidden=!failures;$('analysis-pause').textContent='Retry analysis';}
+    if(current()){setAnalysis(failures?`${failures} unavailable`:api.canAnalyze?'Focus ready':'Desktop scores',failures?'warn':'done');$('analysis-pause').hidden=!failures;$('analysis-pause').textContent='Retry analysis';}
   }finally{if(epoch===culling.epoch)culling.running=false;}
 }
 function promptKeepSharpest() {
@@ -1345,7 +1378,7 @@ function promptKeepSharpest() {
 }
 $('focus-toggle').onclick=()=>commands.execute('focus-overlay');$('compare-mode').onclick=()=>commands.execute('view-compare');
 $('burst-stack').onclick=()=>commands.execute('burst-stack');$('burst-keep').onclick=()=>commands.execute('burst-keep');
-$('analysis-pause').onclick=()=>{if(culling.running){cancelCulling();culling.paused=true;$('analysis-status').textContent='Analysis paused';$('analysis-pause').textContent='Resume analysis';}else void analyzeCulling();};
+$('analysis-pause').onclick=()=>{if(culling.running){cancelCulling();culling.paused=true;setAnalysis('Analysis paused','paused');$('analysis-pause').textContent='Resume analysis';}else void analyzeCulling();};
 $('burst-cancel').onclick=()=>{$('burst-dialog').close();burstPrompt=null;};
 $('burst-dialog').addEventListener('cancel',()=>{burstPrompt=null;});
 $('burst-confirm').onclick=async()=>{

@@ -115,7 +115,7 @@ Sliders have numeric entry and keyboard arrows. Double-click a slider or its lab
 
 ## Editing in other apps
 
-Click **Edit in [editor]…** or press **Ctrl/Cmd+E** to edit the current selection in the default external editor. The small menu beside it chooses another configured editor for this hand-off. These actions work in Develop, Review/loupe, the contact sheet and filmstrip. The dialog can also choose all RAW picks. Hand-offs currently start from RAW photos.
+Click **Edit in [editor]…** or press **Ctrl/Cmd+E** to edit the current selection in the default external editor. The arrow beside it opens a menu of the other configured editors and **Configure editors…**. These actions work in Develop, Review/loupe, the contact sheet and filmstrip. The dialog can also choose all RAW picks. Hand-offs currently start from RAW photos.
 
 In **Settings → External editors**, add an editor, enter its name, browse to the executable, and set arguments as a JSON array, for example `["{file}"]` or `["--open", "{files}"]`. Arguments are passed directly without a shell; do not add shell quoting around paths. `{file}` can appear inside an argument; `{files}` must be a whole argument and expands into separate paths. Enable **Open all selected files in one invocation** for a multi-file editor, using `{files}`. Editors can be duplicated or removed and one is the default. The built-in Dehancer preset can be reset rather than removed. **Test** checks that the application exists and is executable without launching it. Scripts can use an interpreter executable as the application, with the script path as a separate argument.
 

@@ -20,7 +20,7 @@ Help → Copy diagnostics collects the app/OS/runtime version, webview user agen
 
 ## Backing up an entire card
 
-Use **Back up card…** in Connected cards, **Back up…** beside Open folder, or the palette. You can also choose an ordinary source folder. Select an existing destination outside the source and a folder template. Supported tokens are `{date}` (UTC backup date), `{card}`, `{year}`, `{month}` and `{day}`; the default is `{date}-{card}`. The complete source hierarchy is preserved under that folder, including videos, sidecars and other regular files.
+Use **Back up card…** in Connected cards, **Back up card or folder…** in the menu beside Open folder, or the palette. You can also choose an ordinary source folder. Select an existing destination outside the source and a folder template. Supported tokens are `{date}` (UTC backup date), `{card}`, `{year}`, `{month}` and `{day}`; the default is `{date}-{card}`. The complete source hierarchy is preserved under that folder, including videos, sidecars and other regular files.
 
 Each source and destination is checked with streaming SHA-256. Identical existing files are verified and skipped, so running the same backup again resumes work. Different existing files are reported and never replaced: choose another backup subfolder or resolve the conflict yourself. Cancel keeps completed verified files and removes only the operation's incomplete destination files. Symbolic links and unreadable/special files prevent a complete verification claim. PhotoCull never formats or deletes source-card files during backup.
 
@@ -30,7 +30,7 @@ The full card copy performs additional reads for verification and can be slower 
 
 **Copy picks → Verify copied files** optionally compares original/source bytes (and generated XMP bytes) with destination hashes. When Embed metadata is selected, this byte verification runs before the deliberate metadata transformation. It does not establish a complete-card backup record.
 
-Settings → General configures camera folder layouts, manual card folders and the default backup template. Layouts are relative, case-insensitive paths such as `DCIM` or `PRIVATE/M4ROOT`. **Treat folder as card** adds the current folder, disables OS Trash for that session, and uses the card hand-off destination rules. Remove a manual root in General to stop treating it as a card on subsequent scans. Existing copy filename/folder defaults remain in File naming; finished-image names and subfolders remain in export presets.
+Settings → General configures camera folder layouts, manual card folders and the default backup template. Layouts are relative, case-insensitive paths such as `DCIM` or `PRIVATE/M4ROOT`. **Treat folder as card** (menu beside Open folder, or the palette) adds the current folder, disables OS Trash for that session, and uses the card hand-off destination rules. Remove a manual root in General to stop treating it as a card on subsequent scans. Existing copy filename/folder defaults remain in File naming; finished-image names and subfolders remain in export presets.
 
 ## Local verification
 
