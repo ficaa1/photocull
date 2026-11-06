@@ -13,9 +13,11 @@
     }
     open(selected,items) {this.state=C.compareState(selected,items);this.signature='';return this.state.ids.length>=2;}
     sync(active) {
-      this.root.hidden=!active;if(!active)return;
-      const items=this.host.items(),available=new Set(items.map(i=>i.id));
-      this.state.ids=this.state.ids.filter(id=>available.has(id));this.state.active=Math.min(this.state.active,Math.max(0,this.state.ids.length-1));
+      const items=this.host.items();this.root.hidden=!active || !items.length;if(this.root.hidden)return;
+      const available=new Set(items.map(i=>i.id));
+      this.state.ids=this.state.ids.filter(id=>available.has(id));
+      if(this.state.ids.length<2)this.state.ids=C.compareState(this.state.ids.length?this.state.ids:[items[0].id],items).ids;
+      this.state.active=Math.min(this.state.active,Math.max(0,this.state.ids.length-1));
       const signature=`${this.host.session()}:${this.state.ids.join(':')}:${this.host.revision()}`;
       if(signature!==this.signature) {this.signature=signature;this.build();}
       this.refresh();

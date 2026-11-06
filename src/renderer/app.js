@@ -100,6 +100,7 @@ async function openFolder() {
 }
 
 function loadSession(session) {
+  if(state.mode==='compare')state.mode='review';
   cancelCulling();culling.metadata.clear();culling.jobs.clear();culling.scores.clear();culling.expanded.clear();culling.bursts=[];culling.byId.clear();
   state.session = session; state.selected = session.items[0]?.id ?? null;
   resetSelection();
