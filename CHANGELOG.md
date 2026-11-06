@@ -4,6 +4,13 @@ All notable changes to PhotoCull are documented here. This file follows [Keep a 
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-06
+
+### Fixed
+
+- Hand-off files stay relative to the photo folder when it is opened through a symlink, junction, Windows short path or macOS `/var` alias, so edits survive moving the folder.
+- Copy picks resolves each original to its real path, accepting equivalent source paths and refusing links that lead outside the source folder.
+
 ## [0.9.0] - 2026-11-06
 
 ### Added
@@ -74,7 +81,8 @@ All notable changes to PhotoCull are documented here. This file follows [Keep a 
 
 0.7.0 is reconstructed from the versioned Tauri migration commits; it has no release tag. 0.6.0 and 0.8.0 correspond to the repository tags and 0.8.0 release notes.
 
-[Unreleased]: https://github.com/ficaa1/photocull/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/ficaa1/photocull/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/ficaa1/photocull/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/ficaa1/photocull/releases/tag/v0.9.0
 [0.8.0]: https://github.com/ficaa1/photocull/releases/tag/v0.8.0
 [0.7.0]: https://github.com/ficaa1/photocull/commit/134f146
