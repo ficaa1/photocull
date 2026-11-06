@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PhotoCull: cull, develop and export photos from the camera card</title>
+<meta name="description" content="PhotoCull is a free, open-source desktop app for Windows and macOS. Back up a camera card, pick your keepers, develop RAWs, hand them to your editor and export finished images.">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0e0f10">
+<link rel="stylesheet" href="fonts/fonts.css">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="canonical" href="https://www.filipbiljic.com/photocull/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="PhotoCull">
+<meta property="og:description" content="Cull, develop and export photos straight from the camera card. Windows and macOS, MIT licensed.">
+<meta property="og:url" content="https://www.filipbiljic.com/photocull/">
+<meta property="og:image" content="https://www.filipbiljic.com/photocull/img/social.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+:root{
+  --bg:#0e0f10; --app:#141516; --panel:#1b1c1e; --raised:#242629; --line:#2c2e31; --line-strong:#3f4246;
+  --ink:#e8e9ea; --ink-2:#b7bbbf; --muted:#9a9fa4; --accent:#8fb3c9; --ivory:#e6e3da; --pick:#7fbf8a;
+  --m:clamp(20px,4vw,64px); --max:1320px; --gap:24px; --section:clamp(96px,12vw,168px);
+  --s-body:18px; --s-small:15px; --s-head:clamp(26px,2.6vw,36px); --s-display:clamp(36px,5vw,72px); --s-poster:clamp(44px,7.4vw,112px);
+  --ease:cubic-bezier(.2,.7,.2,1);
+}
+*{margin:0;box-sizing:border-box}
+html{background:var(--bg);-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+body{font:400 var(--s-body)/1.55 "Schibsted Grotesk",system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);background:var(--bg)}
+a{color:inherit;text-decoration-thickness:1px;text-underline-offset:3px;transition:text-decoration-color .2s,color .2s}
+a:hover{color:#fff;text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px}
+img{display:block;max-width:100%;height:auto}
+code,kbd{font-family:ui-monospace,"Cascadia Mono",Menlo,Consolas,monospace;font-size:.86em}
+.wrap{width:min(100% - 2 * var(--m),var(--max));margin-inline:auto}
+.d{font-weight:800;letter-spacing:-.045em;line-height:.95}
+.muted{color:var(--muted)}
+.skip{position:absolute;left:var(--m);top:-60px;background:var(--ivory);color:#111;padding:10px 14px;z-index:9}
+.skip:focus{top:12px}
+
+/* buttons: one primary (ivory, as in the app), one quiet */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:10px;height:48px;padding:0 22px;border-radius:6px;font:600 16px/1 "Schibsted Grotesk",sans-serif;text-decoration:none;border:1px solid transparent;transition:transform .15s var(--ease),background-color .2s,border-color .2s}
+.btn:hover{transform:translateY(-1px);text-decoration:none}
+.btn:active{transform:translateY(1px) scale(.98)}
+.btn.primary{background:var(--ivory);color:#111}
+.btn.primary:hover{background:#f3f1ea;color:#111}
+.btn.quiet{border-color:var(--line-strong);color:var(--ink)}
+.btn.quiet:hover{background:var(--raised);border-color:#5a5e63}
+.btn svg{flex:none}
+
+/* nav */
+.top{position:absolute;inset:0 0 auto;z-index:3}
+.top .wrap{height:76px;display:flex;align-items:center;justify-content:space-between;gap:24px}
+.mark{display:flex;align-items:center;gap:10px;font-weight:700;font-size:19px;letter-spacing:-.02em;text-decoration:none}
+.mark img{width:28px;height:28px}
+.top nav{display:flex;gap:28px;align-items:center;font-size:var(--s-small)}
+.top nav a:not(.btn){text-decoration:none;color:var(--ink-2)}
+.top nav a:not(.btn):hover{color:var(--ink);text-decoration:underline}
+.top .btn{height:40px;padding:0 16px;font-size:15px}
+
+/* hero: the claim, then the app itself */
+.hero{padding-top:124px;overflow:hidden}
+.hero .head{display:grid;grid-template-columns:repeat(12,1fr);column-gap:var(--gap);align-items:end}
+.hero h1{grid-column:1/span 7;font-size:clamp(42px,5.4vw,80px)}
+.hero .aside{grid-column:8/-1}
+.hero .lede{color:var(--ink-2)}
+.hero .actions{margin-top:28px;display:flex;gap:12px;flex-wrap:wrap}
+.hero .fact{margin-top:16px;font-size:var(--s-small);color:var(--muted)}
+.frame{position:relative;overflow:hidden;border-radius:10px;border:1px solid var(--line);background:var(--app)}
+.frame img{width:100%;transition:transform .5s var(--ease)}
+.frame:hover img{transform:scale(1.015)}
+.hero .frame{margin-top:56px;box-shadow:0 40px 120px -40px #000}
+
+/* workflow: four steps on one line */
+.flow{padding-top:var(--section)}
+.flow h2{font-size:var(--s-display);max-width:16ch}
+.steps{margin-top:64px;display:grid;grid-template-columns:repeat(4,1fr);gap:var(--gap);counter-reset:step;list-style:none;padding:0}
+.steps li{border-top:1px solid var(--line-strong);padding-top:24px;counter-increment:step}
+.steps li::before{content:"0" counter(step);display:block;font-size:var(--s-small);color:var(--muted);font-variant-numeric:tabular-nums;margin-bottom:28px}
+.steps h3{font-size:var(--s-head);font-weight:700;letter-spacing:-.03em;line-height:1.1;margin-bottom:12px}
+.steps p{color:var(--ink-2);font-size:17px}
+.flow .note{margin-top:56px;max-width:60ch;color:var(--ink-2)}
+
+/* features: text left, the real screen right, every row on the same columns */
+.features{padding-top:var(--section)}
+.features>.wrap>h2{font-size:var(--s-display);margin-bottom:64px}
+.row{display:grid;grid-template-columns:repeat(12,1fr);column-gap:var(--gap);align-items:center;margin-bottom:120px}
+.row:last-child{margin-bottom:0}
+.row .t{grid-column:1/span 4}
+.row h3{font-size:var(--s-head);font-weight:800;letter-spacing:-.035em;line-height:1.05;margin-bottom:16px}
+.row p{color:var(--ink-2);max-width:34ch}
+.row p+p{margin-top:12px}
+.row .v{grid-column:5/-1}
+/* dialogs sit on the app's own surface, as they appear in the window */
+.plate{display:grid;place-items:center;padding:clamp(20px,4vw,56px);background:var(--app)}
+.plate img{width:auto;max-height:620px;border-radius:10px;box-shadow:0 24px 64px -24px #000}
+.pair{display:grid;gap:16px}
+
+/* keyboard */
+.keys{padding-top:var(--section)}
+.keys .wrap{display:grid;grid-template-columns:repeat(12,1fr);column-gap:var(--gap);align-items:start}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.keys .say{grid-column:1/span 5}
+.keys h2{font-size:var(--s-display)}
+.keys .say p{margin-top:24px;color:var(--ink-2);max-width:36ch}
+.keys .say .plate{margin-top:40px;padding:24px;border-radius:10px;border:1px solid var(--line)}
+.keys table{grid-column:7/-1;border-collapse:collapse;width:100%;font-size:17px}
+.keys td{padding:13px 0;border-top:1px solid var(--line);vertical-align:baseline}
+.keys tr:first-child td{border-top:0;padding-top:0}
+.keys td:first-child{width:46%;white-space:nowrap}
+.keys td+td{color:var(--ink-2)}
+kbd{display:inline-block;min-width:26px;padding:3px 7px;margin-right:4px;border:1px solid var(--line-strong);border-bottom-width:2px;border-radius:5px;background:var(--panel);color:var(--ink);text-align:center;font-size:14px;line-height:1.2}
+
+/* files: plain statements */
+.files{padding-top:var(--section)}
+.files h2{font-size:var(--s-display);max-width:14ch}
+.facts{margin-top:64px;display:grid;grid-template-columns:repeat(2,1fr);gap:0 var(--gap);list-style:none;padding:0}
+.facts li{border-top:1px solid var(--line);padding:22px 0;color:var(--ink-2)}
+.facts b{display:block;color:var(--ink);font-weight:700;margin-bottom:4px}
+
+/* install */
+.install{padding-top:var(--section)}
+.install h2{font-size:var(--s-display)}
+.os{margin-top:64px;display:grid;grid-template-columns:repeat(2,1fr);gap:var(--gap)}
+.os article{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:clamp(24px,3vw,40px);display:flex;flex-direction:column}
+.os h3{font-size:var(--s-head);font-weight:800;letter-spacing:-.035em;line-height:1.05}
+.os .req{margin-top:8px;color:var(--muted);font-size:var(--s-small)}
+.os ol{margin:24px 0 0;padding-left:1.2em;color:var(--ink-2)}
+.os li+li{margin-top:8px}
+.os .limit{margin-top:20px;padding-top:20px;border-top:1px solid var(--line);color:var(--ink-2);font-size:16px}
+.os .btn{margin-top:auto;align-self:flex-start}
+.os .gap{flex:1;min-height:28px}
+.source-build{margin-top:40px;color:var(--ink-2);max-width:70ch}
+pre{margin-top:16px;padding:18px 20px;background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow-x:auto;font-size:15px;line-height:1.6}
+
+/* open source close */
+.close{margin-top:var(--section);background:var(--ivory);color:#141516}
+.close .wrap{padding:clamp(72px,9vw,128px) 0 clamp(48px,6vw,80px);display:grid;grid-template-columns:repeat(12,1fr);column-gap:var(--gap);row-gap:48px}
+.close h2{grid-column:1/span 7;font-size:var(--s-poster)}
+.close p{grid-column:1/span 6;font-size:19px;color:#3a3c3f}
+.close .actions{grid-column:1/-1;display:flex;gap:12px;flex-wrap:wrap}
+.close a:hover{color:#000}
+.close .btn.primary{background:#141516;color:var(--ivory)}
+.close .btn.primary:hover{background:#26282b;color:var(--ivory)}
+.close .btn.quiet{border-color:#8d8a82;color:#141516}
+.close .btn.quiet:hover{background:#d9d6cc}
+
+/* footer */
+footer{padding:64px 0 40px;font-size:var(--s-small);color:var(--ink-2)}
+footer .wrap{display:grid;grid-template-columns:repeat(12,1fr);column-gap:var(--gap);row-gap:56px}
+footer .name{grid-column:1/span 6}
+footer .name .mark{font-size:22px;color:var(--ink)}
+footer .name p{margin-top:14px}
+footer .col{grid-column:span 3;display:flex;flex-direction:column;gap:8px}
+footer .col b{color:var(--ink);font-weight:600;margin-bottom:4px}
+footer .col a{text-decoration:none}
+footer .col a:hover{text-decoration:underline}
+footer .meta{grid-column:1/-1;display:flex;justify-content:space-between;gap:16px 32px;flex-wrap:wrap;padding-top:24px;border-top:1px solid var(--line);color:var(--muted)}
+
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{transition:none !important;animation:none !important}
+  .btn:hover,.btn:active,.frame:hover img{transform:none}
+}
+
+@media (max-width:1020px){
+  .top nav a.opt{display:none}
+  .hero .head{display:block}
+  .hero h1{max-width:14ch}
+  .hero .aside{margin-top:24px;max-width:620px}
+  .steps{grid-template-columns:repeat(2,1fr);row-gap:48px}
+  .row{display:block;margin-bottom:96px}
+  .row p{max-width:60ch}
+  .row .v{margin-top:28px}
+  .keys .wrap{display:block}
+  .keys table{margin-top:48px}
+  .close h2,.close p{grid-column:1/-1}
+}
+@media (max-width:640px){
+  :root{--s-body:17px}
+  .top nav{gap:12px}
+  .hero{padding-top:104px}
+  .hero h1{font-size:12.4vw;line-height:.98}
+  .hero .actions .btn{flex:1 1 100%}
+  .hero .frame{margin-top:48px;border-radius:6px}
+  .steps,.facts,.os{grid-template-columns:1fr}
+  .features>.wrap>h2{margin-bottom:56px}
+  .plate{padding:16px}
+  .plate img{max-height:none;width:100%}
+  .keys td:first-child{width:auto;white-space:normal}
+  .os .btn,.close .btn{width:100%}
+  footer .name{grid-column:1/-1}
+  footer .col{grid-column:span 6}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <div class="wrap">
+    <a class="mark" href="./"><img src="icon.svg" alt="" width="28" height="28">PhotoCull</a>
+    <nav aria-label="Page">
+      <a class="opt" href="#workflow">Workflow</a>
+      <a class="opt" href="#features">Features</a>
+      <a class="opt" href="#keyboard">Keyboard</a>
+      <a class="opt" href="#install">Install</a>
+      <a href="https://github.com/ficaa1/photocull">GitHub</a>
+      <a class="btn primary" href="https://github.com/ficaa1/photocull/releases/latest">Download</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<section class="hero">
+  <div class="wrap">
+    <div class="head">
+      <h1 class="d">Cull, develop and export straight from the card</h1>
+      <div class="aside">
+        <p class="lede">PhotoCull is a desktop app for photographers. Back up the card, pick your keepers from RAW and JPEG previews, develop the RAWs, hand them to your editor and export finished images.</p>
+        <div class="actions">
+          <a class="btn primary" href="https://github.com/ficaa1/photocull/releases/latest"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/></svg>Download PhotoCull</a>
+          <a class="btn quiet" href="https://github.com/ficaa1/photocull">View the source</a>
+        </div>
+        <p class="fact">Version 0.8.0 · Windows and macOS on Apple Silicon · MIT</p>
+      </div>
+    </div>
+    <div class="frame">
+      <picture>
+        <source media="(max-width:640px)" type="image/avif" srcset="img/review-dusk-phone-960.avif" width="960" height="939">
+        <source media="(max-width:640px)" type="image/webp" srcset="img/review-dusk-phone-960.webp" width="960" height="939">
+        <source type="image/avif" srcset="img/review-dusk-1280.avif 1280w, img/review-dusk-2400.avif 2400w" sizes="(max-width:1448px) calc(100vw - 2 * clamp(20px,4vw,64px)), 1320px">
+        <img src="img/review-dusk-1280.webp" srcset="img/review-dusk-1280.webp 1280w, img/review-dusk-2400.webp 2400w" sizes="(max-width:1448px) calc(100vw - 2 * clamp(20px,4vw,64px)), 1320px" width="1280" height="800" fetchpriority="high" alt="PhotoCull's Review view: a crowd at dusk lit by flares, picked with five stars. Sources and filters on the left, camera details and colour labels on the right, the filmstrip below.">
+      </picture>
+    </div>
+  </div>
+</section>
+
+<section class="flow" id="workflow">
+  <div class="wrap">
+    <h2 class="d">One pass from card to finished files</h2>
+    <ol class="steps">
+      <li><h3>Cull</h3><p>Open the card and go through it with the keyboard. P picks, X rejects, 0–5 rates. Bursts stack, and the sharpest frame is marked.</p></li>
+      <li><h3>Develop</h3><p>Adjust RAWs with a live preview and an interactive histogram. Save a look as a recipe and paste it onto other photos.</p></li>
+      <li><h3>Edit in…</h3><p>Send 16-bit TIFFs to the editor you configure. PhotoCull sees when you save and shows the result everywhere.</p></li>
+      <li><h3>Export</h3><p>JPEG, JPEG XL, TIFF, PNG, AVIF or WebP, with sizing, sharpening, colour space, metadata and naming presets.</p></li>
+    </ol>
+    <p class="note">No catalog, no import step and no account. Decisions are saved as you make them, and as XMP sidecars beside the photos when you want them to travel.</p>
+  </div>
+</section>
+
+<section class="features" id="features">
+  <div class="wrap">
+    <h2 class="d">What it does</h2>
+
+    <div class="row">
+      <div class="t"><h3>Verified card backup</h3><p>Back up card… copies every file on the card and checks each copy with SHA-256. It tells you when the card is safe to format. Running it again verifies and skips identical copies.</p></div>
+      <div class="v frame plate">
+        <picture>
+          <source type="image/avif" srcset="img/backup-dialog-640.avif 640w, img/backup-dialog-1280.avif 1280w" sizes="(max-width:1020px) 90vw, 640px">
+          <img src="img/backup-dialog-640.webp" srcset="img/backup-dialog-640.webp 640w, img/backup-dialog-1280.webp 1280w" sizes="(max-width:1020px) 90vw, 640px" width="640" height="368" loading="lazy" decoding="async" alt="Back up card or folder dialog: source, destination and folder template, with the result: all 12 files backed up and verified, safe to format.">
+        </picture>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="t"><h3>Contact sheet</h3><p>Every thumbnail shows its flag, stars, colour label and burst count. Drag or Shift-click to select several photos and decide for all of them at once; one undo takes it back.</p></div>
+      <div class="v frame">
+        <picture>
+          <source type="image/avif" srcset="img/grid-1280.avif 1280w, img/grid-2400.avif 2400w" sizes="(max-width:1020px) 90vw, 860px">
+          <img src="img/grid-1280.webp" srcset="img/grid-1280.webp 1280w, img/grid-2400.webp 2400w" sizes="(max-width:1020px) 90vw, 860px" width="1280" height="800" loading="lazy" decoding="async" alt="The contact sheet: ten photos with pick flags, star ratings and colour labels; a RAW burst of two shows a stack badge.">
+        </picture>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="t"><h3>Focus points and bursts</h3><p>Press A to see where the camera focused, and Shift+A to open that spot at 100%. It reads the focus data Sony, Nikon, Canon, Fujifilm, OM System and Panasonic write.</p><p>Frames shot in quick succession stack together. Keep sharpest picks the frame with the most detail and rejects the rest, in one step you can undo.</p></div>
+      <div class="v frame">
+        <picture>
+          <source type="image/avif" srcset="img/focus-1280.avif 1280w, img/focus-2400.avif 2400w" sizes="(max-width:1020px) 90vw, 860px">
+          <img src="img/focus-1280.webp" srcset="img/focus-1280.webp 1280w, img/focus-2400.webp 2400w" sizes="(max-width:1020px) 90vw, 860px" width="1280" height="800" loading="lazy" decoding="async" alt="A RAW photo opened at 100% on its recorded autofocus point, drawn as a green box; the inspector lists the focus source as Sony FocusLocation.">
+        </picture>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="t"><h3>Compare</h3><p>Put two to four photos side by side with zoom and pan linked. Pick, reject and rate each pane from the keyboard, and swap in the next candidate with the arrow keys.</p></div>
+      <div class="v frame">
+        <picture>
+          <source type="image/avif" srcset="img/compare-1280.avif 1280w, img/compare-2400.avif 2400w" sizes="(max-width:1020px) 90vw, 860px">
+          <img src="img/compare-1280.webp" srcset="img/compare-1280.webp 1280w, img/compare-2400.webp 2400w" sizes="(max-width:1020px) 90vw, 860px" width="1280" height="800" loading="lazy" decoding="async" alt="Compare view with two frames of the same scene, a horizontal and a vertical, each with its own pick, reject and rating controls.">
+        </picture>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="t"><h3>RAW Develop</h3><p>White balance, light, tone curve, lens corrections and detail, with a live preview. Drag the histogram to move a tonal zone, press J for clipping and Shift+\ for a before and after split.</p><p>Recipes keep a look; a flat base for film emulation is included.</p></div>
+      <div class="v frame">
+        <picture>
+          <source type="image/avif" srcset="img/develop-1280.avif 1280w, img/develop-2400.avif 2400w" sizes="(max-width:1020px) 90vw, 860px">
+          <img src="img/develop-1280.webp" srcset="img/develop-1280.webp 1280w, img/develop-2400.webp 2400w" sizes="(max-width:1020px) 90vw, 860px" width="1280" height="800" loading="lazy" decoding="async" alt="Develop view on a RAW of a café window: histogram, recipe, profile, white balance and light sliders with exposure, contrast, highlights and shadows adjusted.">
+        </picture>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="t"><h3>Edit in your editor</h3><p>Add any application as an external editor and choose the format, bit depth, colour space and arguments. PhotoCull develops the RAW, opens the file and notices when you save it back. A Dehancer preset is built in.</p></div>
+      <div class="v frame plate">
+        <picture>
+          <source type="image/avif" srcset="img/editors-dialog-820.avif 820w, img/editors-dialog-1640.avif 1640w" sizes="(max-width:1020px) 90vw, 680px">
+          <img src="img/editors-dialog-820.webp" srcset="img/editors-dialog-820.webp 820w, img/editors-dialog-1640.webp 1640w" sizes="(max-width:1020px) 90vw, 680px" width="820" height="680" loading="lazy" decoding="async" alt="Settings, External editors: the Dehancer preset as the default editor, sending 16-bit uncompressed sRGB TIFFs and detecting saved changes when the application exits.">
+        </picture>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="t"><h3>Export finished images</h3><p>JPEG, JPEG XL, TIFF, PNG, AVIF and WebP. Resize, sharpen for screen or print, pick the colour space and what metadata to keep, and save it all as a preset.</p><p>Export uses your saved edit when there is one and develops the RAW when there is not. Source files are never overwritten.</p></div>
+      <div class="v frame plate">
+        <picture>
+          <source type="image/avif" srcset="img/export-dialog-600.avif 600w, img/export-dialog-1200.avif 1200w" sizes="(max-width:640px) 90vw, 460px">
+          <img src="img/export-dialog-600.webp" srcset="img/export-dialog-600.webp 600w, img/export-dialog-1200.webp 1200w" sizes="(max-width:640px) 90vw, 460px" width="600" height="806" loading="lazy" decoding="async" alt="Export finished images dialog: preset, all picks as the source, JPEG at quality 90 in sRGB, resizing and output sharpening, and the destination folder.">
+        </picture>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="keys" id="keyboard">
+  <div class="wrap">
+    <div class="say">
+      <h2 class="d">Keyboard first</h2>
+      <p>Every action is in the command palette, and the frequent ones have shortcuts you can change in Settings. Type <kbd>&gt;</kbd> in the palette to jump to a photo by name. On a Mac, Ctrl is ⌘.</p>
+      <div class="plate">
+        <picture>
+          <source type="image/avif" srcset="img/palette-dialog-640.avif 640w, img/palette-dialog-1280.avif 1280w" sizes="(max-width:1020px) 90vw, 500px">
+          <img src="img/palette-dialog-640.webp" srcset="img/palette-dialog-640.webp 640w, img/palette-dialog-1280.webp 1280w" sizes="(max-width:1020px) 90vw, 500px" width="640" height="275" loading="lazy" decoding="async" alt="The command palette searching for export: Export finished images with Ctrl+Shift+E, then the recipe export commands.">
+        </picture>
+      </div>
+    </div>
+    <table>
+      <caption class="sr">Default shortcuts</caption>
+      <tbody>
+        <tr><td><kbd>Ctrl</kbd><kbd>K</kbd></td><td>Command palette</td></tr>
+        <tr><td><kbd>←</kbd><kbd>→</kbd></td><td>Previous and next photo</td></tr>
+        <tr><td><kbd>P</kbd><kbd>X</kbd><kbd>U</kbd></td><td>Pick, reject, clear the flag</td></tr>
+        <tr><td><kbd>0</kbd>–<kbd>5</kbd></td><td>Star rating</td></tr>
+        <tr><td><kbd>Alt</kbd><kbd>1</kbd>–<kbd>8</kbd></td><td>Colour label</td></tr>
+        <tr><td><kbd>G</kbd><kbd>E</kbd><kbd>D</kbd></td><td>Grid, Review, Develop</td></tr>
+        <tr><td><kbd>Z</kbd> or <kbd>Space</kbd></td><td>Fit or zoom where the pointer is</td></tr>
+        <tr><td><kbd>A</kbd>, <kbd>Shift</kbd><kbd>A</kbd></td><td>Focus point, zoom to it</td></tr>
+        <tr><td><kbd>S</kbd>, <kbd>C</kbd></td><td>Expand a burst, Compare</td></tr>
+        <tr><td><kbd>\</kbd></td><td>Before and after</td></tr>
+        <tr><td><kbd>Ctrl</kbd><kbd>E</kbd></td><td>Edit in your default editor</td></tr>
+        <tr><td><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>E</kbd></td><td>Export finished images</td></tr>
+        <tr><td><kbd>Ctrl</kbd><kbd>Z</kbd></td><td>Undo the last decision</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="files" id="files">
+  <div class="wrap">
+    <h2 class="d">Your originals stay as they are</h2>
+    <ul class="facts">
+      <li><b>Sources are read only</b>Culling, Develop, hand-offs and export never change the bytes of a source photo or of anything on the card.</li>
+      <li><b>XMP sidecars</b>Ratings, labels and decisions go in standard XMP beside the photos, so other apps can read them. Cards get none unless you ask.</li>
+      <li><b>A Trash of its own</b>Del moves a photo to PhotoCull's Trash and Ctrl+Z brings it back. Files are deleted only when you empty the Trash or confirm a permanent delete.</li>
+      <li><b>Works offline</b>No account and no cloud. The one download is the optional Lensfun lens database, fetched when you ask for it.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="install" id="install">
+  <div class="wrap">
+    <h2 class="d">Install</h2>
+    <div class="os">
+      <article>
+        <h3>Windows</h3>
+        <p class="req">64-bit Windows with WebView2</p>
+        <ol>
+          <li>Download the <code>-setup.exe</code> or <code>.msi</code> from the latest release.</li>
+          <li>Run it. The installer is not code-signed, so Windows may ask you to confirm.</li>
+        </ol>
+        <div class="gap"></div>
+        <a class="btn primary" href="https://github.com/ficaa1/photocull/releases/latest">Download for Windows</a>
+      </article>
+      <article>
+        <h3>macOS</h3>
+        <p class="req">Apple Silicon, macOS 11 or later</p>
+        <ol>
+          <li>Download the <code>.dmg</code> and move PhotoCull to Applications.</li>
+          <li>The app is not notarized: right-click it and choose Open the first time.</li>
+        </ol>
+        <p class="limit">The Mac build has not been verified on a Mac yet: menus, permissions, card discovery and deletion still need testing there. <a href="https://github.com/ficaa1/photocull/blob/main/docs/macos.md">macOS notes</a></p>
+        <div class="gap"></div>
+        <a class="btn primary" href="https://github.com/ficaa1/photocull/releases/latest">Download for macOS</a>
+      </article>
+    </div>
+    <p class="source-build">To build it yourself, install Node.js 24, Rust and the Tauri prerequisites for your platform, then run:</p>
+    <pre><code>git clone https://github.com/ficaa1/photocull
+cd photocull
+npm ci
+npm run build</code></pre>
+  </div>
+</section>
+</main>
+
+<section class="close" id="source">
+  <div class="wrap">
+    <h2 class="d">Open source, MIT</h2>
+    <p>Read the code, report bugs and send pull requests on GitHub. The contributing guide covers setup and tests. Third-party components keep their own licences, listed in the notices that ship with the app.</p>
+    <div class="actions">
+      <a class="btn primary" href="https://github.com/ficaa1/photocull">View on GitHub</a>
+      <a class="btn quiet" href="https://github.com/ficaa1/photocull/blob/main/CONTRIBUTING.md">Read the contributing guide</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="name">
+      <a class="mark" href="./"><img src="icon.svg" alt="" width="28" height="28">PhotoCull</a>
+      <p>Version 0.8.0 · MIT licence · Windows and macOS</p>
+    </div>
+    <div class="col"><b>Project</b>
+      <a href="https://github.com/ficaa1/photocull">Source code</a>
+      <a href="https://github.com/ficaa1/photocull/releases">Releases</a>
+      <a href="https://github.com/ficaa1/photocull/issues">Issues</a>
+      <a href="https://github.com/ficaa1/photocull/blob/main/CHANGELOG.md">Changelog</a>
+    </div>
+    <div class="col"><b>Docs</b>
+      <a href="https://github.com/ficaa1/photocull#readme">Read me</a>
+      <a href="https://github.com/ficaa1/photocull/blob/main/docs/external-editors.md">External editors</a>
+      <a href="https://github.com/ficaa1/photocull/blob/main/docs/recipes-export.md">Recipes and export</a>
+      <a href="https://github.com/ficaa1/photocull/blob/main/THIRD_PARTY_NOTICES.md">Third-party notices</a>
+    </div>
+    <div class="meta">
+      <span>© 2026 <a href="https://www.filipbiljic.com/">Filip Biljic</a> · Sample photos by the author · Schibsted Grotesk, SIL Open Font License</span>
+      <span>Dehancer is a trademark of its owner; PhotoCull is not affiliated with Dehancer.</span>
+    </div>
+  </div>
+</footer>
+</body>
+</html>
