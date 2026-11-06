@@ -690,7 +690,7 @@ const commands = PhotoCullCommands.create({ platform: api.platform, actions: Obj
   if(id==='pan'){if(!event.key)return loupe.handleKey(event,'toggle');panKey=event.code || event.key;}
   try { return Promise.resolve(run(event)).catch(error=>toast(error.message)); } catch(error) { toast(error.message); }
 }])), context: () => state.mode, custom: () => state.settings.shortcuts || {},
-  enabled: command => (!command.when || state.filter===command.when) && (!/^(flag-|rating-|color-|navigate-|extend-|delete|restore|select-all|go-photo)/.test(command.id) || !!photo()) && (!['zoom-in','zoom-out','fit','zoom-toggle','pan','review-zoom'].includes(command.id) || !!photo()),
+  enabled: command => (!command.when || state.filter===command.when) && (!/^(flag-|rating-|color-|navigate-|extend-|delete|restore|select-all)/.test(command.id) || !!photo()) && (command.id!=='go-photo'||state.session?.items.some(item=>!item.trashed)) && (!['zoom-in','zoom-out','fit','zoom-toggle','pan','review-zoom'].includes(command.id) || !!photo()),
   onRun: command => { if(command.id!=='palette'){ recentCommands=[command.id,...recentCommands.filter(id=>id!==command.id)].slice(0,12); try{localStorage.setItem('photocull-recent-commands',JSON.stringify(recentCommands));}catch{} } } });
 try { recentCommands=JSON.parse(localStorage.getItem('photocull-recent-commands')||'[]').filter(id=>commands.commands.some(c=>c.id===id)).slice(0,12); } catch {}
 document.addEventListener('keydown', event => {
