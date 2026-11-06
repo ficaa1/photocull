@@ -7,6 +7,8 @@ const { hash } = require('./library.cjs');
 const { atomicWrite } = require('./xmp.cjs');
 const { RawRenderCache } = require('./raw-cache.cjs');
 const { normalizeFocus, captureTime } = require('./renderer/culling.js');
+const displayPreview = require('./display-preview.cjs');
+const { orient } = displayPreview;
 
 sharp.concurrency(1);
 sharp.cache({ memory: 48, files: 24, items: 64 });
@@ -15,11 +17,6 @@ const POLICIES = ['missing', 'small', 'off'];
 const TAGS = ['JpgFromRaw', 'PreviewImage', 'OtherImage', 'ThumbnailTIFF', 'ThumbnailImage'];
 const RANGES = { JpgFromRaw: ['JpgFromRawStart','JpgFromRawLength'], PreviewImage: ['PreviewImageStart','PreviewImageLength'], ThumbnailImage: ['ThumbnailOffset','ThumbnailLength'] };
 const TRANSIENT = new Set(['EIO', 'EACCES', 'EPERM', 'ENOENT', 'ENOSPC']);
-function orient(image, orientation) {
-  const angle = { 3: 180, 4: 180, 5: 270, 6: 90, 7: 90, 8: 270 }[orientation] || 0;
-  if ([2, 4, 5, 7].includes(orientation)) image = image.flop();
-  return angle ? image.rotate(angle) : image;
-}
 function touch(...files) {
   const now = new Date();
   for (const file of files) void fs.utimes(file, now, now).catch(() => {});
@@ -313,23 +310,10 @@ class PreviewService {
       for (let attempt = 0; attempt < TAGS.length + 3; attempt++) {
         const selected = item.raw ? await this.rawSource(item, kind, priority, rejected, policy) : { file: item.path,
           info: { source: item.externalSource ? `Edited in ${this.editorName?.(item.externalSource) || (item.externalSource === 'dehancer' ? 'Dehancer' : 'external editor')} · ${path.basename(item.path)}` : 'Original image', type: item.externalSource ? 'external' : 'original' } };
-        let image = sharp(selected.file, { failOn: 'error', limitInputPixels: 160_000_000 });
-        image = selected.info.orientation ? orient(image, selected.info.orientation) : image.autoOrient();
-        if (SIZES[kind]) image = image.resize(SIZES[kind], SIZES[kind], { fit: 'inside', withoutEnlargement: true, fastShrinkOnLoad: true });
         let data;
-        // Sharp 0.35 processes RGB16 in Display P3. toColourspace('srgb') alone
-        // only changes the pixel representation; it doesn't convert P3 primaries.
-        // Convert AND tag the output, so the webview/OS can match it to the display
-        // (including Windows ACM) exactly once. Disk caches stay display-independent.
         try {
           data = await this.passThrough(kind, selected);
-          if (!data) {
-            const metadata = await image.metadata();
-            // Sharp also assumes P3 as the output transform's input for an
-            // untagged RGB16 file. Establish the usual sRGB assumption first.
-            if (metadata.space === 'rgb16' && !metadata.hasProfile) image = image.pipelineColourspace('srgb');
-            data = await image.withIccProfile('srgb').jpeg({ quality: kind === 'thumb' ? 76 : 91 }).toBuffer();
-          }
+          if (!data) data = await displayPreview.encodeDisplayPreview(selected.file, { edge: SIZES[kind], quality: kind === 'thumb' ? 76 : 91, orientation: selected.info.orientation });
         }
         catch (error) {
           if (!item.raw || TRANSIENT.has(error.code)) throw error;

@@ -8,7 +8,7 @@ async function main(){
  await sharp({create:{width:3600,height:2400,channels:3,background:'#577d62'}}).jpeg().toFile(path.join(photos,'01_landscape.jpg'));
  await sharp({create:{width:2400,height:3600,channels:3,background:'#7b687d'}}).jpeg().toFile(path.join(photos,'02_portrait.jpg'));
  await sharp({create:{width:120,height:80,channels:3,background:'#987c54'}}).jpeg().toFile(path.join(photos,'03_small.jpg'));
- if(process.argv[4])await fs.copyFile(path.join(process.argv[4],'sample-8563.ARW'),path.join(photos,'04_camera.ARW'));
+ if(process.argv[4])await fs.copyFile(path.join(process.argv[4],'sample-01.ARW'),path.join(photos,'04_camera.ARW'));
  let app,page;const errors=[],checks=[];
  async function launch(){const env={...process.env,PHOTOCULL_SMOKE_TEST:'1',PHOTOCULL_DATA_DIR:data};app=await launchApp({ env });page=await app.firstWindow();page.on('pageerror',e=>errors.push(e.message));await page.locator('#empty-open').waitFor();await page.evaluate(folder=>window.loadTestFolder(folder),photos);await complete();}
  async function complete(){await page.waitForFunction(()=>document.querySelector('#review-image').dataset.complete==='yes',null,{timeout:60000});}

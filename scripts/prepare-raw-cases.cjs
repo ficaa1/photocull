@@ -4,7 +4,7 @@ const path = require('node:path');
 const { ExifTool } = require('exiftool-vendored');
 async function prepare(root) {
   root = path.resolve(root);
-  const source = path.join(root, 'sample-8563.ARW');
+  const source = path.join(root, 'sample-01.ARW');
   const exif = new ExifTool();
   try {
     const tags = await exif.readRaw(source, { readArgs: ['-G1', '-s', '-PreviewImageStart', '-PreviewImageLength', '-JpgFromRawStart', '-JpgFromRawLength', '-StripOffsets', '-StripByteCounts', '-ThumbnailOffset', '-ThumbnailLength'] });
@@ -21,7 +21,7 @@ async function prepare(root) {
       const folder = path.join(output, name); await fs.mkdir(folder, { recursive: true });
       const copy = Buffer.from(bytes);
       for (const [start, length] of remove) copy.fill(0, start, start + length);
-      await fs.writeFile(path.join(folder, 'sample-8563.ARW'), copy);
+      await fs.writeFile(path.join(folder, 'sample-01.ARW'), copy);
     }
     await fs.mkdir(path.join(output, 'corrupt'), { recursive: true });
     await fs.writeFile(path.join(output, 'corrupt', 'broken.ARW'), bytes.subarray(0, 1024));

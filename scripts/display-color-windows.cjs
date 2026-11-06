@@ -1,7 +1,8 @@
 // Run against an isolated built app with WebView2 debugging on port 9338:
 // node scripts/display-color-windows.cjs TEMP_ROOT PROCESS_ID [PORT]
-// TEMP_ROOT/photos contains a COPY of sample-8582.tif. Optional raw/ contains a copied RAW.
+// TEMP_ROOT/photos contains a COPY of sample-edit.tif. Optional raw/ contains a copied RAW.
 // This writes reports/exports only below TEMP_ROOT and changes only that app's test session.
+// PHOTOCULL_COLOR_CAPTURE=cdp checks webview pixels when the physical desktop is locked.
 const { chromium } = require('playwright-core');
 const fs = require('node:fs/promises'), path = require('node:path'), assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process'), { createHash } = require('node:crypto');
@@ -23,14 +24,20 @@ async function main() {
   const root=path.resolve(process.argv[2]), pid=Number(process.argv[3]);
   const temp=path.resolve(require('node:os').tmpdir()), relative=path.relative(temp,root);
   assert.ok(pid && relative && !relative.startsWith('..') && !path.isAbsolute(relative),'Use an isolated folder below the system temporary directory.');
-  const input=path.join(root,'photos','sample-8582.tif'), reports=path.join(root,'verification');await fs.mkdir(reports,{recursive:true});
+  const input=path.join(root,'photos','sample-edit.tif'), reports=path.join(root,'verification');await fs.mkdir(reports,{recursive:true});
   const digest=async f=>createHash('sha256').update(await fs.readFile(f)).digest('hex');const before=await digest(input);
   const b=await chromium.connectOverCDP(`http://127.0.0.1:${process.argv[4]||9338}`);
   const page=b.contexts()[0].pages().find(p=>/tauri.localhost/.test(p.url())); assert.ok(page);
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
-  const report={regions:REGIONS,webview:(await b.version()),views:{}};
+  const cdpOnly=process.env.PHOTOCULL_COLOR_CAPTURE==='cdp';
+  const report={regions:REGIONS,webview:(await b.version()),capture:cdpOnly?'webview (physical display unverified)':'physical display',views:{}};
   const capture=async(name,selector)=>{
     const geometry=await page.locator(selector).evaluate(img=>{const r=img.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,dpr:devicePixelRatio};});
+    if(cdpOnly) {
+      const file=path.join(reports,name+'-cdp.png');await page.screenshot({path:file,scale:'css'});
+      const rect={x:geometry.x,y:geometry.y,width:geometry.width,height:geometry.height};
+      return {file,rect,values:await sample(file,rect)};
+    }
     const file=path.join(reports,name+'-screen.png');
     const client=JSON.parse(execFileSync('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',path.join(__dirname,'capture-window-windows.ps1'),'-ProcessId',String(pid),'-OutputPath',file],{encoding:'utf8'}));
     const rect={x:client.clientX+geometry.x*geometry.dpr,y:client.clientY+geometry.y*geometry.dpr,width:geometry.width*geometry.dpr,height:geometry.height*geometry.dpr};
@@ -38,6 +45,7 @@ async function main() {
     return {file,rect,values:await sample(file,rect)};
   };
   try {
+    await page.evaluate(()=>document.querySelectorAll('#color-measurement').forEach(node=>node.remove()));
     report.display=await page.evaluate(()=>window.__TAURI__.core.invoke('display_color_status'));
     await page.evaluate(async folder=>{loadSession(await api.openPath(folder,false));setMode('review');},path.join(root,'photos'));
     await page.waitForFunction(()=>document.querySelector('#review-image').dataset.complete==='yes');
@@ -102,6 +110,6 @@ async function main() {
     }
     assert.equal(await digest(input),before);report.sourceUnchanged=true;assert.deepEqual(errors,[]);report.errors=errors;
     await fs.writeFile(path.join(reports,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));
-  } finally {await b.close();}
+  } finally {await page.evaluate(()=>document.querySelectorAll('#color-measurement').forEach(node=>node.remove())).catch(()=>{});await b.close();}
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});

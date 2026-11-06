@@ -1,0 +1,650 @@
+[
+  {
+    "batchMs": 11672.9704,
+    "files": [
+      {
+        "bytes": 7643640,
+        "encodeMs": 140.70589999999999,
+        "file": "sample-01.ARW",
+        "totalMs": 11591.1096
+      },
+      {
+        "bytes": 6427613,
+        "encodeMs": 202.7774,
+        "file": "sample-02.ARW",
+        "totalMs": 5693.8074
+      },
+      {
+        "bytes": 4617479,
+        "encodeMs": 247.7253,
+        "file": "sample-03.ARW",
+        "totalMs": 9156.0637
+      }
+    ],
+    "format": "jpeg",
+    "mode": "before",
+    "repeat": 0,
+    "workers": 3
+  },
+  {
+    "batchMs": 12909.977400000002,
+    "files": [
+      {
+        "bytes": 7643640,
+        "encodeMs": 148.6863,
+        "file": "sample-01.ARW",
+        "totalMs": 4637.9710000000005
+      },
+      {
+        "bytes": 6427613,
+        "encodeMs": 136.7399,
+        "file": "sample-02.ARW",
+        "totalMs": 4045.8403
+      },
+      {
+        "bytes": 4617479,
+        "encodeMs": 129.59689999999998,
+        "file": "sample-03.ARW",
+        "totalMs": 4039.2407
+      }
+    ],
+    "format": "jpeg",
+    "mode": "after",
+    "repeat": 0,
+    "workers": 1
+  },
+  {
+    "batchMs": 12296.3951,
+    "files": [
+      {
+        "bytes": 7643640,
+        "encodeMs": 177.6246,
+        "file": "sample-01.ARW",
+        "totalMs": 4071.7726000000002
+      },
+      {
+        "bytes": 6427613,
+        "encodeMs": 118.72019999999999,
+        "file": "sample-02.ARW",
+        "totalMs": 4196.3496
+      },
+      {
+        "bytes": 4617479,
+        "encodeMs": 128.4256,
+        "file": "sample-03.ARW",
+        "totalMs": 3826.9766
+      }
+    ],
+    "format": "jpeg",
+    "mode": "after",
+    "repeat": 1,
+    "workers": 1
+  },
+  {
+    "batchMs": 11915.749099999999,
+    "files": [
+      {
+        "bytes": 7643640,
+        "encodeMs": 276.7198,
+        "file": "sample-01.ARW",
+        "totalMs": 5901.5702
+      },
+      {
+        "bytes": 6427613,
+        "encodeMs": 149.40300000000002,
+        "file": "sample-02.ARW",
+        "totalMs": 9632.052099999999
+      },
+      {
+        "bytes": 4617479,
+        "encodeMs": 135.25,
+        "file": "sample-03.ARW",
+        "totalMs": 11864.132599999999
+      }
+    ],
+    "format": "jpeg",
+    "mode": "before",
+    "repeat": 1,
+    "workers": 3
+  },
+  {
+    "batchMs": 13102.6106,
+    "files": [
+      {
+        "bytes": 50912779,
+        "encodeMs": 2367.6781,
+        "file": "sample-01.ARW",
+        "totalMs": 10082.296
+      },
+      {
+        "bytes": 46088700,
+        "encodeMs": 2682.0771,
+        "file": "sample-02.ARW",
+        "totalMs": 11738.5056
+      },
+      {
+        "bytes": 41744631,
+        "encodeMs": 1541.7407,
+        "file": "sample-03.ARW",
+        "totalMs": 13052.7451
+      }
+    ],
+    "format": "png",
+    "mode": "before",
+    "repeat": 0,
+    "workers": 3
+  },
+  {
+    "batchMs": 16412.4136,
+    "files": [
+      {
+        "bytes": 50912779,
+        "encodeMs": 1408.3435,
+        "file": "sample-01.ARW",
+        "totalMs": 5597.236
+      },
+      {
+        "bytes": 46088700,
+        "encodeMs": 1604.5616,
+        "file": "sample-02.ARW",
+        "totalMs": 5958.2579
+      },
+      {
+        "bytes": 41744631,
+        "encodeMs": 873.1067,
+        "file": "sample-03.ARW",
+        "totalMs": 4706.5590999999995
+      }
+    ],
+    "format": "png",
+    "mode": "after",
+    "repeat": 0,
+    "workers": 1
+  },
+  {
+    "batchMs": 14255.6306,
+    "files": [
+      {
+        "bytes": 50912779,
+        "encodeMs": 807.6024000000001,
+        "file": "sample-01.ARW",
+        "totalMs": 4393.9619
+      },
+      {
+        "bytes": 46088700,
+        "encodeMs": 956.5064,
+        "file": "sample-02.ARW",
+        "totalMs": 4530.3841
+      },
+      {
+        "bytes": 41744631,
+        "encodeMs": 1317.727,
+        "file": "sample-03.ARW",
+        "totalMs": 5188.8829000000005
+      }
+    ],
+    "format": "png",
+    "mode": "after",
+    "repeat": 1,
+    "workers": 1
+  },
+  {
+    "batchMs": 12479.023399999998,
+    "files": [
+      {
+        "bytes": 50912779,
+        "encodeMs": 2280.7446000000004,
+        "file": "sample-01.ARW",
+        "totalMs": 10788.7814
+      },
+      {
+        "bytes": 46088700,
+        "encodeMs": 2418.9456,
+        "file": "sample-02.ARW",
+        "totalMs": 8698.1743
+      },
+      {
+        "bytes": 41744631,
+        "encodeMs": 1203.3751,
+        "file": "sample-03.ARW",
+        "totalMs": 12425.8811
+      }
+    ],
+    "format": "png",
+    "mode": "before",
+    "repeat": 1,
+    "workers": 3
+  },
+  {
+    "batchMs": 13020.5425,
+    "files": [
+      {
+        "bytes": 57622986,
+        "encodeMs": 2780.3447,
+        "file": "sample-01.ARW",
+        "totalMs": 12312.0108
+      },
+      {
+        "bytes": 52761218,
+        "encodeMs": 3481.1328000000003,
+        "file": "sample-02.ARW",
+        "totalMs": 9057.9278
+      },
+      {
+        "bytes": 49716373,
+        "encodeMs": 1766.1981,
+        "file": "sample-03.ARW",
+        "totalMs": 12975.364300000001
+      }
+    ],
+    "format": "tiff",
+    "mode": "before",
+    "repeat": 0,
+    "workers": 3
+  },
+  {
+    "batchMs": 17193.9503,
+    "files": [
+      {
+        "bytes": 57622986,
+        "encodeMs": 1800.6125,
+        "file": "sample-01.ARW",
+        "totalMs": 5448.612
+      },
+      {
+        "bytes": 52761218,
+        "encodeMs": 1878.7424,
+        "file": "sample-02.ARW",
+        "totalMs": 6201.3728
+      },
+      {
+        "bytes": 49716373,
+        "encodeMs": 1656.3252,
+        "file": "sample-03.ARW",
+        "totalMs": 5386.2356
+      }
+    ],
+    "format": "tiff",
+    "mode": "after",
+    "repeat": 0,
+    "workers": 1
+  },
+  {
+    "batchMs": 15888.2589,
+    "files": [
+      {
+        "bytes": 57622986,
+        "encodeMs": 1459.3366999999998,
+        "file": "sample-01.ARW",
+        "totalMs": 5231.6143999999995
+      },
+      {
+        "bytes": 52761218,
+        "encodeMs": 1628.1576,
+        "file": "sample-02.ARW",
+        "totalMs": 4977.3564
+      },
+      {
+        "bytes": 49716373,
+        "encodeMs": 1470.789,
+        "file": "sample-03.ARW",
+        "totalMs": 5541.473800000001
+      }
+    ],
+    "format": "tiff",
+    "mode": "after",
+    "repeat": 1,
+    "workers": 1
+  },
+  {
+    "batchMs": 13107.3357,
+    "files": [
+      {
+        "bytes": 57622986,
+        "encodeMs": 2519.3161,
+        "file": "sample-01.ARW",
+        "totalMs": 11793.4781
+      },
+      {
+        "bytes": 52761218,
+        "encodeMs": 3596.2343,
+        "file": "sample-02.ARW",
+        "totalMs": 11075.4423
+      },
+      {
+        "bytes": 49716373,
+        "encodeMs": 1530.4867,
+        "file": "sample-03.ARW",
+        "totalMs": 13069.7842
+      }
+    ],
+    "format": "tiff",
+    "mode": "before",
+    "repeat": 1,
+    "workers": 3
+  },
+  {
+    "batchMs": 13997.923999999999,
+    "files": [
+      {
+        "bytes": 47341908,
+        "encodeMs": 2515.9553,
+        "file": "sample-01.ARW",
+        "totalMs": 9410.0041
+      },
+      {
+        "bytes": 41290468,
+        "encodeMs": 655.3812,
+        "file": "sample-02.ARW",
+        "totalMs": 13951.9838
+      },
+      {
+        "bytes": 35401302,
+        "encodeMs": 1418.1159,
+        "file": "sample-03.ARW",
+        "totalMs": 13055.102700000001
+      }
+    ],
+    "format": "webp",
+    "mode": "before",
+    "repeat": 0,
+    "workers": 3
+  },
+  {
+    "batchMs": 13917.761499999999,
+    "files": [
+      {
+        "bytes": 47341908,
+        "encodeMs": 978.8228,
+        "file": "sample-01.ARW",
+        "totalMs": 5036.9628
+      },
+      {
+        "bytes": 41290468,
+        "encodeMs": 665.2521,
+        "file": "sample-02.ARW",
+        "totalMs": 4660.407700000001
+      },
+      {
+        "bytes": 35401302,
+        "encodeMs": 553.8937000000001,
+        "file": "sample-03.ARW",
+        "totalMs": 4057.7845
+      }
+    ],
+    "format": "webp",
+    "mode": "after",
+    "repeat": 0,
+    "workers": 1
+  },
+  {
+    "batchMs": 15995.6667,
+    "files": [
+      {
+        "bytes": 47341908,
+        "encodeMs": 749.1543,
+        "file": "sample-01.ARW",
+        "totalMs": 4933.6373
+      },
+      {
+        "bytes": 41290468,
+        "encodeMs": 826.1621,
+        "file": "sample-02.ARW",
+        "totalMs": 5281.8845
+      },
+      {
+        "bytes": 35401302,
+        "encodeMs": 927.3906,
+        "file": "sample-03.ARW",
+        "totalMs": 5605.3308
+      }
+    ],
+    "format": "webp",
+    "mode": "after",
+    "repeat": 1,
+    "workers": 1
+  },
+  {
+    "batchMs": 14232.3961,
+    "files": [
+      {
+        "bytes": 47341908,
+        "encodeMs": 1367.3291000000002,
+        "file": "sample-01.ARW",
+        "totalMs": 13089.2426
+      },
+      {
+        "bytes": 41290468,
+        "encodeMs": 1368.3419999999999,
+        "file": "sample-02.ARW",
+        "totalMs": 11419.7264
+      },
+      {
+        "bytes": 35401302,
+        "encodeMs": 593.719,
+        "file": "sample-03.ARW",
+        "totalMs": 14185.0213
+      }
+    ],
+    "format": "webp",
+    "mode": "before",
+    "repeat": 1,
+    "workers": 3
+  },
+  {
+    "batchMs": 12718.9619,
+    "files": [
+      {
+        "bytes": 2616143,
+        "encodeMs": 1641.3301,
+        "file": "sample-01.ARW",
+        "totalMs": 12669.4308
+      },
+      {
+        "bytes": 2560940,
+        "encodeMs": 1989.3318,
+        "file": "sample-02.ARW",
+        "totalMs": 8212.472099999999
+      },
+      {
+        "bytes": 1639374,
+        "encodeMs": 1493.2174,
+        "file": "sample-03.ARW",
+        "totalMs": 12521.9898
+      }
+    ],
+    "format": "jxl",
+    "mode": "before",
+    "repeat": 0,
+    "workers": 3
+  },
+  {
+    "batchMs": 13869.2564,
+    "files": [
+      {
+        "bytes": 2616143,
+        "encodeMs": 2335.907,
+        "file": "sample-01.ARW",
+        "totalMs": 7526.6118
+      },
+      {
+        "bytes": 2560940,
+        "encodeMs": 1356.8727000000001,
+        "file": "sample-02.ARW",
+        "totalMs": 13799.888599999998
+      },
+      {
+        "bytes": 1639374,
+        "encodeMs": 1865.3,
+        "file": "sample-03.ARW",
+        "totalMs": 11393.2528
+      }
+    ],
+    "format": "jxl",
+    "mode": "after",
+    "repeat": 0,
+    "workers": 3
+  },
+  {
+    "batchMs": 15050.8329,
+    "files": [
+      {
+        "bytes": 2616143,
+        "encodeMs": 2118.8199,
+        "file": "sample-01.ARW",
+        "totalMs": 12406.081199999999
+      },
+      {
+        "bytes": 2560940,
+        "encodeMs": 2411.6648,
+        "file": "sample-02.ARW",
+        "totalMs": 11037.671400000001
+      },
+      {
+        "bytes": 1639374,
+        "encodeMs": 1274.9366,
+        "file": "sample-03.ARW",
+        "totalMs": 14988.759699999999
+      }
+    ],
+    "format": "jxl",
+    "mode": "after",
+    "repeat": 1,
+    "workers": 3
+  },
+  {
+    "batchMs": 14752.8258,
+    "files": [
+      {
+        "bytes": 2616143,
+        "encodeMs": 1932.5101,
+        "file": "sample-01.ARW",
+        "totalMs": 14682.8348
+      },
+      {
+        "bytes": 2560940,
+        "encodeMs": 2890.6627,
+        "file": "sample-02.ARW",
+        "totalMs": 11236.6173
+      },
+      {
+        "bytes": 1639374,
+        "encodeMs": 2448.0296,
+        "file": "sample-03.ARW",
+        "totalMs": 13210.7904
+      }
+    ],
+    "format": "jxl",
+    "mode": "before",
+    "repeat": 1,
+    "workers": 3
+  },
+  {
+    "batchMs": 39357.7301,
+    "files": [
+      {
+        "bytes": 7272593,
+        "encodeMs": 16535.707899999998,
+        "file": "sample-01.ARW",
+        "totalMs": 39286.8815
+      },
+      {
+        "bytes": 4614060,
+        "encodeMs": 12836.515200000002,
+        "file": "sample-02.ARW",
+        "totalMs": 22694.028599999998
+      },
+      {
+        "bytes": 2397326,
+        "encodeMs": 13932.9724,
+        "file": "sample-03.ARW",
+        "totalMs": 39293.2264
+      }
+    ],
+    "format": "avif",
+    "mode": "before",
+    "repeat": 0,
+    "workers": 3
+  },
+  {
+    "batchMs": 37546.081,
+    "files": [
+      {
+        "bytes": 7272593,
+        "encodeMs": 15270.5483,
+        "file": "sample-01.ARW",
+        "totalMs": 37441.787599999996
+      },
+      {
+        "bytes": 4614060,
+        "encodeMs": 11821.141300000001,
+        "file": "sample-02.ARW",
+        "totalMs": 22023.3279
+      },
+      {
+        "bytes": 2397326,
+        "encodeMs": 12866.783399999998,
+        "file": "sample-03.ARW",
+        "totalMs": 37476.713599999995
+      }
+    ],
+    "format": "avif",
+    "mode": "after",
+    "repeat": 0,
+    "workers": 3
+  },
+  {
+    "batchMs": 35052.266,
+    "files": [
+      {
+        "bytes": 7272593,
+        "encodeMs": 19869.048,
+        "file": "sample-01.ARW",
+        "totalMs": 26097.0091
+      },
+      {
+        "bytes": 4614060,
+        "encodeMs": 15409.1583,
+        "file": "sample-02.ARW",
+        "totalMs": 26129.0871
+      },
+      {
+        "bytes": 2397326,
+        "encodeMs": 9553.413700000001,
+        "file": "sample-03.ARW",
+        "totalMs": 35007.0161
+      }
+    ],
+    "format": "avif",
+    "mode": "after",
+    "repeat": 1,
+    "workers": 3
+  },
+  {
+    "batchMs": 32643.6477,
+    "files": [
+      {
+        "bytes": 7272593,
+        "encodeMs": 12905.217799999999,
+        "file": "sample-01.ARW",
+        "totalMs": 23498.9396
+      },
+      {
+        "bytes": 4614060,
+        "encodeMs": 15799.8259,
+        "file": "sample-02.ARW",
+        "totalMs": 23492.809699999998
+      },
+      {
+        "bytes": 2397326,
+        "encodeMs": 7335.436599999999,
+        "file": "sample-03.ARW",
+        "totalMs": 32602.7488
+      }
+    ],
+    "format": "avif",
+    "mode": "before",
+    "repeat": 1,
+    "workers": 3
+  }
+]

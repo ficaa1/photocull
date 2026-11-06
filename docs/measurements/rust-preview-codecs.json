@@ -1,0 +1,151 @@
+{
+  "platform": "win32",
+  "node": "v24.20.0",
+  "fixture": "102 distinct copies of 3 Sony A7C II RAW/JPEG pairs (51 RAW, 51 JPEG); warm OS filesystem, cold application caches; includes extraction, encoding, cache writes and Rust process startup; excludes scanning, HTTP and screen presentation",
+  "rows": [
+    {
+      "mode": "sharp",
+      "kind": "thumb",
+      "repeat": 0,
+      "images": 102,
+      "firstMs": 184.73130000000015,
+      "gridMs": 5796.8315999999995,
+      "totalMs": 5796.8375,
+      "imagesPerSecond": 17.595801158821512,
+      "errors": [],
+      "stats": {
+        "memoryHits": 0,
+        "diskHits": 0,
+        "generated": 102,
+        "embeddedExtractions": 0,
+        "directExtractions": 102
+      }
+    },
+    {
+      "mode": "rust",
+      "kind": "thumb",
+      "repeat": 0,
+      "images": 102,
+      "firstMs": 216.98570000000018,
+      "gridMs": 4860.569800000001,
+      "totalMs": 4860.574200000001,
+      "imagesPerSecond": 20.98517496142739,
+      "errors": [],
+      "stats": {
+        "memoryHits": 0,
+        "diskHits": 0,
+        "generated": 102,
+        "embeddedExtractions": 0,
+        "directExtractions": 102
+      }
+    },
+    {
+      "mode": "sharp",
+      "kind": "preview",
+      "repeat": 0,
+      "images": 102,
+      "firstMs": 414.83590000000004,
+      "gridMs": 14286.630299999999,
+      "totalMs": 14286.6359,
+      "imagesPerSecond": 7.139539406894244,
+      "errors": [],
+      "stats": {
+        "memoryHits": 0,
+        "diskHits": 0,
+        "generated": 102,
+        "embeddedExtractions": 0,
+        "directExtractions": 51
+      }
+    },
+    {
+      "mode": "rust",
+      "kind": "preview",
+      "repeat": 0,
+      "images": 102,
+      "firstMs": 282.16419999999925,
+      "gridMs": 10295.985400000001,
+      "totalMs": 10295.989700000002,
+      "imagesPerSecond": 9.906769817378507,
+      "errors": [],
+      "stats": {
+        "memoryHits": 0,
+        "diskHits": 0,
+        "generated": 102,
+        "embeddedExtractions": 0,
+        "directExtractions": 51
+      }
+    },
+    {
+      "mode": "rust",
+      "kind": "thumb",
+      "repeat": 1,
+      "images": 102,
+      "firstMs": 215.32990000000427,
+      "gridMs": 4863.648100000006,
+      "totalMs": 4863.6514000000025,
+      "imagesPerSecond": 20.97189778033844,
+      "errors": [],
+      "stats": {
+        "memoryHits": 0,
+        "diskHits": 0,
+        "generated": 102,
+        "embeddedExtractions": 0,
+        "directExtractions": 102
+      }
+    },
+    {
+      "mode": "sharp",
+      "kind": "thumb",
+      "repeat": 1,
+      "images": 102,
+      "firstMs": 160.51180000000022,
+      "gridMs": 4828.8240000000005,
+      "totalMs": 4828.827400000002,
+      "imagesPerSecond": 21.123140578600914,
+      "errors": [],
+      "stats": {
+        "memoryHits": 0,
+        "diskHits": 0,
+        "generated": 102,
+        "embeddedExtractions": 0,
+        "directExtractions": 102
+      }
+    },
+    {
+      "mode": "rust",
+      "kind": "preview",
+      "repeat": 1,
+      "images": 102,
+      "firstMs": 219.61059999999998,
+      "gridMs": 9631.3174,
+      "totalMs": 9631.321300000003,
+      "imagesPerSecond": 10.59044723178324,
+      "errors": [],
+      "stats": {
+        "memoryHits": 0,
+        "diskHits": 0,
+        "generated": 102,
+        "embeddedExtractions": 0,
+        "directExtractions": 51
+      }
+    },
+    {
+      "mode": "sharp",
+      "kind": "preview",
+      "repeat": 1,
+      "images": 102,
+      "firstMs": 346.1201000000001,
+      "gridMs": 15309.644400000005,
+      "totalMs": 15309.648199999996,
+      "imagesPerSecond": 6.662465307334759,
+      "errors": [],
+      "stats": {
+        "memoryHits": 0,
+        "diskHits": 0,
+        "generated": 102,
+        "embeddedExtractions": 0,
+        "directExtractions": 51
+      }
+    }
+  ]
+}

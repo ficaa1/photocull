@@ -16,9 +16,9 @@ async function main() {
   const digest = async file => createHash('sha256').update(await fs.readFile(file)).digest('hex');
   try {
     if (fixtureRoot) {
-      await fs.copyFile(path.join(fixtureRoot, 'sample-8563.ARW'), path.join(photos, '000.ARW'));
-      await fs.copyFile(path.join(fixtureRoot, 'sample-8563.JPG'), path.join(photos, '000.JPG'));
-      await fs.copyFile(path.join(fixtureRoot, 'sample-8565.ARW'), path.join(photos, '001.ARW'));
+      await fs.copyFile(path.join(fixtureRoot, 'sample-01.ARW'), path.join(photos, '000.ARW'));
+      await fs.copyFile(path.join(fixtureRoot, 'sample-01.JPG'), path.join(photos, '000.JPG'));
+      await fs.copyFile(path.join(fixtureRoot, 'sample-02.ARW'), path.join(photos, '001.ARW'));
     } else throw new Error('Supply the authorized Sony fixture directory.');
     const before = await digest(path.join(photos, '000.ARW'));
     const env = { ...process.env, PHOTOCULL_SMOKE_TEST: '1', PHOTOCULL_DATA_DIR: path.join(root, 'state'), PHOTOCULL_TEST_DEVICES: deviceFile, PHOTOCULL_TEST_DESTINATION: destination }; 

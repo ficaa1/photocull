@@ -60,3 +60,24 @@ test('AF metadata read is persisted and reused without another ExifTool read',as
   const two=new PreviewService(root,{exif});await two.metadata(item);await two.close();assert.equal(reads,1);
   assert.equal(normalizeSettings({burstGap:.8,focusOverlay:true}).burstGap,.8);for(const burstGap of [0,11,'1',NaN])assert.throws(()=>normalizeSettings({burstGap}));
 });
+
+test('focus analysis reads the oriented sRGB cache and restores evicted preview bytes',async t=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'photocull-analysis-preview-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const sharp=require('sharp'),photos=path.join(root,'photos');await fs.mkdir(photos);
+  const original=await sharp({create:{width:180,height:120,channels:3,background:'#628c70'}}).withMetadata({orientation:6}).jpeg().toBuffer();
+  const file=path.join(photos,'photo.jpg');await fs.writeFile(file,original);
+  const library=new Library(path.join(root,'state'),{settings:()=>normalizeSettings({writeSidecars:'never'})});t.after(()=>library.close());
+  const session=await library.scan(photos),item=library.get(session.id).items[0];
+  item.develop={edited:true,tiff:path.join(root,'unavailable-edit.tif')};
+  const exif={readRaw:async()=>({Make:'Sony',Model:'fixture',DateTimeOriginal:'2026:07:08 12:13:14',FocusLocation:'180 120 90 60',Orientation:6}),end:async()=>{}};
+  const previews=new PreviewService(path.join(root,'cache'),{exif});t.after(()=>previews.close());
+  const service=new CullingService(library,previews,()=>({burstGap:1})),source=await service.source(session.id,item.id);
+  assert.equal(source.file,path.join(previews.cacheDir,previews.key({...item,develop:null},'preview')+'.jpg'));
+  assert.ok(source.focus);assert.equal(source.score,null);
+  const bytes=await fs.readFile(source.file),metadata=await sharp(bytes).metadata();
+  assert.equal(metadata.width,120);assert.equal(metadata.height,180);assert.ok(metadata.hasProfile);
+  await fs.rm(source.file);assert.equal((await service.source(session.id,item.id)).file,source.file);
+  assert.deepEqual(await fs.readFile(source.file),bytes);assert.equal(previews.stats.generated,1);
+  await service.store(session.id,item.id,source.key,42);assert.equal((await service.source(session.id,item.id)).score,42);
+  assert.deepEqual(await fs.readFile(file),original);
+});

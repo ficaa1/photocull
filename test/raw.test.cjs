@@ -8,6 +8,18 @@ const { PreviewService } = require('../src/previews.cjs');
 const { RawRenderCache } = require('../src/raw-cache.cjs');
 const { renderRaw } = require('../src/raw-decoder.cjs');
 
+test('sample preparation copies anonymous pairs without changing or overwriting source files',async t=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'photocull-sample-copy-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
+  const source=path.join(root,'source'),output=path.join(root,'samples');await fs.mkdir(source);
+  for(const name of ['capture-a','capture-b','capture-c'])for(const extension of ['arw','jpg'])await fs.writeFile(path.join(source,`${name}.${extension}`),`${name}.${extension}`);
+  const before=await Promise.all((await fs.readdir(source)).sort().map(async name=>[name,await fs.readFile(path.join(source,name),'utf8')]));
+  const {prepare}=require('../scripts/prepare-samples.cjs');await prepare(source,output);
+  assert.deepEqual((await fs.readdir(output)).sort(),['sample-01.ARW','sample-01.JPG','sample-02.ARW','sample-02.JPG','sample-03.ARW','sample-03.JPG']);
+  assert.equal(await fs.readFile(path.join(output,'sample-02.ARW'),'utf8'),'capture-b.arw');
+  await assert.rejects(prepare(source,output),/must be empty/);await assert.rejects(prepare(source,path.join(source,'nested')),/outside the source/);
+  assert.deepEqual(await Promise.all((await fs.readdir(source)).sort().map(async name=>[name,await fs.readFile(path.join(source,name),'utf8')])),before);
+});
+
 async function setup(t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'photocull-raw-test-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));

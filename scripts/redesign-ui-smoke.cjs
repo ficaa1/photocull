@@ -19,7 +19,7 @@ async function main() {
   for (let i = 1; i <= 36; i++) {
     await sharp({ create: { width: 1200, height: 800, channels: 3, background: i % 2 ? '#637b87' : '#817a69' } }).jpeg().toFile(path.join(photos, `${String(i).padStart(3, '0')}_photo.JPG`));
   }
-  if (process.argv[4]) await fs.copyFile(path.join(path.resolve(process.argv[4]), 'sample-8563.ARW'), path.join(photos, '000_camera.ARW'));
+  if (process.argv[4]) await fs.copyFile(path.join(path.resolve(process.argv[4]), 'sample-01.ARW'), path.join(photos, '000_camera.ARW'));
   const errors = [], checks = [];
   let app, page;
   async function launch() {

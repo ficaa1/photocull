@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const sharp = require('sharp');
 const { PreviewService, orient } = require('../src/previews.cjs');
+const displayPreview = require('../src/display-preview.cjs');
 const { Library } = require('../src/library.cjs');
 const { PriorityQueue } = require('../src/queue.cjs');
 const { fixtures } = require('../scripts/fixtures.cjs');
@@ -103,6 +104,9 @@ test('preview pipeline orients JPEGs, reuses memory/disk, and invalidates edited
   await fixtures(path.join(root, 'photos'), 3);
   const library = new Library(path.join(root, 'state')), s = await library.scan(path.join(root, 'photos'));
   const cache = path.join(root, 'cache');
+  const encoded = [];
+  const encode = displayPreview.encodeDisplayPreview;
+  t.mock.method(displayPreview, 'encodeDisplayPreview', (file, options) => { encoded.push(options); return encode(file, options); });
   const previews = new PreviewService(cache);
   t.after(() => previews.close());
   const item = library.item(s.id, s.items[2].id);
@@ -116,9 +120,14 @@ test('preview pipeline orients JPEGs, reuses memory/disk, and invalidates edited
   assert.deepEqual(await fresh.get(item, 'thumb'), thumb);
   assert.equal(fresh.stats.diskHits, 1);
   assert.notEqual(previews.key(item, 'thumb'), previews.key({ ...item, fingerprint: 'changed' }, 'thumb'));
+  assert.equal(encoded.length, 1, 'Cache hits bypass pixel encoding');
+  await previews.get(item, 'preview');
   const full = await previews.get(item, 'full');
   const fullMeta = await sharp(full).metadata();
   assert.equal(fullMeta.width, 1200); assert.equal(fullMeta.height, 1800);
+  assert.deepEqual(encoded.map(({ edge, quality }) => ({ edge, quality })), [
+    { edge: 400, quality: 76 }, { edge: 2560, quality: 91 }, { edge: null, quality: 91 },
+  ]);
 });
 
 test('real camera RAW uses an embedded JPEG without touching source bytes', { skip: !process.env.PHOTOCULL_RAW_FIXTURE }, async t => {

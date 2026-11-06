@@ -26,15 +26,15 @@ async function main() {
     await fs.copyFile(path.join(sourceFolder, jpeg), path.join(fixture, jpeg));
   }
   const sources = names.map(n => path.join(fixture, n));
-  const edited = path.join(root, 'finished', 'sample-8563.tif'); await fs.mkdir(path.dirname(edited));
+  const edited = path.join(root, 'finished', 'sample-01.tif'); await fs.mkdir(path.dirname(edited));
   // A finished TIFF from a copied camera JPEG exercises the edited-image path without an editor round trip.
-  await require('sharp')(path.join(fixture, 'sample-8563.JPG')).tiff().toFile(edited);
+  await require('sharp')(path.join(fixture, 'sample-01.JPG')).tiff().toFile(edited);
   const hash = async file => createHash('sha256').update(await fs.readFile(file)).digest('hex');
   const before = await Promise.all([...sources, edited].map(hash));
   const { Library } = require('../src/library.cjs');
   const testLibrary = new Library(process.env.PHOTOCULL_DATA_DIR || path.join(root, 'state'));
   const prepared = await testLibrary.scan(fixture, false);
-  const first = prepared.items.find(i => i.name === 'sample-8563.ARW');
+  const first = prepared.items.find(i => i.name === 'sample-01.ARW');
   await testLibrary.developMark(prepared.id, first.id, { tiff: edited, edited: true });
   for (const i of prepared.items.filter(i => i.raw)) await testLibrary.decide(prepared.id, i.id, { flag: 'pick' });
   const browser = await chromium.connectOverCDP('http://127.0.0.1:' + (process.env.PHOTOCULL_CDP_PORT || '9337'));
@@ -88,7 +88,7 @@ async function main() {
       const label = `${source}-${resize ? '1200-screen' : 'full'}-${config.label}`;
       console.log('Exporting ' + label);
       const result = await page.evaluate(async ({ config, source, resize, output, label }) => {
-        const photo = state.session.items.find(i => i.name === 'sample-8563.ARW');
+        const photo = state.session.items.find(i => i.name === 'sample-01.ARW');
         const o = PhotoCullExport.options({ ...config, colorSpace: 'srgb', sharpen: resize ? 'screen' : 'none', resize: resize ? { mode: 'longEdge', value: 1200, height: 1200, dontEnlarge: true } : null });
         const plan = await api.exportPlan(state.session.id, [photo.id], { folder: output, naming: { template: '{text}', text: label, start: 1 }, extension: PhotoCullExport.FORMATS[o.format].extension, conflict: 'unique' });
         if (plan[0].error) throw new Error(plan[0].error);
@@ -112,7 +112,7 @@ async function main() {
     // Extra real-file controls: color conversion, metadata policies, JPEG byte limit, skip and cancellation.
     for (const policy of ['allExceptCamera', 'copyright', 'none']) {
       const r = await page.evaluate(async ({ output, policy }) => {
-        const photo = state.session.items.find(i => i.name === 'sample-8563.ARW');
+        const photo = state.session.items.find(i => i.name === 'sample-01.ARW');
         const develop = await api.developGet(state.session.id, photo.id);
         const options = PhotoCullExport.options({ format: 'jpeg', colorSpace: 'displayP3', metadata: policy, removeLocation: true,
           limitKb: 100, resize: { mode: 'longEdge', value: 1200, height: 1200, dontEnlarge: true } });
@@ -142,7 +142,7 @@ async function main() {
     assert.ok(cancelled.results.every(r => r.status === 'cancelled'));
     const nonraw = await page.evaluate(async ({ folder, output }) => {
       loadSession(await api.openPath(folder, false));
-      const photo = state.session.items.find(i => i.name === 'sample-8563.tif');
+      const photo = state.session.items.find(i => i.name === 'sample-01.tif');
       if (!photo || photo.raw) throw new Error('Expected the standalone Dehancer TIFF.');
       const settings = (await api.developGet(state.session.id, photo.id)).settings;
       const options = PhotoCullExport.options({ format: 'png', bitDepth: 16, colorSpace: 'displayP3', resize: { mode: 'longEdge', value: 1200, height: 1200, dontEnlarge: true } });

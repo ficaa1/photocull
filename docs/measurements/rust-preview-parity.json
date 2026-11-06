@@ -1,0 +1,3274 @@
+{
+  "sourceHashesUnchanged": true,
+  "withinThree": false,
+  "rows": [
+    {
+      "name": "copied-tiff",
+      "edge": 400,
+      "width": 400,
+      "height": 267,
+      "icc": true,
+      "maxPatchError": 5.75,
+      "samples": [
+        {
+          "reference": [
+            115.4,
+            176.4,
+            204.4
+          ],
+          "rust": [
+            115.4,
+            176.4,
+            204.4
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            155.9,
+            193.2,
+            208.9
+          ],
+          "rust": [
+            155.51,
+            192.81,
+            208.51
+          ],
+          "maxError": 0.3900000000000148
+        },
+        {
+          "reference": [
+            22.19,
+            57.46,
+            79.85
+          ],
+          "rust": [
+            25.85,
+            61.05,
+            83.45
+          ],
+          "maxError": 3.66
+        },
+        {
+          "reference": [
+            151.21,
+            132.15,
+            117.41
+          ],
+          "rust": [
+            154.56,
+            137.9,
+            122.38
+          ],
+          "maxError": 5.75
+        },
+        {
+          "reference": [
+            146.31,
+            185.8,
+            198.89
+          ],
+          "rust": [
+            147.45,
+            186.24,
+            199.91
+          ],
+          "maxError": 1.1399999999999864
+        }
+      ],
+      "withinThree": false
+    },
+    {
+      "name": "copied-tiff",
+      "edge": 2560,
+      "width": 2560,
+      "height": 1707,
+      "icc": true,
+      "maxPatchError": 0.8299999999999983,
+      "samples": [
+        {
+          "reference": [
+            115.06,
+            176.54,
+            204.92
+          ],
+          "rust": [
+            115.39,
+            175.79,
+            204.97
+          ],
+          "maxError": 0.75
+        },
+        {
+          "reference": [
+            155.37,
+            192.76,
+            207.61
+          ],
+          "rust": [
+            155.3,
+            192.78,
+            208.17
+          ],
+          "maxError": 0.5599999999999739
+        },
+        {
+          "reference": [
+            23.06,
+            59.92,
+            82.04
+          ],
+          "rust": [
+            23.69,
+            59.97,
+            82.87
+          ],
+          "maxError": 0.8299999999999983
+        },
+        {
+          "reference": [
+            137.29,
+            121.38,
+            109.36
+          ],
+          "rust": [
+            137.7,
+            121.76,
+            109.77
+          ],
+          "maxError": 0.4099999999999966
+        },
+        {
+          "reference": [
+            147.85,
+            186.24,
+            198.93
+          ],
+          "rust": [
+            148.19,
+            186.57,
+            199.29
+          ],
+          "maxError": 0.3599999999999852
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "copied-jpeg",
+      "edge": 400,
+      "width": 400,
+      "height": 267,
+      "icc": true,
+      "maxPatchError": 2.469999999999999,
+      "samples": [
+        {
+          "reference": [
+            151.29,
+            156.63,
+            158.64
+          ],
+          "rust": [
+            149.27,
+            157.05,
+            156.17
+          ],
+          "maxError": 2.469999999999999
+        },
+        {
+          "reference": [
+            167.28,
+            173.45,
+            170.99
+          ],
+          "rust": [
+            167.21,
+            173.65,
+            169.14
+          ],
+          "maxError": 1.8500000000000227
+        },
+        {
+          "reference": [
+            203.92,
+            187.85,
+            174.88
+          ],
+          "rust": [
+            203.93,
+            187.64,
+            174.32
+          ],
+          "maxError": 0.5600000000000023
+        },
+        {
+          "reference": [
+            207.93,
+            207.93,
+            203.43
+          ],
+          "rust": [
+            207.38,
+            208.38,
+            202.88
+          ],
+          "maxError": 0.5500000000000114
+        },
+        {
+          "reference": [
+            158.14,
+            146.47,
+            130.71
+          ],
+          "rust": [
+            158.89,
+            148.2,
+            132.22
+          ],
+          "maxError": 1.7299999999999898
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "copied-jpeg",
+      "edge": 2560,
+      "width": 2560,
+      "height": 1707,
+      "icc": true,
+      "maxPatchError": 1.2300000000000182,
+      "samples": [
+        {
+          "reference": [
+            166.65,
+            175.63,
+            176.89
+          ],
+          "rust": [
+            167.05,
+            175.29,
+            176.87
+          ],
+          "maxError": 0.4000000000000057
+        },
+        {
+          "reference": [
+            162.1,
+            164.02,
+            161.96
+          ],
+          "rust": [
+            162.43,
+            164.35,
+            161.87
+          ],
+          "maxError": 0.3300000000000125
+        },
+        {
+          "reference": [
+            220.67,
+            205.51,
+            195.8
+          ],
+          "rust": [
+            220.82,
+            205.62,
+            196.29
+          ],
+          "maxError": 0.4899999999999807
+        },
+        {
+          "reference": [
+            210.1,
+            210.6,
+            207.1
+          ],
+          "rust": [
+            210.53,
+            210.63,
+            208.33
+          ],
+          "maxError": 1.2300000000000182
+        },
+        {
+          "reference": [
+            159.9,
+            138.74,
+            106.42
+          ],
+          "rust": [
+            160.1,
+            138.9,
+            107.05
+          ],
+          "maxError": 0.6299999999999955
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "srgb-tiff",
+      "edge": 400,
+      "width": 400,
+      "height": 267,
+      "icc": true,
+      "maxPatchError": 2,
+      "samples": [
+        {
+          "reference": [
+            18,
+            50,
+            73
+          ],
+          "rust": [
+            18,
+            50,
+            71
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            147,
+            184,
+            200
+          ],
+          "rust": [
+            147,
+            185,
+            198
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            147,
+            184,
+            200
+          ],
+          "rust": [
+            147,
+            185,
+            198
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            112,
+            176,
+            203
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            112,
+            176,
+            203
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 2
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "srgb-tiff",
+      "edge": 2560,
+      "width": 900,
+      "height": 600,
+      "icc": true,
+      "maxPatchError": 2,
+      "samples": [
+        {
+          "reference": [
+            18,
+            50,
+            73
+          ],
+          "rust": [
+            18,
+            50,
+            73
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            147,
+            184,
+            200
+          ],
+          "rust": [
+            147,
+            184,
+            200
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            147,
+            184,
+            200
+          ],
+          "rust": [
+            147,
+            184,
+            200
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            112,
+            176,
+            204
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            112,
+            176,
+            204
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 2
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "srgb-tiff",
+      "edge": 100000,
+      "width": 900,
+      "height": 600,
+      "icc": true,
+      "maxPatchError": 2,
+      "samples": [
+        {
+          "reference": [
+            18,
+            50,
+            73
+          ],
+          "rust": [
+            18,
+            50,
+            73
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            147,
+            184,
+            200
+          ],
+          "rust": [
+            147,
+            184,
+            200
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            147,
+            184,
+            200
+          ],
+          "rust": [
+            147,
+            184,
+            200
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            112,
+            176,
+            204
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            112,
+            176,
+            204
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 2
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "p3-tiff",
+      "edge": 400,
+      "width": 400,
+      "height": 267,
+      "icc": true,
+      "maxPatchError": 2,
+      "samples": [
+        {
+          "reference": [
+            18,
+            50,
+            73
+          ],
+          "rust": [
+            18,
+            50,
+            71
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            147,
+            184,
+            200
+          ],
+          "rust": [
+            147,
+            185,
+            198
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            147,
+            184,
+            200
+          ],
+          "rust": [
+            147,
+            185,
+            198
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            112,
+            176,
+            203
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            112,
+            176,
+            203
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 2
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "p3-tiff",
+      "edge": 2560,
+      "width": 900,
+      "height": 600,
+      "icc": true,
+      "maxPatchError": 2,
+      "samples": [
+        {
+          "reference": [
+            18,
+            50,
+            73
+          ],
+          "rust": [
+            18,
+            50,
+            73
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            147,
+            184,
+            200
+          ],
+          "rust": [
+            147,
+            184,
+            200
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            147,
+            184,
+            200
+          ],
+          "rust": [
+            147,
+            184,
+            200
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            112,
+            176,
+            204
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            112,
+            176,
+            204
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 2
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "p3-tiff",
+      "edge": 100000,
+      "width": 900,
+      "height": 600,
+      "icc": true,
+      "maxPatchError": 2,
+      "samples": [
+        {
+          "reference": [
+            18,
+            50,
+            73
+          ],
+          "rust": [
+            18,
+            50,
+            73
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            147,
+            184,
+            200
+          ],
+          "rust": [
+            147,
+            184,
+            200
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            147,
+            184,
+            200
+          ],
+          "rust": [
+            147,
+            184,
+            200
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            112,
+            176,
+            204
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            112,
+            176,
+            204
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 2
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "png",
+      "edge": 400,
+      "width": 400,
+      "height": 267,
+      "icc": true,
+      "maxPatchError": 0,
+      "samples": [
+        {
+          "reference": [
+            18,
+            50,
+            73
+          ],
+          "rust": [
+            18,
+            50,
+            73
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            147,
+            185,
+            198
+          ],
+          "rust": [
+            147,
+            185,
+            198
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            147,
+            185,
+            198
+          ],
+          "rust": [
+            147,
+            185,
+            198
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            114,
+            175,
+            203
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            114,
+            175,
+            203
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 0
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "png",
+      "edge": 2560,
+      "width": 900,
+      "height": 600,
+      "icc": true,
+      "maxPatchError": 2,
+      "samples": [
+        {
+          "reference": [
+            18,
+            50,
+            73
+          ],
+          "rust": [
+            18,
+            50,
+            73
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            147,
+            185,
+            198
+          ],
+          "rust": [
+            147,
+            184,
+            200
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            147,
+            185,
+            198
+          ],
+          "rust": [
+            147,
+            184,
+            200
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            114,
+            175,
+            203
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            114,
+            175,
+            203
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 0
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "png",
+      "edge": 100000,
+      "width": 900,
+      "height": 600,
+      "icc": true,
+      "maxPatchError": 2,
+      "samples": [
+        {
+          "reference": [
+            18,
+            50,
+            73
+          ],
+          "rust": [
+            18,
+            50,
+            73
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            147,
+            185,
+            198
+          ],
+          "rust": [
+            147,
+            184,
+            200
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            147,
+            185,
+            198
+          ],
+          "rust": [
+            147,
+            184,
+            200
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            114,
+            175,
+            203
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            114,
+            175,
+            203
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 0
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "webp",
+      "edge": 400,
+      "width": 400,
+      "height": 267,
+      "icc": true,
+      "maxPatchError": 0,
+      "samples": [
+        {
+          "reference": [
+            18,
+            50,
+            73
+          ],
+          "rust": [
+            18,
+            50,
+            73
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            147,
+            185,
+            198
+          ],
+          "rust": [
+            147,
+            185,
+            198
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            147,
+            185,
+            198
+          ],
+          "rust": [
+            147,
+            185,
+            198
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            114,
+            175,
+            203
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            114,
+            175,
+            203
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 0
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "webp",
+      "edge": 2560,
+      "width": 900,
+      "height": 600,
+      "icc": true,
+      "maxPatchError": 2,
+      "samples": [
+        {
+          "reference": [
+            18,
+            50,
+            73
+          ],
+          "rust": [
+            18,
+            50,
+            73
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            147,
+            185,
+            198
+          ],
+          "rust": [
+            147,
+            184,
+            200
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            147,
+            185,
+            198
+          ],
+          "rust": [
+            147,
+            184,
+            200
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            114,
+            175,
+            203
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            114,
+            175,
+            203
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 0
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "webp",
+      "edge": 100000,
+      "width": 900,
+      "height": 600,
+      "icc": true,
+      "maxPatchError": 2,
+      "samples": [
+        {
+          "reference": [
+            18,
+            50,
+            73
+          ],
+          "rust": [
+            18,
+            50,
+            73
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            147,
+            185,
+            198
+          ],
+          "rust": [
+            147,
+            184,
+            200
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            147,
+            185,
+            198
+          ],
+          "rust": [
+            147,
+            184,
+            200
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            114,
+            175,
+            203
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            114,
+            175,
+            203
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 0
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "untagged-tiff",
+      "edge": 400,
+      "width": 400,
+      "height": 267,
+      "icc": true,
+      "maxPatchError": 2,
+      "samples": [
+        {
+          "reference": [
+            18,
+            50,
+            73
+          ],
+          "rust": [
+            18,
+            50,
+            71
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            147,
+            185,
+            198
+          ],
+          "rust": [
+            147,
+            185,
+            198
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            147,
+            185,
+            198
+          ],
+          "rust": [
+            147,
+            185,
+            198
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            114,
+            175,
+            203
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            114,
+            175,
+            203
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 0
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "untagged-tiff",
+      "edge": 2560,
+      "width": 900,
+      "height": 600,
+      "icc": true,
+      "maxPatchError": 2,
+      "samples": [
+        {
+          "reference": [
+            18,
+            50,
+            73
+          ],
+          "rust": [
+            18,
+            50,
+            73
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            147,
+            185,
+            198
+          ],
+          "rust": [
+            147,
+            184,
+            200
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            147,
+            185,
+            198
+          ],
+          "rust": [
+            147,
+            184,
+            200
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            114,
+            175,
+            203
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            114,
+            175,
+            203
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 0
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "untagged-tiff",
+      "edge": 100000,
+      "width": 900,
+      "height": 600,
+      "icc": true,
+      "maxPatchError": 2,
+      "samples": [
+        {
+          "reference": [
+            18,
+            50,
+            73
+          ],
+          "rust": [
+            18,
+            50,
+            73
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            147,
+            185,
+            198
+          ],
+          "rust": [
+            147,
+            184,
+            200
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            147,
+            185,
+            198
+          ],
+          "rust": [
+            147,
+            184,
+            200
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            114,
+            175,
+            203
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            114,
+            175,
+            203
+          ],
+          "rust": [
+            114,
+            175,
+            203
+          ],
+          "maxError": 0
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "orientation-1",
+      "edge": 400,
+      "width": 180,
+      "height": 120,
+      "icc": true,
+      "maxPatchError": 0.1999999999999993,
+      "samples": [
+        {
+          "reference": [
+            119.4,
+            210,
+            82.1
+          ],
+          "rust": [
+            119.4,
+            210,
+            82.1
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            30.25,
+            209.25,
+            139
+          ],
+          "rust": [
+            30.45,
+            209.45,
+            139.2
+          ],
+          "maxError": 0.1999999999999993
+        },
+        {
+          "reference": [
+            30,
+            30,
+            140
+          ],
+          "rust": [
+            30,
+            30,
+            140
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            209,
+            30,
+            25
+          ],
+          "rust": [
+            209,
+            30,
+            25
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            209.85,
+            156.2,
+            25.4
+          ],
+          "rust": [
+            209.75,
+            156.1,
+            25.3
+          ],
+          "maxError": 0.09999999999999787
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "orientation-1",
+      "edge": 2560,
+      "width": 180,
+      "height": 120,
+      "icc": true,
+      "maxPatchError": 0.4000000000000057,
+      "samples": [
+        {
+          "reference": [
+            120.2,
+            210,
+            82.2
+          ],
+          "rust": [
+            120.2,
+            210,
+            82.2
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            29.75,
+            209.75,
+            139.3
+          ],
+          "rust": [
+            29.45,
+            210.15,
+            139.5
+          ],
+          "maxError": 0.4000000000000057
+        },
+        {
+          "reference": [
+            30,
+            30,
+            140
+          ],
+          "rust": [
+            30,
+            30,
+            140
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            209,
+            30,
+            25
+          ],
+          "rust": [
+            209,
+            30,
+            25
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            209.85,
+            156.2,
+            24.25
+          ],
+          "rust": [
+            210.05,
+            156.3,
+            24.65
+          ],
+          "maxError": 0.3999999999999986
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "orientation-1",
+      "edge": 100000,
+      "width": 180,
+      "height": 120,
+      "icc": true,
+      "maxPatchError": 0.4000000000000057,
+      "samples": [
+        {
+          "reference": [
+            120.2,
+            210,
+            82.2
+          ],
+          "rust": [
+            120.2,
+            210,
+            82.2
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            29.75,
+            209.75,
+            139.3
+          ],
+          "rust": [
+            29.45,
+            210.15,
+            139.5
+          ],
+          "maxError": 0.4000000000000057
+        },
+        {
+          "reference": [
+            30,
+            30,
+            140
+          ],
+          "rust": [
+            30,
+            30,
+            140
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            209,
+            30,
+            25
+          ],
+          "rust": [
+            209,
+            30,
+            25
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            209.85,
+            156.2,
+            24.25
+          ],
+          "rust": [
+            210.05,
+            156.3,
+            24.65
+          ],
+          "maxError": 0.3999999999999986
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "orientation-2",
+      "edge": 400,
+      "width": 180,
+      "height": 120,
+      "icc": true,
+      "maxPatchError": 0.10000000000002274,
+      "samples": [
+        {
+          "reference": [
+            120.8,
+            210.1,
+            81.1
+          ],
+          "rust": [
+            120.8,
+            210.1,
+            81.1
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            210.45,
+            210.25,
+            24.2
+          ],
+          "rust": [
+            210.45,
+            210.25,
+            24.2
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            209,
+            30,
+            25
+          ],
+          "rust": [
+            209,
+            30,
+            25
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            30,
+            30,
+            140
+          ],
+          "rust": [
+            30,
+            30,
+            140
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            29.65,
+            155.4,
+            140.2
+          ],
+          "rust": [
+            29.75,
+            155.5,
+            140.3
+          ],
+          "maxError": 0.10000000000002274
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "orientation-2",
+      "edge": 2560,
+      "width": 180,
+      "height": 120,
+      "icc": true,
+      "maxPatchError": 1.5,
+      "samples": [
+        {
+          "reference": [
+            120,
+            209.9,
+            81.3
+          ],
+          "rust": [
+            120,
+            209.6,
+            82.8
+          ],
+          "maxError": 1.5
+        },
+        {
+          "reference": [
+            209.65,
+            210.55,
+            24.3
+          ],
+          "rust": [
+            209.65,
+            210.55,
+            24.4
+          ],
+          "maxError": 0.09999999999999787
+        },
+        {
+          "reference": [
+            209,
+            30,
+            25
+          ],
+          "rust": [
+            209,
+            30,
+            25
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            30,
+            30,
+            140
+          ],
+          "rust": [
+            30,
+            30,
+            140
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            30.15,
+            155.6,
+            139.6
+          ],
+          "rust": [
+            30.2,
+            155.85,
+            139.8
+          ],
+          "maxError": 0.25
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "orientation-2",
+      "edge": 100000,
+      "width": 180,
+      "height": 120,
+      "icc": true,
+      "maxPatchError": 1.5,
+      "samples": [
+        {
+          "reference": [
+            120,
+            209.9,
+            81.3
+          ],
+          "rust": [
+            120,
+            209.6,
+            82.8
+          ],
+          "maxError": 1.5
+        },
+        {
+          "reference": [
+            209.65,
+            210.55,
+            24.3
+          ],
+          "rust": [
+            209.65,
+            210.55,
+            24.4
+          ],
+          "maxError": 0.09999999999999787
+        },
+        {
+          "reference": [
+            209,
+            30,
+            25
+          ],
+          "rust": [
+            209,
+            30,
+            25
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            30,
+            30,
+            140
+          ],
+          "rust": [
+            30,
+            30,
+            140
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            30.15,
+            155.6,
+            139.6
+          ],
+          "rust": [
+            30.2,
+            155.85,
+            139.8
+          ],
+          "maxError": 0.25
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "orientation-3",
+      "edge": 400,
+      "width": 180,
+      "height": 120,
+      "icc": true,
+      "maxPatchError": 1.450000000000017,
+      "samples": [
+        {
+          "reference": [
+            120.2,
+            30.1,
+            81.7
+          ],
+          "rust": [
+            120.2,
+            30.1,
+            81.7
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            208.95,
+            30.25,
+            25.05
+          ],
+          "rust": [
+            210.4,
+            29.45,
+            25.05
+          ],
+          "maxError": 1.450000000000017
+        },
+        {
+          "reference": [
+            210,
+            210,
+            24
+          ],
+          "rust": [
+            210,
+            210,
+            24
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            30,
+            210,
+            139
+          ],
+          "rust": [
+            30,
+            210,
+            139
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            30.15,
+            83.95,
+            138.85
+          ],
+          "rust": [
+            30.05,
+            83.85,
+            138.75
+          ],
+          "maxError": 0.10000000000000853
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "orientation-3",
+      "edge": 2560,
+      "width": 180,
+      "height": 120,
+      "icc": true,
+      "maxPatchError": 2,
+      "samples": [
+        {
+          "reference": [
+            119.8,
+            29.9,
+            82.2
+          ],
+          "rust": [
+            120.3,
+            30.4,
+            82.7
+          ],
+          "maxError": 0.5
+        },
+        {
+          "reference": [
+            209.75,
+            29.9,
+            24.7
+          ],
+          "rust": [
+            210.35,
+            29.65,
+            25.55
+          ],
+          "maxError": 0.8500000000000014
+        },
+        {
+          "reference": [
+            210,
+            210,
+            24
+          ],
+          "rust": [
+            210,
+            210,
+            24
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            30,
+            210,
+            139
+          ],
+          "rust": [
+            30,
+            209,
+            141
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            29.95,
+            84.1,
+            140.25
+          ],
+          "rust": [
+            30.05,
+            84.2,
+            140.35
+          ],
+          "maxError": 0.10000000000000853
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "orientation-3",
+      "edge": 100000,
+      "width": 180,
+      "height": 120,
+      "icc": true,
+      "maxPatchError": 2,
+      "samples": [
+        {
+          "reference": [
+            119.8,
+            29.9,
+            82.2
+          ],
+          "rust": [
+            120.3,
+            30.4,
+            82.7
+          ],
+          "maxError": 0.5
+        },
+        {
+          "reference": [
+            209.75,
+            29.9,
+            24.7
+          ],
+          "rust": [
+            210.35,
+            29.65,
+            25.55
+          ],
+          "maxError": 0.8500000000000014
+        },
+        {
+          "reference": [
+            210,
+            210,
+            24
+          ],
+          "rust": [
+            210,
+            210,
+            24
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            30,
+            210,
+            139
+          ],
+          "rust": [
+            30,
+            209,
+            141
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            29.95,
+            84.1,
+            140.25
+          ],
+          "rust": [
+            30.05,
+            84.2,
+            140.35
+          ],
+          "maxError": 0.10000000000000853
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "orientation-4",
+      "edge": 400,
+      "width": 180,
+      "height": 120,
+      "icc": true,
+      "maxPatchError": 1.3499999999999943,
+      "samples": [
+        {
+          "reference": [
+            119.4,
+            30.2,
+            83.3
+          ],
+          "rust": [
+            119.4,
+            30.2,
+            83.3
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            30.05,
+            30.35,
+            140.6
+          ],
+          "rust": [
+            29.85,
+            30.15,
+            140.4
+          ],
+          "maxError": 0.20000000000000284
+        },
+        {
+          "reference": [
+            30,
+            210,
+            139
+          ],
+          "rust": [
+            30,
+            210,
+            139
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            210,
+            210,
+            24
+          ],
+          "rust": [
+            210,
+            210,
+            24
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            209.6,
+            84.2,
+            23.65
+          ],
+          "rust": [
+            210.95,
+            83.5,
+            23.65
+          ],
+          "maxError": 1.3499999999999943
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "orientation-4",
+      "edge": 2560,
+      "width": 180,
+      "height": 120,
+      "icc": true,
+      "maxPatchError": 2,
+      "samples": [
+        {
+          "reference": [
+            119.6,
+            30.1,
+            82.8
+          ],
+          "rust": [
+            119.8,
+            29.7,
+            82.6
+          ],
+          "maxError": 0.40000000000000213
+        },
+        {
+          "reference": [
+            30.65,
+            30.05,
+            140.35
+          ],
+          "rust": [
+            30.65,
+            30.05,
+            140.35
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            30,
+            210,
+            139
+          ],
+          "rust": [
+            30,
+            209,
+            141
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            210,
+            210,
+            24
+          ],
+          "rust": [
+            210,
+            210,
+            24
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            209.2,
+            84.2,
+            24.45
+          ],
+          "rust": [
+            209.65,
+            84,
+            25.65
+          ],
+          "maxError": 1.1999999999999993
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "orientation-4",
+      "edge": 100000,
+      "width": 180,
+      "height": 120,
+      "icc": true,
+      "maxPatchError": 2,
+      "samples": [
+        {
+          "reference": [
+            119.6,
+            30.1,
+            82.8
+          ],
+          "rust": [
+            119.8,
+            29.7,
+            82.6
+          ],
+          "maxError": 0.40000000000000213
+        },
+        {
+          "reference": [
+            30.65,
+            30.05,
+            140.35
+          ],
+          "rust": [
+            30.65,
+            30.05,
+            140.35
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            30,
+            210,
+            139
+          ],
+          "rust": [
+            30,
+            209,
+            141
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            210,
+            210,
+            24
+          ],
+          "rust": [
+            210,
+            210,
+            24
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            209.2,
+            84.2,
+            24.45
+          ],
+          "rust": [
+            209.65,
+            84,
+            25.65
+          ],
+          "maxError": 1.1999999999999993
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "orientation-5",
+      "edge": 400,
+      "width": 120,
+      "height": 180,
+      "icc": true,
+      "maxPatchError": 0.10000000000000142,
+      "samples": [
+        {
+          "reference": [
+            209.4,
+            120.3,
+            24.5
+          ],
+          "rust": [
+            209.4,
+            120.3,
+            24.5
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            209.15,
+            30.15,
+            24.45
+          ],
+          "rust": [
+            209.15,
+            30.15,
+            24.45
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            30,
+            30,
+            140
+          ],
+          "rust": [
+            30,
+            30,
+            140
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            30,
+            210,
+            139
+          ],
+          "rust": [
+            30,
+            210,
+            139
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            192.65,
+            210.25,
+            34
+          ],
+          "rust": [
+            192.55,
+            210.15,
+            33.9
+          ],
+          "maxError": 0.10000000000000142
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "orientation-5",
+      "edge": 2560,
+      "width": 120,
+      "height": 180,
+      "icc": true,
+      "maxPatchError": 2,
+      "samples": [
+        {
+          "reference": [
+            209.5,
+            120.4,
+            24.4
+          ],
+          "rust": [
+            209.8,
+            120.6,
+            25
+          ],
+          "maxError": 0.6000000000000014
+        },
+        {
+          "reference": [
+            209.15,
+            29.8,
+            25.3
+          ],
+          "rust": [
+            209.7,
+            29.5,
+            25.3
+          ],
+          "maxError": 0.549999999999983
+        },
+        {
+          "reference": [
+            30,
+            30,
+            140
+          ],
+          "rust": [
+            30,
+            30,
+            140
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            30,
+            210,
+            139
+          ],
+          "rust": [
+            30,
+            209,
+            141
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            192.3,
+            210.1,
+            35.7
+          ],
+          "rust": [
+            192.3,
+            210.1,
+            35.7
+          ],
+          "maxError": 0
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "orientation-5",
+      "edge": 100000,
+      "width": 120,
+      "height": 180,
+      "icc": true,
+      "maxPatchError": 2,
+      "samples": [
+        {
+          "reference": [
+            209.5,
+            120.4,
+            24.4
+          ],
+          "rust": [
+            209.8,
+            120.6,
+            25
+          ],
+          "maxError": 0.6000000000000014
+        },
+        {
+          "reference": [
+            209.15,
+            29.8,
+            25.3
+          ],
+          "rust": [
+            209.7,
+            29.5,
+            25.3
+          ],
+          "maxError": 0.549999999999983
+        },
+        {
+          "reference": [
+            30,
+            30,
+            140
+          ],
+          "rust": [
+            30,
+            30,
+            140
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            30,
+            210,
+            139
+          ],
+          "rust": [
+            30,
+            209,
+            141
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            192.3,
+            210.1,
+            35.7
+          ],
+          "rust": [
+            192.3,
+            210.1,
+            35.7
+          ],
+          "maxError": 0
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "orientation-6",
+      "edge": 400,
+      "width": 120,
+      "height": 180,
+      "icc": true,
+      "maxPatchError": 1,
+      "samples": [
+        {
+          "reference": [
+            210.1,
+            120,
+            24.8
+          ],
+          "rust": [
+            211.1,
+            119.4,
+            24.8
+          ],
+          "maxError": 1
+        },
+        {
+          "reference": [
+            210.15,
+            210.2,
+            24
+          ],
+          "rust": [
+            210.15,
+            210.2,
+            24
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            30,
+            210,
+            139
+          ],
+          "rust": [
+            30,
+            210,
+            139
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            30,
+            30,
+            140
+          ],
+          "rust": [
+            30,
+            30,
+            140
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            192.05,
+            30,
+            34.6
+          ],
+          "rust": [
+            192.05,
+            30,
+            34.6
+          ],
+          "maxError": 0
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "orientation-6",
+      "edge": 2560,
+      "width": 120,
+      "height": 180,
+      "icc": true,
+      "maxPatchError": 2,
+      "samples": [
+        {
+          "reference": [
+            209.7,
+            120.2,
+            24.4
+          ],
+          "rust": [
+            210,
+            120,
+            25.6
+          ],
+          "maxError": 1.2000000000000028
+        },
+        {
+          "reference": [
+            210,
+            210.1,
+            24.6
+          ],
+          "rust": [
+            210,
+            210.1,
+            24.6
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            30,
+            210,
+            139
+          ],
+          "rust": [
+            30,
+            209,
+            141
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            30,
+            30,
+            140
+          ],
+          "rust": [
+            30,
+            30,
+            140
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            191.45,
+            29.8,
+            36.4
+          ],
+          "rust": [
+            192.05,
+            29.4,
+            36.3
+          ],
+          "maxError": 0.6000000000000227
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "orientation-6",
+      "edge": 100000,
+      "width": 120,
+      "height": 180,
+      "icc": true,
+      "maxPatchError": 2,
+      "samples": [
+        {
+          "reference": [
+            209.7,
+            120.2,
+            24.4
+          ],
+          "rust": [
+            210,
+            120,
+            25.6
+          ],
+          "maxError": 1.2000000000000028
+        },
+        {
+          "reference": [
+            210,
+            210.1,
+            24.6
+          ],
+          "rust": [
+            210,
+            210.1,
+            24.6
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            30,
+            210,
+            139
+          ],
+          "rust": [
+            30,
+            209,
+            141
+          ],
+          "maxError": 2
+        },
+        {
+          "reference": [
+            30,
+            30,
+            140
+          ],
+          "rust": [
+            30,
+            30,
+            140
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            191.45,
+            29.8,
+            36.4
+          ],
+          "rust": [
+            192.05,
+            29.4,
+            36.3
+          ],
+          "maxError": 0.6000000000000227
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "orientation-7",
+      "edge": 400,
+      "width": 120,
+      "height": 180,
+      "icc": true,
+      "maxPatchError": 0,
+      "samples": [
+        {
+          "reference": [
+            30.2,
+            119.5,
+            139.2
+          ],
+          "rust": [
+            30.2,
+            119.5,
+            139.2
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            30.1,
+            209.8,
+            139.15
+          ],
+          "rust": [
+            30.1,
+            209.8,
+            139.15
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            210,
+            210,
+            24
+          ],
+          "rust": [
+            210,
+            210,
+            24
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            209,
+            30,
+            25
+          ],
+          "rust": [
+            209,
+            30,
+            25
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            47.65,
+            30.55,
+            130.5
+          ],
+          "rust": [
+            47.65,
+            30.55,
+            130.5
+          ],
+          "maxError": 0
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "orientation-7",
+      "edge": 2560,
+      "width": 120,
+      "height": 180,
+      "icc": true,
+      "maxPatchError": 1.8000000000000114,
+      "samples": [
+        {
+          "reference": [
+            30.3,
+            119.9,
+            139.9
+          ],
+          "rust": [
+            30.4,
+            119.9,
+            140.2
+          ],
+          "maxError": 0.29999999999998295
+        },
+        {
+          "reference": [
+            30.15,
+            209.9,
+            138.6
+          ],
+          "rust": [
+            30.15,
+            209.2,
+            140.4
+          ],
+          "maxError": 1.8000000000000114
+        },
+        {
+          "reference": [
+            210,
+            210,
+            24
+          ],
+          "rust": [
+            210,
+            210,
+            24
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            209,
+            30,
+            25
+          ],
+          "rust": [
+            209,
+            30,
+            25
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            48.35,
+            30.2,
+            128.95
+          ],
+          "rust": [
+            48.35,
+            30.2,
+            128.95
+          ],
+          "maxError": 0
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "orientation-7",
+      "edge": 100000,
+      "width": 120,
+      "height": 180,
+      "icc": true,
+      "maxPatchError": 1.8000000000000114,
+      "samples": [
+        {
+          "reference": [
+            30.3,
+            119.9,
+            139.9
+          ],
+          "rust": [
+            30.4,
+            119.9,
+            140.2
+          ],
+          "maxError": 0.29999999999998295
+        },
+        {
+          "reference": [
+            30.15,
+            209.9,
+            138.6
+          ],
+          "rust": [
+            30.15,
+            209.2,
+            140.4
+          ],
+          "maxError": 1.8000000000000114
+        },
+        {
+          "reference": [
+            210,
+            210,
+            24
+          ],
+          "rust": [
+            210,
+            210,
+            24
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            209,
+            30,
+            25
+          ],
+          "rust": [
+            209,
+            30,
+            25
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            48.35,
+            30.2,
+            128.95
+          ],
+          "rust": [
+            48.35,
+            30.2,
+            128.95
+          ],
+          "maxError": 0
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "orientation-8",
+      "edge": 400,
+      "width": 120,
+      "height": 180,
+      "icc": true,
+      "maxPatchError": 0.20000000000000284,
+      "samples": [
+        {
+          "reference": [
+            29.5,
+            119.8,
+            139.6
+          ],
+          "rust": [
+            29.5,
+            119.8,
+            139.6
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            30.2,
+            30.35,
+            140.55
+          ],
+          "rust": [
+            30.2,
+            30.35,
+            140.55
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            209,
+            30,
+            25
+          ],
+          "rust": [
+            209,
+            30,
+            25
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            210,
+            210,
+            24
+          ],
+          "rust": [
+            210,
+            210,
+            24
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            47.65,
+            209.75,
+            129.3
+          ],
+          "rust": [
+            47.85,
+            209.95,
+            129.5
+          ],
+          "maxError": 0.20000000000000284
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "orientation-8",
+      "edge": 2560,
+      "width": 120,
+      "height": 180,
+      "icc": true,
+      "maxPatchError": 1.4000000000000057,
+      "samples": [
+        {
+          "reference": [
+            29.9,
+            119.9,
+            139.9
+          ],
+          "rust": [
+            30,
+            120,
+            140
+          ],
+          "maxError": 0.10000000000000142
+        },
+        {
+          "reference": [
+            30.15,
+            30.3,
+            139.7
+          ],
+          "rust": [
+            30.15,
+            30.3,
+            139.7
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            209,
+            30,
+            25
+          ],
+          "rust": [
+            209,
+            30,
+            25
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            210,
+            210,
+            24
+          ],
+          "rust": [
+            210,
+            210,
+            24
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            48.35,
+            209.6,
+            127.9
+          ],
+          "rust": [
+            48.35,
+            209.3,
+            129.3
+          ],
+          "maxError": 1.4000000000000057
+        }
+      ],
+      "withinThree": true
+    },
+    {
+      "name": "orientation-8",
+      "edge": 100000,
+      "width": 120,
+      "height": 180,
+      "icc": true,
+      "maxPatchError": 1.4000000000000057,
+      "samples": [
+        {
+          "reference": [
+            29.9,
+            119.9,
+            139.9
+          ],
+          "rust": [
+            30,
+            120,
+            140
+          ],
+          "maxError": 0.10000000000000142
+        },
+        {
+          "reference": [
+            30.15,
+            30.3,
+            139.7
+          ],
+          "rust": [
+            30.15,
+            30.3,
+            139.7
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            209,
+            30,
+            25
+          ],
+          "rust": [
+            209,
+            30,
+            25
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            210,
+            210,
+            24
+          ],
+          "rust": [
+            210,
+            210,
+            24
+          ],
+          "maxError": 0
+        },
+        {
+          "reference": [
+            48.35,
+            209.6,
+            127.9
+          ],
+          "rust": [
+            48.35,
+            209.3,
+            129.3
+          ],
+          "maxError": 1.4000000000000057
+        }
+      ],
+      "withinThree": true
+    }
+  ]
+}

@@ -6,7 +6,7 @@ Use disposable photo copies and an isolated `PHOTOCULL_DATA_DIR`. Never point sm
 
 Run `npm ci`, `npm test`, `npm run test:ui`, `node scripts/develop-ui-smoke.cjs` and `node scripts/image-export-ui-smoke.cjs`. These use synthetic fixtures and loopback services. The native shell additionally needs `cargo test --locked` and `cargo build --locked` in `src-tauri` on the target platform.
 
-`node scripts/settings-ui-smoke.cjs - REPORT_FOLDER SONY_FIXTURE_FOLDER` and `node scripts/export-ui-smoke.cjs - REPORT_FOLDER SONY_FIXTURE_FOLDER` require copied `sample-8563.ARW`, `sample-8563.JPG` and `sample-8565.JPG`. They check settings persistence, presets, filename planning, XMP escaping and embedded metadata. Windows Shell metadata checks run on Windows.
+`node scripts/settings-ui-smoke.cjs - REPORT_FOLDER SONY_FIXTURE_FOLDER` and `node scripts/export-ui-smoke.cjs - REPORT_FOLDER SONY_FIXTURE_FOLDER` require copied `sample-01.ARW`, `sample-01.JPG` and `sample-02.JPG`. They check settings persistence, presets, filename planning, XMP escaping and embedded metadata. Windows Shell metadata checks run on Windows.
 
 ## RAW fallback
 
@@ -29,3 +29,13 @@ Run `node scripts/culling-bonus-ui-smoke.cjs REPORT_FOLDER` for generated photos
 On Windows, run `node scripts/culling-bonus-windows.cjs EXECUTABLE REPORT_FOLDER [SOURCE_FOLDER]`. The check copies ARWs and available companion JPEGs into a temporary folder, reads Sony tags from the copies, launches a copied executable with dedicated app data/WebView2 profile, and verifies AF placement against the recorded JPEG dimensions at Fit and 100%. It also checks native Lightcraft scoring/cache reuse, real Compare/Develop split rendering and unchanged source/copy checksums. The installed app is left running. Screenshots and the test report stay in the supplied ignored artifact folder; camera files and metadata dumps are not committed.
 
 Only Sony hardware metadata has been verified against local camera files. Other supported manufacturers use synthetic geometry fixtures. Focus boxes on external edits assume the original geometry; externally changed crops/warps cannot be recovered from the source AF tags. Sharpness is a preview-detail estimate affected by sharpening and noise, and burst grouping needs valid camera/capture-time metadata. macOS native launch remains unverified.
+
+Prepare anonymous sample names without changing originals:
+
+```sh
+node scripts/prepare-samples.cjs SOURCE_FOLDER NEW_FIXTURE_FOLDER [TIFF_FILE]
+```
+
+The output contains `sample-01` through `sample-03` RAW/JPEG pairs and, when
+supplied, `sample-edit.tif`. Pass that copied folder to the UI and native
+inspection scripts. Existing output files are never overwritten.

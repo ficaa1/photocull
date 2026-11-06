@@ -1,0 +1,188 @@
+{
+  "capture": "webview (physical display unverified)",
+  "webview": "156.0.4314.58",
+  "display": {
+    "mode": "monitor-icc",
+    "profile": "C:\\windows\\system32\\spool\\drivers\\color\\sRGB Color Space Profile.icm"
+  },
+  "colorsWithinThree": true,
+  "exportPixelsIdentical": true,
+  "sourceUnchanged": true,
+  "errors": [],
+  "thumb": {
+    "width": 400,
+    "height": 267,
+    "iccBytes": 480
+  },
+  "preview": {
+    "width": 2560,
+    "height": 1707,
+    "iccBytes": 480
+  },
+  "full": {
+    "width": 7008,
+    "height": 4672,
+    "iccBytes": 480
+  },
+  "measurement": {
+    "sky": [
+      115,
+      176,
+      205
+    ],
+    "sky-low": [
+      155,
+      193,
+      208
+    ],
+    "water": [
+      18,
+      50,
+      70
+    ],
+    "rock": [
+      133,
+      116,
+      103
+    ],
+    "scrub": [
+      148,
+      186,
+      200
+    ]
+  },
+  "nativeProfiles": {
+    "dehancer": {
+      "width": 2560,
+      "height": 1707,
+      "icc": true
+    },
+    "draft": {
+      "width": 1600,
+      "height": 1067,
+      "icc": true
+    },
+    "settled": {
+      "width": 2560,
+      "height": 1707,
+      "icc": true
+    }
+  },
+  "exportReference": "Created with the unchanged export codec on this checkout before the verification run; a repeatability check, not an independent previous-version comparison.",
+  "realExport": {
+    "passed": true,
+    "sourceHashesUnchanged": true,
+    "errors": [],
+    "cases": [
+      {
+        "case": "ui-raw-batch",
+        "bytes": 6616349
+      },
+      {
+        "case": "ui-raw-batch",
+        "bytes": 5760720
+      },
+      {
+        "case": "ui-raw-batch",
+        "bytes": 4232419
+      },
+      {
+        "case": "edited-1200-screen-jpeg",
+        "bytes": 226133
+      },
+      {
+        "case": "edited-1200-screen-jxl-lossy",
+        "bytes": 82011
+      },
+      {
+        "case": "edited-1200-screen-jxl-lossless",
+        "bytes": 3818906
+      },
+      {
+        "case": "edited-1200-screen-tiff16",
+        "bytes": 4307915
+      },
+      {
+        "case": "edited-1200-screen-png16",
+        "bytes": 4177719
+      },
+      {
+        "case": "edited-1200-screen-avif10",
+        "bytes": 88023
+      },
+      {
+        "case": "edited-1200-screen-webp",
+        "bytes": 61798
+      },
+      {
+        "case": "edited-1200-screen-webp-lossless",
+        "bytes": 905614
+      },
+      {
+        "case": "raw-1200-screen-jpeg",
+        "bytes": 222989
+      },
+      {
+        "case": "raw-1200-screen-jxl-lossy",
+        "bytes": 109433
+      },
+      {
+        "case": "raw-1200-screen-jxl-lossless",
+        "bytes": 3772355
+      },
+      {
+        "case": "raw-1200-screen-tiff16",
+        "bytes": 4878948
+      },
+      {
+        "case": "raw-1200-screen-png16",
+        "bytes": 5226806
+      },
+      {
+        "case": "raw-1200-screen-avif10",
+        "bytes": 69913
+      },
+      {
+        "case": "raw-1200-screen-webp",
+        "bytes": 76636
+      },
+      {
+        "case": "raw-1200-screen-webp-lossless",
+        "bytes": 1198754
+      },
+      {
+        "case": "metadata-allExceptCamera",
+        "bytes": 100642
+      },
+      {
+        "case": "metadata-copyright",
+        "bytes": 99667
+      },
+      {
+        "case": "metadata-none",
+        "bytes": 98230
+      },
+      {
+        "case": "nonraw-tiff",
+        "bytes": 4312941
+      }
+    ],
+    "controls": [
+      "input-order results",
+      "monotonic progress",
+      "independent per-photo failure",
+      "skip existing",
+      "metadata policies",
+      "Display P3",
+      "JPEG byte limit",
+      "cancellation"
+    ]
+  },
+  "finalRebasedVerification": {
+    "capture": "webview (physical display unverified)",
+    "colorsWithinThree": true,
+    "exportPixelsIdentical": true,
+    "sourceUnchanged": true,
+    "errors": []
+  }
+}

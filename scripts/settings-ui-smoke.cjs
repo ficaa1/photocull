@@ -9,7 +9,7 @@ async function main() {
   const executable = process.argv[2], reports = path.resolve(process.argv[3]), fixture = path.resolve(process.argv[4]);
   await fs.mkdir(reports,{recursive:true}); const root=await fs.mkdtemp(path.join(os.tmpdir(),'photocull-settings-ui-'));
   const photos=path.join(root,'photos'), destination=path.join(root,'out'), data=path.join(root,'state');await fs.mkdir(photos);await fs.mkdir(destination);
-  await fs.copyFile(path.join(fixture,'sample-8563.ARW'),path.join(photos,'a.ARW'));await fs.copyFile(path.join(fixture,'sample-8563.JPG'),path.join(photos,'a.JPG'));await fs.copyFile(path.join(fixture,'sample-8565.JPG'),path.join(photos,'b.JPG'));
+  await fs.copyFile(path.join(fixture,'sample-01.ARW'),path.join(photos,'a.ARW'));await fs.copyFile(path.join(fixture,'sample-01.JPG'),path.join(photos,'a.JPG'));await fs.copyFile(path.join(fixture,'sample-02.JPG'),path.join(photos,'b.JPG'));
   const errors=[], checks=[]; let app,page;
   async function launch() {
     const env={...process.env,PHOTOCULL_SMOKE_TEST:'1',PHOTOCULL_DATA_DIR:data,PHOTOCULL_TEST_DESTINATION:destination};

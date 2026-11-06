@@ -1,0 +1,167 @@
+[
+  {
+    "comparison": "export-bench",
+    "name": "sample-01.avif",
+    "identical": true
+  },
+  {
+    "comparison": "export-bench",
+    "name": "sample-01.jpg",
+    "identical": true
+  },
+  {
+    "comparison": "export-bench",
+    "name": "sample-01.jxl",
+    "identical": true
+  },
+  {
+    "comparison": "export-bench",
+    "name": "sample-01.png",
+    "identical": true
+  },
+  {
+    "comparison": "export-bench",
+    "name": "sample-01.tif",
+    "identical": true
+  },
+  {
+    "comparison": "export-bench",
+    "name": "sample-01.webp",
+    "identical": true
+  },
+  {
+    "comparison": "export-bench",
+    "name": "sample-02.avif",
+    "identical": true
+  },
+  {
+    "comparison": "export-bench",
+    "name": "sample-02.jpg",
+    "identical": true
+  },
+  {
+    "comparison": "export-bench",
+    "name": "sample-02.jxl",
+    "identical": true
+  },
+  {
+    "comparison": "export-bench",
+    "name": "sample-02.png",
+    "identical": true
+  },
+  {
+    "comparison": "export-bench",
+    "name": "sample-02.tif",
+    "identical": true
+  },
+  {
+    "comparison": "export-bench",
+    "name": "sample-02.webp",
+    "identical": true
+  },
+  {
+    "comparison": "export-bench",
+    "name": "sample-03.avif",
+    "identical": true
+  },
+  {
+    "comparison": "export-bench",
+    "name": "sample-03.jpg",
+    "identical": true
+  },
+  {
+    "comparison": "export-bench",
+    "name": "sample-03.jxl",
+    "identical": true
+  },
+  {
+    "comparison": "export-bench",
+    "name": "sample-03.png",
+    "identical": true
+  },
+  {
+    "comparison": "export-bench",
+    "name": "sample-03.tif",
+    "identical": true
+  },
+  {
+    "comparison": "export-bench",
+    "name": "sample-03.webp",
+    "identical": true
+  },
+  {
+    "comparison": "export-pair-bench",
+    "name": "sample-01.jpg",
+    "identical": true
+  },
+  {
+    "comparison": "export-pair-bench",
+    "name": "sample-01.jxl",
+    "identical": true
+  },
+  {
+    "comparison": "export-pair-bench",
+    "name": "sample-01.png",
+    "identical": true
+  },
+  {
+    "comparison": "export-pair-bench",
+    "name": "sample-01.tif",
+    "identical": true
+  },
+  {
+    "comparison": "export-pair-bench",
+    "name": "sample-01.webp",
+    "identical": true
+  },
+  {
+    "comparison": "export-pair-bench",
+    "name": "sample-02.jpg",
+    "identical": true
+  },
+  {
+    "comparison": "export-pair-bench",
+    "name": "sample-02.jxl",
+    "identical": true
+  },
+  {
+    "comparison": "export-pair-bench",
+    "name": "sample-02.png",
+    "identical": true
+  },
+  {
+    "comparison": "export-pair-bench",
+    "name": "sample-02.tif",
+    "identical": true
+  },
+  {
+    "comparison": "export-pair-bench",
+    "name": "sample-02.webp",
+    "identical": true
+  },
+  {
+    "comparison": "export-pair-bench",
+    "name": "sample-03.jpg",
+    "identical": true
+  },
+  {
+    "comparison": "export-pair-bench",
+    "name": "sample-03.jxl",
+    "identical": true
+  },
+  {
+    "comparison": "export-pair-bench",
+    "name": "sample-03.png",
+    "identical": true
+  },
+  {
+    "comparison": "export-pair-bench",
+    "name": "sample-03.tif",
+    "identical": true
+  },
+  {
+    "comparison": "export-pair-bench",
+    "name": "sample-03.webp",
+    "identical": true
+  }
+]

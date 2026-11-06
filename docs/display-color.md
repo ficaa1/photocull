@@ -30,7 +30,7 @@ A Settings toggle was omitted: correct source-space encoding is required for eve
 
 ## Reproducing the Windows check
 
-Use a separate test app data directory and WebView2 user-data folder. Copy `sample-8582.tif` into `TEMP_ROOT/photos`; never alter the original. Set `PHOTOCULL_DATA_DIR=TEMP_ROOT/data-default`, `WEBVIEW2_USER_DATA_FOLDER=TEMP_ROOT/webview-default`, and `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9338` before launching the built executable. Optional copied RAW/JPEG fixtures belong in `TEMP_ROOT/raw`.
+Use a separate test app data directory and WebView2 user-data folder. Copy `sample-edit.tif` into `TEMP_ROOT/photos`; never alter the original. Set `PHOTOCULL_DATA_DIR=TEMP_ROOT/data-default`, `WEBVIEW2_USER_DATA_FOLDER=TEMP_ROOT/webview-default`, and `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9338` before launching the built executable. Optional copied RAW/JPEG fixtures belong in `TEMP_ROOT/raw`.
 
 Before replacing the old build, export the copied TIFF as sRGB JPEG quality 90, long edge 1200, no sharpening/metadata, into `TEMP_ROOT/export-before.jpg`. Then run:
 
@@ -39,3 +39,10 @@ node scripts/display-color-windows.cjs TEMP_ROOT PROCESS_ID 9338
 ```
 
 The script queries the actual window through Lightcraft, saves exact preview JPEGs, captures the physical window with `System.Drawing.CopyFromScreen`, measures the image at 1600×1067 physical pixels, exercises grid/full-size/native Develop/before/after paths, and asserts the exported JPEG's decoded pixels are identical to the old export. Its output folder must be inside an isolated temporary directory. All five regions are 10×10 averages centred at normalized image coordinates: sky (0.50, 0.20), sky-low (0.75, 0.45), water (0.75, 0.85), rock (0.18, 0.60), scrub (0.12, 0.48). “Scrub” is the supplied label for a near-horizon sky patch.
+
+When Windows is locked, physical capture records the lock screen and cannot
+verify monitor/ACM output. Set `PHOTOCULL_COLOR_CAPTURE=cdp` to run the same
+app checks against WebView2 screenshots instead. The report explicitly labels
+this as webview verification; it does not establish physical display parity.
+See [Rust display-preview investigation](rust-display-previews.md) for the
+separate codec probe and why the production preview encoder remains sharp.
