@@ -12,7 +12,8 @@
   add('edit', 'Edit in external editor…', 'Files', ['Mod+E'], ALL, { allowModifiers: ['Alt'] });
   add('original', 'Show original / external edit', 'View', ['\\'], ['review','grid'], { ignoreShift: true });
   add('escape', 'Clear selection / exit fullscreen / fit', 'View', ['Escape'], ALL, { ignoreShift: true, allowModifiers: ['Ctrl','Meta','Alt'] });
-  add('fullscreen', 'Toggle fullscreen', 'View', ['F','Ctrl+Meta+F'], ALL, { ignoreShift: true });
+  add('fullscreen', 'Toggle fullscreen', 'View', ['F'], ALL, { ignoreShift: true });
+  add('fullscreen-system', 'System fullscreen', 'View', ['Ctrl+Meta+F'], ALL, { typing: true });
   add('undo', 'Undo', 'Edit', ['Mod+Z'], ALL, { allowModifiers: ['Alt'] });
   add('redo', 'Redo', 'Edit', ['Mod+Shift+Z'], ALL, { allowModifiers: ['Alt'] });
   add('select-all', 'Select all visible photos', 'Selection', ['Mod+A'], ALL, { ignoreShift: true, primaryModifier: true, allowModifiers: ['Alt'] });

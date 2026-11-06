@@ -53,6 +53,8 @@ test('legacy global shortcut precedence survives extra modifiers and platform se
  const f=fixture();
  for(const mods of [{ctrlKey:true,altKey:true},{ctrlKey:true,metaKey:true},{metaKey:true,altKey:true,shiftKey:true}])assert.equal(f.press('o',mods),'open');
  assert.equal(f.press('F11',{ctrlKey:true,altKey:true,shiftKey:true}),'fullscreen-key');
+ assert.equal(f.press('f',{ctrlKey:true,metaKey:true},{typing:true}),'fullscreen-system');
+ assert.equal(f.press('f',{},{typing:true}),null);
  assert.equal(f.press('Escape',{ctrlKey:true,metaKey:true,altKey:true,shiftKey:true}),'escape');
  assert.equal(f.press('3',{ctrlKey:true,altKey:true}),'color-alt-3');
  assert.equal(f.press('z',{ctrlKey:true,altKey:true}),'undo');

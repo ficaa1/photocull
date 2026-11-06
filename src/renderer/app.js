@@ -668,7 +668,7 @@ $('grid').onscroll = requestGrid;
 new ResizeObserver(requestGrid).observe($('grid'));
 const commandActions = {
   settings: () => openSettings(), open: () => openFolder(), export: () => imageExport.open(),
-  'fullscreen-key': () => setFullscreen(), fullscreen: () => setFullscreen(),
+  'fullscreen-system': () => setFullscreen(), 'fullscreen-key': () => setFullscreen(), fullscreen: () => setFullscreen(),
   'switch-view': () => setMode(state.mode === 'review' ? 'grid' : 'review'), edit: () => developView.openBatch(), original: () => toggleOriginal(),
   escape: () => { if (state.marked.size > 1) { resetSelection(); render(); } else if (state.fullscreen) return setFullscreen(false); else if (state.mode === 'review' && loupe.zoomed) loupe.fit(); },
   undo: () => history('undo'), redo: () => history('redo'), 'select-all': () => { state.marked = new Set(filtered().map(i => i.id)); render(); },
