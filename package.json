@@ -1,7 +1,7 @@
 {
   "name": "photocull",
   "productName": "PhotoCull",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "private": true,
   "description": "Local photo culling, editable RAW development, external-editor hand-off and image export",
   "scripts": {
