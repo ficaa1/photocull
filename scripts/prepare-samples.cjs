@@ -3,7 +3,7 @@
 const fs=require('node:fs/promises'),path=require('node:path'),assert=require('node:assert/strict');
 async function prepare(source,output,tiff){
  assert.ok(source&&output,'Pass source and new fixture folders.');source=path.resolve(source);output=path.resolve(output);
- const relative=path.relative(source,output);assert.ok(relative.startsWith('..')||path.isAbsolute(relative),'Fixture output must be outside the source folder.');
+ const relative=path.relative(source,output);assert.ok(relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative),'Fixture output must be outside the source folder.');
  const names=(await fs.readdir(source)).sort(),pairs=names.filter(n=>/\.arw$/i.test(n)).map(raw=>({raw,jpeg:names.find(n=>n.replace(/\.jpe?g$/i,'').toLowerCase()===raw.replace(/\.arw$/i,'').toLowerCase()&&/\.jpe?g$/i.test(n))})).filter(p=>p.jpeg).slice(0,3);
  assert.equal(pairs.length,3,'Supply at least three RAW/JPEG pairs.');
  await fs.mkdir(output,{recursive:true});assert.deepEqual(await fs.readdir(output),[],'Fixture folder must be empty.');

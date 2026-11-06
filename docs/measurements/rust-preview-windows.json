@@ -184,5 +184,24 @@
     "exportPixelsIdentical": true,
     "sourceUnchanged": true,
     "errors": []
+  },
+  "rebasedCullingSharpness": {
+    "passed": true,
+    "checks": [
+      "copied Sony metadata matches backend normalized focus coordinates",
+      "real Sony AF overlay lands at metadata point at Fit and 100%",
+      "Lightcraft sharpness score is finite and reused from disk cache",
+      "real ARWs load side by side with AF overlays",
+      "native RAW Develop renders split preview and focus overlay",
+      "source and copied RAW bytes remain unchanged"
+    ],
+    "score": {
+      "first": 207.74854483630628,
+      "second": 207.74854483630628,
+      "cachedMs": 2.5
+    },
+    "sourceHashesUnchanged": true,
+    "isolatedAppData": true,
+    "errors": []
   }
 }

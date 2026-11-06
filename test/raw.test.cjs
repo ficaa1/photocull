@@ -16,7 +16,7 @@ test('sample preparation copies anonymous pairs without changing or overwriting 
   const {prepare}=require('../scripts/prepare-samples.cjs');await prepare(source,output);
   assert.deepEqual((await fs.readdir(output)).sort(),['sample-01.ARW','sample-01.JPG','sample-02.ARW','sample-02.JPG','sample-03.ARW','sample-03.JPG']);
   assert.equal(await fs.readFile(path.join(output,'sample-02.ARW'),'utf8'),'capture-b.arw');
-  await assert.rejects(prepare(source,output),/must be empty/);await assert.rejects(prepare(source,path.join(source,'nested')),/outside the source/);
+  await assert.rejects(prepare(source,output),/must be empty/);await assert.rejects(prepare(source,path.join(source,'nested')),/outside the source/);await assert.rejects(prepare(source,path.join(source,'..nested')),/outside the source/);
   assert.deepEqual(await Promise.all((await fs.readdir(source)).sort().map(async name=>[name,await fs.readFile(path.join(source,name),'utf8')])),before);
 });
 

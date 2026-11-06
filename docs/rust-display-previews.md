@@ -272,3 +272,10 @@ The culling integration requests the original oriented sRGB cache via
 Coverage uses the real PreviewService and verifies that external-edit paths
 do not replace the original analysis pixels. Export worker selection and its
 ordered-result/cancellation tests are unchanged from main.
+
+Rebased onto `875089e`: 167 Node tests with optional copied RAW cases, eleven
+WSL UI smokes, and 14 Windows Rust tests/build pass. The isolated native app
+verifies a finite sharpness score reused from the cache, focus overlays at Fit
+and 100%, Compare, Develop split view and unchanged source/copy hashes.
+The required privacy scan reports only project copyright lines plus the
+unchanged upstream license holder attribution in bundled notices.

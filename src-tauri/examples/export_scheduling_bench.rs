@@ -53,7 +53,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     (cores / 2).clamp(1, 3)
                 } else {
                     override_workers.unwrap_or_else(|| {
-                        if matches!(format, ExportFormat::Avif | ExportFormat::Jxl) { (cores / 2).clamp(1, 3) } else { 1 }
+                        if matches!(format, ExportFormat::Avif | ExportFormat::Jxl) {
+                            (cores / 2).clamp(1, 3)
+                        } else {
+                            1
+                        }
                     })
                 };
                 let start = Instant::now();
