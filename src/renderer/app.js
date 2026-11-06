@@ -330,7 +330,7 @@ function renderFilmstrip(items, index) {
     }
     button.classList.toggle('selected', state.marked.has(item.id)); button.classList.toggle('current', item.id === state.selected); button.setAttribute('aria-current', String(item.id === state.selected));
     button.querySelector('.film-label').textContent = String(start + i + 1).padStart(2, '0');
-    button.querySelectorAll('.badge-row').forEach(node => node.remove()); addFlag(button, item); return button;
+    button.querySelectorAll('.badge-row').forEach(node => node.remove()); addFlag(button, item); button.setAttribute('aria-description', thumbStatus(item) || 'Unreviewed'); return button;
   });
   if (signature !== filmSignature) { $('filmstrip').replaceChildren(...nodes); filmSignature = signature; }
   const retained = new Set(nearby.map(item => item.id)); for (const id of filmNodes.keys()) if (!retained.has(id)) filmNodes.delete(id);
@@ -342,6 +342,11 @@ function badgeRow(node, place) {
   if (!row) { row = document.createElement('span'); row.className = `badge-row ${place}`; node.append(row); }
   return row;
 }
+function thumbStatus(item) {
+  const burst = culling.byId.get(item.id), color = state.settings.colors.find(c => c.id === colorOf(item));
+  return [item.flag === 'pick' ? 'Pick' : item.flag === 'reject' ? 'Rejected' : '', item.rating ? `${item.rating} star${item.rating === 1 ? '' : 's'}` : '', color?.name,
+    burst ? `burst of ${burst.ids.length}` : '', burst && bestIn(burst) === item.id ? 'sharpest' : '', item.adjusted && 'Adjusted', item.developed && 'Hand-off', item.externalEdit && `Edited in ${editorName(item.editedBy)}`].filter(Boolean).join(', ');
+}
 function addFlag(node, item) {
   addBurstBadges(node,item);
   const marks = [item.adjusted && 'Adjusted', item.developed && 'Hand-off', item.externalEdit && `Edited in ${editorName(item.editedBy)}`].filter(Boolean);
@@ -350,7 +355,8 @@ function addFlag(node, item) {
   if (color) { const dot = document.createElement('span'); dot.className = 'mini-color'; dot.style.setProperty('--label-color', color.hex); dot.title = color.name; badgeRow(node, 'top').append(dot); }
   if (item.flag !== 'none' || item.rating) {
     const flag = document.createElement('span'); flag.className = `mini-flag${item.flag === 'reject' ? ' rejected' : ''}`;
-    flag.textContent = `${item.flag === 'pick' ? '⚑' : item.flag === 'reject' ? '×' : ''}${item.rating ? '★'.repeat(item.rating) : ''}`;
+    if (item.flag !== 'none') flag.append(Object.assign(document.createElement('span'), { className: 'mini-mark', textContent: item.flag === 'pick' ? '⚑' : '×' }));
+    if (item.rating) flag.append(Object.assign(document.createElement('span'), { className: 'mini-stars', textContent: '★'.repeat(item.rating) }));
     badgeRow(node, 'bottom').append(flag);
   }
 }
@@ -387,7 +393,7 @@ function renderGrid() {
       const type = document.createElement('span'); type.textContent = item.raw ? 'RAW' : item.name.split('.').pop().toUpperCase(); type.className = 'subtle';
       caption.append(name, type); node.append(wrap, caption);
       node.onclick = event => select(item.id, event); node.ondblclick = () => setMode('review');
-      node.setAttribute('aria-label', item.name); container.append(node); gridNodes.set(item.id, node);
+      node.setAttribute('aria-label', item.name); node.setAttribute('aria-description', thumbStatus(item) || 'Unreviewed'); container.append(node); gridNodes.set(item.id, node);
     }
     node.classList.toggle('selected', state.marked.has(item.id)); node.classList.toggle('current', item.id === state.selected);
     node.style.left = `${(i % columns) * width}px`; node.style.top = `${Math.floor(i / columns) * rowHeight}px`;
@@ -695,7 +701,7 @@ new ResizeObserver(requestGrid).observe($('grid'));
 const commandActions = {
   'focus-overlay': event => {if(!event.repeat)return toggleFocus();}, 'focus-zoom': () => zoomFocus(), 'burst-stack': event => {if(!event.repeat)toggleBurst();}, 'burst-keep': () => promptKeepSharpest(),
   'view-compare': () => setMode(state.mode==='compare'?'review':'compare'), 'develop-split': () => developView.toggleSplit(),
-  settings: () => openSettings(), open: () => openFolder(), export: () => imageExport.open(),
+  settings: () => openSettings(), open: () => openFolder(), export: () => imageExport.open(), 'copy-picks': () => $('export').click(), 'configure-editors': () => openSettings('editors'),
   'fullscreen-system': () => setFullscreen(), 'fullscreen-key': () => setFullscreen(), fullscreen: () => setFullscreen(),
   'switch-view': () => setMode(state.mode === 'review' ? 'grid' : 'review'), edit: () => developView.openBatch(), original: () => toggleOriginal(),
   escape: () => { if(state.mode==='compare'){setMode('review');return;}if (state.marked.size > 1) { resetSelection(); render(); } else if (state.fullscreen) return setFullscreen(false); else if (state.mode === 'review' && loupe.zoomed) loupe.fit(); },
@@ -718,7 +724,7 @@ const commands = PhotoCullCommands.create({ platform: api.platform, actions: Obj
   if(id==='pan'){if(!event.key)return loupe.handleKey(event,'toggle');panKey=event.code || event.key;}
   try { return Promise.resolve(run(event)).catch(error=>toast(error.message)); } catch(error) { toast(error.message); }
 }])), context: () => state.mode, custom: () => state.settings.shortcuts || {},
-  enabled: command => (!command.when || state.filter===command.when) && (!['burst-stack','burst-keep'].includes(command.id) || !!culling.byId.get(state.selected)) && (command.id!=='burst-keep' || !!bestIn(culling.byId.get(state.selected))) && (!/^(flag-|rating-|color-|navigate-|extend-|delete|restore|select-all)/.test(command.id) || !!photo()) && (command.id!=='go-photo'||state.session?.items.some(item=>!item.trashed)) && (!['zoom-in','zoom-out','fit','zoom-toggle','pan','review-zoom'].includes(command.id) || !!photo()),
+  enabled: command => (!command.when || state.filter===command.when) && (!['burst-stack','burst-keep'].includes(command.id) || !!culling.byId.get(state.selected)) && (command.id!=='burst-keep' || !!bestIn(culling.byId.get(state.selected))) && (!/^(flag-|rating-|color-|navigate-|extend-|delete|restore|select-all)/.test(command.id) || !!photo()) && (command.id!=='go-photo'||state.session?.items.some(item=>!item.trashed)) && (command.id!=='copy-picks'||!$('export').disabled) && (!['zoom-in','zoom-out','fit','zoom-toggle','pan','review-zoom'].includes(command.id) || !!photo()),
   onRun: command => { if(command.id!=='palette'){ recentCommands=[command.id,...recentCommands.filter(id=>id!==command.id)].slice(0,12); try{localStorage.setItem('photocull-recent-commands',JSON.stringify(recentCommands));}catch{} } } });
 try { recentCommands=JSON.parse(localStorage.getItem('photocull-recent-commands')||'[]').filter(id=>commands.commands.some(c=>c.id===id)).slice(0,12); } catch {}
 document.addEventListener('keydown', event => {
@@ -732,7 +738,7 @@ document.addEventListener('keydown', event => {
     if (event.key === 'Enter' && !event.repeat) void confirmDeletePrompt(); else hideDeletePrompt();
     return;
   }
-  if (document.querySelector('dialog[open]')) return;
+  if (document.querySelector('dialog[open]') || document.activeElement?.closest('[role=menu]')) return;
   commands.dispatch(event, { typing: ['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable,
     button: document.activeElement?.matches('button, summary') });
 });
@@ -1083,36 +1089,41 @@ function renderEditorActions() {
   $('edit-external').disabled = busy || !state.session || !selection().some(i=>i.raw && !i.trashed);
   developView.batchButton.textContent = $('edit-external').textContent;developView.batchButton.disabled=$('edit-external').disabled;
   const menu = $('external-editor-list'), signature = JSON.stringify(state.settings.editors?.map(e=>[e.id,e.name]));
-  if(menu.dataset.editors!==signature){menu.dataset.editors=signature;menu.replaceChildren(...(state.settings.editors || []).map(e=>menuItem(`Edit in ${e.name}…`,()=>developView.openBatch(e.id))),menuSeparator(),menuItem('Configure editors…',()=>openSettings('editors')));}
-  $('external-editor-menu').disabled = $('edit-external').disabled;
-  if($('external-editor-menu').disabled)closeMenus();
+  if(menu.dataset.editors!==signature){menu.dataset.editors=signature;menu.replaceChildren(...(state.settings.editors || []).map(e=>{const item=menuItem(`Edit in ${e.name}…`,()=>developView.openBatch(e.id));item.dataset.editor=e.id;return item;}),menuSeparator(),menuItem('Configure editors…',()=>openSettings('editors'),'configure-editors'));}
+  for(const item of menu.querySelectorAll('[data-editor]'))item.disabled=$('edit-external').disabled;
+  if($('treat-card'))$('treat-card').disabled=!state.session||!!state.session.removable;
   $('handoff-cleanup').disabled = !state.session || busy;
   const usageKey = state.session ? `${state.session.id}:${state.session.items.map(i=>i.developRevision || 0).join(',')}` : '';
   if(usageKey!==handoffUsageKey){handoffUsageKey=usageKey;const generation=++handoffUsageGeneration;$('handoff-usage').textContent='';if(state.session)void api.handoffUsage(state.session.id).then(u=>{if(generation===handoffUsageGeneration)$('handoff-usage').textContent=`Hand-off files: ${u.count} · ${fileSize(u.bytes)}`;}).catch(e=>toast(e.message));}
 }
 $('edit-external').onclick=()=>{void developView.openBatch().catch(e=>toast(e.message));};
-// Menu buttons: arrow keys move within the menu and never reach the photo shortcuts.
-function menuItem(text,run,id) {const el=document.createElement('button');el.type='button';el.className='menu-item';el.setAttribute('role','menuitem');el.tabIndex=-1;el.textContent=text;if(id)el.id=id;el.onclick=()=>{closeMenus();Promise.resolve().then(run).catch(e=>toast(e.message));};return el;}
+// Menu buttons. A menu owns every key while it has focus, so letters never reach photo shortcuts.
+function menuItem(text,run,id) {const el=document.createElement('button');el.type='button';el.className='menu-item';el.setAttribute('role','menuitem');el.tabIndex=-1;el.textContent=text;if(id)el.id=id;el.onclick=()=>Promise.resolve().then(run).catch(e=>toast(e.message));return el;}
 function menuSeparator() {const el=document.createElement('div');el.className='menu-separator';el.setAttribute('role','separator');return el;}
 function closeMenus(except) {for(const m of menus)if(m!==except&&!m.menu.hidden){m.menu.hidden=true;m.button.setAttribute('aria-expanded','false');}}
 function bindMenu(button,menu) {
   const entry={button,menu};menus.push(entry);
   const items=()=>[...menu.querySelectorAll('[role=menuitem]:not(:disabled)')];
-  const open=index=>{if(button.disabled)return;closeMenus(entry);menu.hidden=false;button.setAttribute('aria-expanded','true');const list=items();list[(index+list.length)%list.length]?.focus();};
+  const open=index=>{if(button.disabled)return;closeMenus(entry);menu.hidden=false;button.setAttribute('aria-expanded','true');const list=items();(list[(index+list.length)%list.length]||menu).focus();};
   const close=()=>{menu.hidden=true;button.setAttribute('aria-expanded','false');button.focus();};
+  menu.tabIndex=-1;
   button.onclick=()=>menu.hidden?open(0):close();
   button.addEventListener('keydown',e=>{if(['ArrowDown','ArrowUp'].includes(e.key)){e.preventDefault();e.stopPropagation();open(e.key==='ArrowUp'?-1:0);}});
+  // Runs before the item's own handler, so a dialog it opens returns focus to the trigger.
+  menu.addEventListener('click',e=>{const item=e.target.closest('[role=menuitem]');if(item&&!item.disabled)close();},true);
   menu.addEventListener('keydown',e=>{
+    e.stopPropagation();
     const list=items(),index=list.indexOf(document.activeElement);
     if(['ArrowDown','ArrowUp','Home','End'].includes(e.key)){e.preventDefault();list[e.key==='Home'?0:e.key==='End'?list.length-1:(index+(e.key==='ArrowDown'?1:-1)+list.length)%list.length]?.focus();}
     else if(e.key==='Escape'){e.preventDefault();close();}
     else if(e.key==='Tab')closeMenus();
-    else if(e.key!=='Enter'&&e.key!==' ')return;
-    e.stopPropagation();
+    else if(e.key.length===1&&e.key!==' '&&!e.ctrlKey&&!e.metaKey&&!e.altKey){e.preventDefault();const key=e.key.toLowerCase(),order=[...list.slice(index+1),...list.slice(0,index+1)];order.find(item=>item.textContent.trim().toLowerCase().startsWith(key))?.focus();}
+    else if(e.key!=='Enter'&&e.key!==' ')e.preventDefault();
   });
 }
 document.addEventListener('pointerdown',e=>{for(const m of menus)if(!m.menu.hidden&&!m.menu.contains(e.target)&&!m.button.contains(e.target))closeMenus();});
 bindMenu($('external-editor-menu'),$('external-editor-list'));
+bindMenu($('develop-recipe-menu-button'),$('develop-recipe-menu'));
 $('handoff-cleanup').onclick=async()=>{
   try {
     const session=state.session.id, usage=await api.handoffUsage(session);
@@ -1194,7 +1205,8 @@ function openPalette(query='') {if(document.querySelector('dialog[open]'))return
 function drawPalette() {
   const query=$('command-query').value,findPhoto=query.startsWith('>');
   paletteRows=findPhoto?(state.session?.items||[]).filter(item=>!item.trashed&&PhotoCullCommands.fuzzy(query.slice(1),item.name)).slice(0,60).map(item=>({id:'photo-'+item.id,title:item.name,category:'Photo',run:()=>{state.filter='all';state.query='';state.colorFilter='';$('search').value='';$('color-filter').value='';state.selected=item.id;resetSelection();render(true);}})):
-    commands.search(query,recentCommands).slice(0,60).map(command=>({...command,disabled:!command.context.includes(state.mode)||!command.enabled(),run:()=>commands.execute(command.id)}));
+    [...commands.search(query,recentCommands).map(command=>({...command,disabled:!command.context.includes(state.mode)||!command.enabled(),run:()=>commands.execute(command.id)})),
+     ...(state.settings.editors||[]).map(e=>({id:'edit-with-'+e.id,title:`Edit in ${e.name}…`,category:'Files',disabled:$('edit-external').disabled,run:()=>developView.openBatch(e.id)})).filter(row=>PhotoCullCommands.fuzzy(query,row.title+' '+row.category)>0)].slice(0,60);
   paletteIndex=Math.min(paletteIndex,Math.max(0,paletteRows.length-1));
   $('command-results').replaceChildren(...paletteRows.map((row,index)=>{
     const el=workspaceNode('div',null,{id:'command-option-'+index,role:'option','aria-selected':String(index===paletteIndex),'aria-disabled':String(!!row.disabled),class:'command-option'});
@@ -1251,12 +1263,14 @@ $('bundle-preview').onclick=async()=>{clearBundlePreview();try{const result=awai
 $('bundle-apply').onclick=async()=>{if(!bundleToken)return;$('bundle-apply').disabled=true;try{const result=await api.bundleApply(bundleToken);syncSettings(result.settings);settingsDraft=clone(result.settings);const recipes=await api.recipes();$('default-recipe').replaceChildren(...recipes.recipes.map(r=>option(r.id,r.name)));fillSettings(settingsDraft);$('bundle-changes').textContent=`Imported. Previous settings backed up to ${result.backup}`;clearBundlePreview();}catch(e){$('bundle-changes').textContent=e.message;}};
 function fillWorkspaceSettings(value) {drawKeyboard();$('card-folders').value=(value.cardFolders||['DCIM']).join('\n');$('manual-cards').value=(value.manualCards||[]).join('\n');$('backup-template').value=value.backupTemplate||'{date}-{card}';}
 function readWorkspaceSettings(value) {value.cardFolders=$('card-folders').value.split('\n').map(s=>s.trim()).filter(Boolean);value.manualCards=$('manual-cards').value.split('\n').map(s=>s.trim()).filter(Boolean);value.backupTemplate=$('backup-template').value.trim();}
-const welcome=workspaceNode('aside',null,{id:'welcome-panel','aria-label':'Welcome to PhotoCull',hidden:''});
-welcome.innerHTML='<h2>Welcome to PhotoCull</h2><p>Open a photo folder or choose a connected camera card in the sidebar.</p><div id="welcome-keys" class="shortcut-list"></div><div id="welcome-actions" class="copy-actions"></div>';
+const welcome=workspaceNode('dialog',null,{id:'welcome-panel','aria-labelledby':'welcome-title',hidden:''});
+welcome.innerHTML='<h2 id="welcome-title">Welcome to PhotoCull</h2><p>Open a photo folder or choose a connected camera card in the sidebar.</p><div id="welcome-keys" class="shortcut-list"></div><div id="welcome-actions" class="copy-actions"></div>';
 document.body.append(welcome);
-function showWelcome() {if($('help-dialog').open)$('help-dialog').close();welcome.hidden=false;$('welcome-keys').replaceChildren();for(const id of ['open','navigate-right','flag-pick','flag-reject','rating-5','zoom-toggle','view-grid','palette']){const c=commands.commands.find(c=>c.id===id);$('welcome-keys').append(workspaceNode('span',c.title),workspaceNode('kbd',shortcutLabel(c)));}}
-async function dismissWelcome(){welcome.hidden=true;state.settings=await api.settings({welcomeDismissed:true});}
-$('welcome-actions').append(workspaceButton('Open folder…',async()=>{await dismissWelcome();await openFolder();},'welcome-open'),workspaceButton('Choose camera card',async()=>{await dismissWelcome();$('devices-panel').scrollIntoView();$('device-list button')?.focus();},'welcome-card'),workspaceButton('Set up an external editor',async()=>{await dismissWelcome();await openSettings('editors');}),workspaceButton('Skip',dismissWelcome,'welcome-skip'));
+function showWelcome() {for(const open of document.querySelectorAll('dialog[open]'))if(open!==welcome)open.close();welcome.hidden=false;if(!welcome.open)welcome.showModal();$('welcome-keys').replaceChildren();for(const id of ['open','navigate-right','flag-pick','flag-reject','rating-5','zoom-toggle','view-grid','palette']){const c=commands.commands.find(c=>c.id===id);$('welcome-keys').append(workspaceNode('span',c.title),workspaceNode('kbd',shortcutLabel(c)));}}
+async function dismissWelcome(){welcome.hidden=true;if(welcome.open)welcome.close();state.settings=await api.settings({welcomeDismissed:true});}
+welcome.addEventListener('cancel',e=>{e.preventDefault();void dismissWelcome().catch(error=>toast(error.message));});
+$('welcome-actions').append(workspaceButton('Skip',dismissWelcome,'welcome-skip'),workspaceButton('Choose camera card',async()=>{await dismissWelcome();$('devices-panel').scrollIntoView();$('device-list').querySelector('button')?.focus();},'welcome-card'),workspaceButton('Set up an external editor',async()=>{await dismissWelcome();await openSettings('editors');}),workspaceButton('Open folder…',async()=>{await dismissWelcome();await openFolder();},'welcome-open'));
+$('welcome-open').className='button primary';$('welcome-open').autofocus=true;
 void Promise.all([api.workspaceInfo(),api.settings()]).then(([info,settings])=>{if(info.welcome&&!settings.welcomeDismissed)showWelcome();}).catch(error=>toast(error.message));
 async function copyDiagnostics() {
   const color=await api.displayColor().catch(()=>({mode:'unavailable'}));let gpu='unavailable';

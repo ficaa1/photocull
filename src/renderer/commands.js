@@ -6,10 +6,12 @@
   const add = (id, title, category, keys, context = ALL, extra = {}) => table.push({ id, title, category, shortcuts: { default: keys, darwin: keys.map(k => k.replaceAll('Mod', 'Meta')), win32: keys.map(k => k.replaceAll('Mod', 'Ctrl')) }, context, ...extra });
   add('settings', 'Settings', 'Application', ['Mod+,'], ALL, { typing: true, ignoreShift: true, allowModifiers: ['Alt'] });
   add('open', 'Open folder…', 'Application', ['Mod+O'], ALL, { typing: true, ignoreShift: true, allowModifiers: ['Alt'] });
-  add('export', 'Export photos…', 'Files', ['Mod+Shift+E'], ALL, { typing: true, allowModifiers: ['Alt'] });
+  add('export', 'Export finished images…', 'Files', ['Mod+Shift+E'], ALL, { typing: true, allowModifiers: ['Alt'] });
   add('fullscreen-key', 'Fullscreen (F11)', 'View', ['F11'], ALL, { typing: true, ignoreShift: true, allowModifiers: ['Ctrl','Meta','Alt'] });
   add('switch-view', 'Switch review / contact sheet', 'View', ['Ctrl+Tab'], ALL, { typing: true, ignoreShift: true, allowModifiers: ['Meta','Alt'] });
   add('edit', 'Edit in external editor…', 'Files', ['Mod+E'], ALL, { allowModifiers: ['Alt'] });
+  add('copy-picks', 'Copy picks…', 'Files', []);
+  add('configure-editors', 'Configure external editors…', 'Application', []);
   add('original', 'Show original / external edit', 'View', ['\\'], ['review','grid','compare'], { ignoreShift: true });
   add('escape', 'Clear selection / exit fullscreen / fit', 'View', ['Escape'], ALL, { ignoreShift: true, allowModifiers: ['Ctrl','Meta','Alt'] });
   add('fullscreen', 'Toggle fullscreen', 'View', ['F'], ALL, { ignoreShift: true });

@@ -26,11 +26,24 @@ async function main(){
   await page.keyboard.press('u');const before=await page.locator('#count-pick').textContent();await page.keyboard.press('p');assert.equal(await page.locator('#count-pick').textContent(),before);await page.keyboard.press('Control+Shift+y');await page.waitForFunction(n=>document.querySelector('#count-pick').textContent!==n,before);
   await page.keyboard.press('?');await page.locator('#help-dialog[open]').waitFor();assert.match(await page.locator('#help-dialog').textContent(),/Ctrl\+Shift\+Y/);await page.keyboard.press('Escape');
   await page.keyboard.press('Control+k');await page.locator('#command-query').fill('welcome');await page.keyboard.press('Enter');await page.locator('#welcome-panel:not([hidden])').waitFor();await page.locator('#welcome-skip').click();await page.waitForFunction(()=>state.settings.welcomeDismissed===true);assert.equal((await page.evaluate(()=>photocull.settings())).welcomeDismissed,true);
-  // Source actions live in a keyboard menu; its arrow keys must not reach photo navigation.
-  const current=await page.evaluate(()=>state.selected);await page.locator('#source-menu-button').focus();await page.keyboard.press('ArrowDown');await page.keyboard.press('ArrowDown');
-  assert.equal(await page.evaluate(()=>document.activeElement.id),'backup-open');assert.equal(await page.evaluate(()=>state.selected),current);
-  await page.keyboard.press('Escape');assert.equal(await page.locator('#source-menu').isVisible(),false);assert.equal(await page.evaluate(()=>document.activeElement.id),'source-menu-button');
+  // A focused menu owns the keyboard: arrows, letters and decision keys never reach the photo shortcuts.
+  const active=()=>page.evaluate(()=>document.activeElement.id),decisions=()=>page.evaluate(()=>JSON.stringify([state.selected,state.session.items.map(i=>[i.flag,i.rating])]));
+  const decided=await decisions();await page.locator('#source-menu-button').focus();await page.keyboard.press('ArrowDown');await page.keyboard.press('ArrowDown');assert.equal(await active(),'backup-open');
+  for(const key of ['x','p','5','ArrowRight','ArrowLeft','Delete'])await page.keyboard.press(key);
+  assert.equal(await decisions(),decided,'menu keys must not decide, rate, move or delete');assert.equal(await page.locator('#source-menu').isVisible(),true);
+  await page.keyboard.press('o');assert.equal(await page.evaluate(()=>document.activeElement.textContent),'Open folder…','typeahead moves to the matching item');await page.keyboard.press('b');assert.equal(await active(),'backup-open');
+  assert.equal(await page.locator('#treat-card').isDisabled(),true,'a camera card is already treated as a card');
+  await page.evaluate(()=>render());assert.equal(await page.locator('#source-menu').isVisible(),true,'background renders keep an open menu');
+  await page.keyboard.press('Escape');assert.equal(await page.locator('#source-menu').isVisible(),false);assert.equal(await active(),'source-menu-button');
   await page.locator('#source-menu-button').click();await page.locator('#backup-open').click();await page.locator('#backup-dialog').waitFor({state:'visible'});await page.locator('#backup-close').click();
+  assert.equal(await active(),'source-menu-button','closing a menu-launched dialog returns focus to the menu button');
+  // Without an eligible RAW selection, editing is disabled but the editor menu still reaches Configure editors.
+  assert.equal(await page.locator('#edit-external').isDisabled(),true);await page.locator('#external-editor-menu').click();
+  assert.equal(await page.getByRole('menuitem',{name:'Edit in Dehancer…'}).isDisabled(),true);await page.locator('#configure-editors').click();
+  await page.locator('[data-settings-page="editors"]').waitFor({state:'visible'});await page.locator('#settings-cancel').click();
+  // Every menu action is reachable from the palette.
+  const paletteRows=async query=>{await page.keyboard.press('Control+k');await page.locator('#command-query').fill(query);const rows=await page.locator('#command-results [role=option]').allTextContents();await page.keyboard.press('Escape');return rows.join('\n');};
+  for(const [query,expected] of [['copy picks','Copy picks…'],['configure editors','Configure external editors…'],['edit in dehancer','Edit in Dehancer…'],['export finished','Export finished images…'],['back up','Back up card or folder…'],['treat folder','Treat this folder as a camera card']])assert.match(await paletteRows(query),new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   await page.locator('#device-list .device-backup button').click();await page.locator('#backup-destination-choose').click();await page.locator('#backup-folder-template').fill('ui-backup');await page.locator('#backup-start').click();await page.waitForFunction(()=>document.querySelector('#backup-status').textContent.includes('safe to format'),null,{timeout:30000});
   assert.equal(await fs.readFile(path.join(dest,'ui-backup','camera.dat'),'utf8'),'all files, not just photos');await page.locator('#backup-close').click();assert.match(await page.locator('#device-list').textContent(),/All 5 files backed up and verified/);
   await fs.writeFile(path.join(card,'changed.txt'),'new file');await page.locator('#device-list .device-backup button').click();await page.locator('#backup-check').click();await page.waitForFunction(()=>document.querySelector('#backup-failures').textContent.includes('changed.txt'));assert.doesNotMatch(await page.locator('#backup-status').textContent(),/safe to format/);await page.locator('#backup-close').click();
@@ -40,8 +53,10 @@ async function main(){
   await app.close();app=null;
   app=await launch({env:{...process.env,PHOTOCULL_DATA_DIR:data,PHOTOCULL_TEST_WELCOME:'1'}});const reopened=await app.firstWindow();assert.equal(await reopened.locator('#welcome-panel').isVisible(),false,'dismissal survives restart');
   await app.close();app=null;
-  app=await launch({env:{...process.env,PHOTOCULL_DATA_DIR:path.join(root,'fresh-welcome'),PHOTOCULL_TEST_WELCOME:'1'}});const firstRun=await app.firstWindow();await firstRun.locator('#welcome-panel:not([hidden])').waitFor();await firstRun.locator('#welcome-skip').click();await firstRun.waitForFunction(()=>state.settings.welcomeDismissed===true);assert.equal((await firstRun.evaluate(()=>photocull.settings())).welcomeDismissed,true);
-  console.log(JSON.stringify({passed:true,checks:['palette keyboard navigation and photo search','shortcut record/conflict/help','settings preview/backup/import','welcome opt-in and dismissal','fake card complete backup, hashing and changed file status'],errors},null,2));
+  app=await launch({env:{...process.env,PHOTOCULL_DATA_DIR:path.join(root,'fresh-welcome'),PHOTOCULL_TEST_WELCOME:'1'}});const firstRun=await app.firstWindow();await firstRun.locator('#welcome-panel:not([hidden])').waitFor();assert.equal(await firstRun.evaluate(()=>document.activeElement.id),'welcome-open');
+  for(let i=0;i<6;i++){await firstRun.keyboard.press('Tab');assert.equal(await firstRun.evaluate(()=>!!document.activeElement.closest('#welcome-panel')||document.activeElement===document.body),true,'welcome keeps focus');}
+  await firstRun.keyboard.press('Escape');await firstRun.locator('#welcome-panel').waitFor({state:'hidden'});await firstRun.waitForFunction(()=>state.settings.welcomeDismissed===true);assert.equal((await firstRun.evaluate(()=>photocull.settings())).welcomeDismissed,true);
+  console.log(JSON.stringify({passed:true,checks:['palette keyboard navigation and photo search','shortcut record/conflict/help','settings preview/backup/import','welcome opt-in, modal focus and Escape dismissal','menu keyboard isolation, typeahead and focus return','editor menu without RAW selection','palette covers menu actions','fake card complete backup, hashing and changed file status'],errors},null,2));
  }finally{await app?.close();await fs.rm(root,{recursive:true,force:true});}
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});

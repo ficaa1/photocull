@@ -11,6 +11,8 @@ async function main() {
   const photos=path.join(root,'photos'), destination=path.join(root,'out'), data=path.join(root,'state');await fs.mkdir(photos);await fs.mkdir(destination);
   await fs.copyFile(path.join(fixture,'sample-01.ARW'),path.join(photos,'a.ARW'));await fs.copyFile(path.join(fixture,'sample-01.JPG'),path.join(photos,'a.JPG'));await fs.copyFile(path.join(fixture,'sample-02.JPG'),path.join(photos,'b.JPG'));
   const errors=[], checks=[]; let app,page;
+  // The backend applies writes in order; poll it from Node so an in-flight write cannot satisfy the wait.
+  async function waitForSettings(test){for(let i=0;i<200;i++){if(test(await page.evaluate(()=>window.photocull.settings())))return;await new Promise(r=>setTimeout(r,25));}throw new Error('Settings did not reach the expected state.');}
   async function launch() {
     const env={...process.env,PHOTOCULL_SMOKE_TEST:'1',PHOTOCULL_DATA_DIR:data,PHOTOCULL_TEST_DESTINATION:destination};
     app=await launchApp({ env });
@@ -50,8 +52,8 @@ async function main() {
     const restored=await page.evaluate(()=>window.photocull.settings());assert.equal(restored.writeSidecars,'never');assert.equal(restored.activePreset,settings.activePreset);assert.equal(restored.copyXmp,true);assert.equal(restored.naming.template,'{text}_{capturedate}_{seq:3}');assert.equal(await page.locator('#color-labels button[aria-label="Review"]').getAttribute('aria-pressed'),'true');
     assert.ok((await fs.readdir(path.join(data,'settings','presets'))).some(name=>name.endsWith('.json')));checks.push('settings folder, preset and color decisions survive restart');
     await page.locator('#settings-open').click();await page.locator('#auto-advance').check();await page.locator('#settings-cancel').click();assert.equal((await page.evaluate(()=>window.photocull.settings())).autoAdvance,false);checks.push('cancel discards settings draft');
-    await page.locator('#export').click();await page.locator('#copy-preset').selectOption('ratings');await page.waitForFunction(()=>window.photocull.settings().then(s=>s.activePreset==='ratings'));assert.equal((await page.evaluate(()=>window.photocull.settings())).metadata.writeLabels,false);
-    await page.locator('#copy-preset').selectOption(settings.activePreset);await page.waitForFunction(()=>window.photocull.settings().then(s=>s.metadata.creator==='Test Photographer & friends'));checks.push('built-in and custom preset switching');
+    await page.locator('#export').click();await page.locator('#copy-preset').selectOption('ratings');await waitForSettings(s=>s.activePreset==='ratings');assert.equal((await page.evaluate(()=>window.photocull.settings())).metadata.writeLabels,false);
+    await page.locator('#copy-preset').selectOption(settings.activePreset);await waitForSettings(s=>s.metadata.creator==='Test Photographer & friends');checks.push('built-in and custom preset switching');
     assert.deepEqual(errors,[]);const report={passed:true,platform:process.platform,checks,errors};await fs.writeFile(path.join(reports,`settings-ui-${process.platform}.json`),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));
   } finally {if(app)await app.close();await fs.rm(root,{recursive:true,force:true});}
 }

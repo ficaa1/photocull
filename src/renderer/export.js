@@ -161,6 +161,7 @@
       $('source-note').textContent = edits ? 'Exports use saved external edits. Output bit depth and color space cannot recover detail absent from the hand-off.' : 'RAWs use each photo’s current develop settings. Other images are re-encoded from the original.';
       $('metadata-note').textContent = `Preset: ${state.settings.presets?.find(p => p.id === state.settings.activePreset)?.name || 'Current'} · nonempty creator, copyright, title, caption and keywords apply within the selected policy.`;
       $('destination-path').textContent = destination || 'Choose folder…';
+      $('destination-summary-path').textContent = destination || 'No folder chosen';
       if (document.activeElement !== $('folder')) $('folder').value = destination;
       $('start').disabled = running || presetSaving || !items.length || !destination || !api.canDevelop || state.pendingSaves > 0 || state.deleting || state.copy.running;
       $('cancel').hidden = !running; $('close').disabled = running;
@@ -232,6 +233,7 @@
         dialog.querySelectorAll('input,select,button').forEach(el => { el.disabled = false; }); presetChoices(); refresh();
       }
     };
+    $('destination-summary').onclick = () => $('destination').click();
     document.getElementById('image-export').onclick = open;
     return { open, refresh };
   }

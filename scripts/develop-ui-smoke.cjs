@@ -29,6 +29,7 @@ async function main(){
    developTiffs:async(session,folder,jobs,options)=>{window.__developMock.tiffs.push({folder,jobs,options});const results=[];for(const job of jobs){const saved=await realDevelopGet(session,job.id),tiff=resultFolder+'/'+saved.name.replace(/\\.[^.]+$/,'')+'.tif';await mark(session,job.id,{tiff,edited:!options.replace&&saved.edited});results.push({id:job.id,status:'developed',tiff});}return {results};},
    editExternal:async(session,ids,editorId)=>{const m=window.__developMock;m.edits.push(...ids);m.editorCalls ||= [];m.editorCalls.push({ids,editorId});m.editMax=Math.max(m.editMax,++m.editActive);await new Promise(r=>m.waitForEdit?m.finishEdit=r:setTimeout(r,60));m.editActive--;if(!m.waitForEdit)for(const id of ids)await mark(session,id,{editedBy:editorId});return {edited:!m.waitForEdit};},developCancel:async()=>{window.__developMock.finishEdit?.();window.__developMock.finishEdit=null;},
   });\n`+(await original.text())});});
+  const recipeAction=async id=>{await page.locator('#develop-recipe-menu-button').click();await page.locator('#'+id).click();};
   await page.reload();await page.evaluate(async()=>{state.settings=await api.settings({editors:[{...(await api.settings()).editors[0],path:'/mock/editor.exe'}]});});await page.evaluate(async folder=>{loadSession(await api.openPath(folder,false));setMode('develop');},photos);
   await page.waitForFunction(()=>document.querySelector('#develop-timing').textContent.includes('settled'),null,{timeout:10000}).catch(async e=>{console.error(await page.evaluate(()=>({message:document.querySelector('#develop-message').textContent,key:developView.key,active:developView.active,info:developView.info,calls:window.__developMock.calls,queue:{running:developView.queue.running,pending:developView.queue.pending},errors:document.body.textContent.slice(-500)})));throw e;});
   // The merged views must keep their keyboard gestures within their owner.
@@ -64,18 +65,18 @@ async function main(){
   await page.waitForFunction(()=>window.__developMock.calls.at(-1).settled&&window.__developMock.calls.at(-1).settings.light.contrast===29&&window.__developMock.active===0);
   assert.equal(await page.evaluate(()=>window.__developMock.max),1);
   await page.locator('#develop-recipe-name').fill('Smoke recipe');await page.locator('#develop-recipe-save').click();await page.waitForFunction(()=>document.querySelector('#develop-recipe').selectedOptions[0]?.textContent==='Smoke recipe');
-  await page.locator('#develop-recipe-duplicate').click();await page.waitForFunction(()=>document.querySelector('#develop-recipe').selectedOptions[0]?.textContent==='Smoke recipe (2)');
+  await recipeAction('develop-recipe-duplicate');await page.waitForFunction(()=>document.querySelector('#develop-recipe').selectedOptions[0]?.textContent==='Smoke recipe (2)');
   const recipeFile=path.join(temp,'smoke.photocull-recipe.json');
   await page.evaluate(file=>{window.prompt=()=>file;},recipeFile);
-  await page.locator('#develop-recipe-export').click();await page.waitForFunction(()=>document.querySelector('#develop-recipe-export'));
+  await recipeAction('develop-recipe-export');await page.waitForFunction(()=>document.querySelector('#develop-recipe-export'));
   for(let n=0;n<50;n++){if(await fs.stat(recipeFile).catch(()=>null))break;await new Promise(r=>setTimeout(r,20));}
   assert.equal(JSON.parse(await fs.readFile(recipeFile,'utf8')).type,'photocull-recipe');
-  await page.locator('#develop-recipe-import').click();await page.waitForFunction(()=>[...document.querySelector('#develop-recipe').options].some(p=>p.textContent==='Smoke recipe (2) (2)'));
+  await recipeAction('develop-recipe-import');await page.waitForFunction(()=>[...document.querySelector('#develop-recipe').options].some(p=>p.textContent==='Smoke recipe (2) (2)'));
   const bundleFile=path.join(temp,'all.photocull-recipe.json');await page.evaluate(file=>{window.prompt=()=>file;},bundleFile);
-  await page.locator('#develop-recipes-export').click();
+  await recipeAction('develop-recipes-export');
   for(let n=0;n<50;n++){if(await fs.stat(bundleFile).catch(()=>null))break;await new Promise(r=>setTimeout(r,20));}
   assert.equal(JSON.parse(await fs.readFile(bundleFile,'utf8')).recipes.length,3);
-  await page.locator('#develop-recipe-default').click();await page.waitForFunction(()=>state.settings.defaultRecipe===document.querySelector('#develop-recipe').value);
+  await recipeAction('develop-recipe-default');await page.waitForFunction(()=>state.settings.defaultRecipe===document.querySelector('#develop-recipe').value);
   await page.evaluate(()=>{state.marked=new Set(state.session.items.filter(i=>i.raw).map(i=>i.id));render();});
   await page.locator('#develop-send').click();await page.locator('#develop-batch-start').click();await page.getByRole('button',{name:'Edit existing files',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#develop-batch-status').textContent.includes('Finished'));
   assert.equal(await page.evaluate(()=>window.__developMock.edits.length),2);assert.equal(await page.evaluate(()=>window.__developMock.editMax),1);assert.equal(await page.evaluate(()=>state.session.items.filter(i=>i.externalEdit).length),2);assert.equal(await page.evaluate(()=>window.__developMock.tiffs[0].options.bitDepth),16);
