@@ -11,7 +11,7 @@
       bar.append(label,fit,el('span','compare-hint','Click a pane or Tab to focus · P / X / 0–5 · ← → swap candidate · Z zoom · C close'));
       this.container=el('div','compare-panes');this.root.append(bar,this.container);
     }
-    open(selected,items) {this.state=C.compareState(selected,items);this.signature='';return this.state.ids.length>=2;}
+    open(selected,items) {this.state=C.compareState(selected,items);this.link.checked=this.state.linked;this.signature='';return this.state.ids.length>=2;}
     sync(active) {
       const items=this.host.items();this.root.hidden=!active || !items.length;if(this.root.hidden)return;
       const available=new Set(items.map(i=>i.id));
