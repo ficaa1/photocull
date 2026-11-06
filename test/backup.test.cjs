@@ -1,6 +1,6 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
-const fs=require('node:fs/promises');
+const fs=require('node:fs/promises'),sync=require('node:fs');
 const path=require('node:path');
 const os=require('node:os');
 const {BackupService,hashFile,folderName}=require('../src/backup.cjs');
@@ -17,7 +17,7 @@ test('all card files are hashed, persisted, resumable, and changed files invalid
   assert.equal((await persisted.status(source,'another-card')).safe,false);
 });
 test('corrupt copies cannot produce verification records; existing conflicts are never overwritten',async t=>{
-  const {root,source,dest}=await fixture(t),backup=new BackupService(path.join(root,'data'),{copyFile:async(_source,target)=>fs.writeFile(target,'corrupt')});
+  const {root,source,dest}=await fixture(t),backup=new BackupService(path.join(root,'data'),{onProgress:progress=>{if(progress.state==='verifying'){const folder=path.dirname(path.join(progress.destination,progress.file));for(const name of sync.readdirSync(folder))if(name.endsWith('.partial'))sync.writeFileSync(path.join(folder,name),'corrupt');}}});
   const result=await backup.start(source,dest,options);assert.equal(result.verified,0);assert.equal(result.status.safe,false);assert.equal(result.failures.length,2);assert.equal(Object.keys((await backup.read(options.identity)).files).length,0);
   const good=new BackupService(path.join(root,'data'));await good.start(source,dest,options);const target=path.join(dest,'Fake_card','movie.mp4');await fs.writeFile(target,'X'.repeat(11));
   assert.equal((await good.status(source,options.identity)).safe,false);const repeat=await good.start(source,dest,options);assert.ok(repeat.failures.some(f=>/Different file/.test(f.reason)));assert.equal(await fs.readFile(target,'utf8'),'X'.repeat(11));

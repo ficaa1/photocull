@@ -317,8 +317,8 @@
     batchItems() {return (this.scope.value==='picks'?this.batchContext.session.items.filter(i=>i.flag==='pick'&&!i.trashed):this.batchContext.selected).filter(i=>i.raw&&!i.trashed);}
     batchScope() {
       const n=this.batchItems().length,h=this.editor.handoff;
-      this.batchText.textContent=`${n} RAW photo(s) · ${h.colorSpace}, ${h.bitDepth}-bit ${h.format.toUpperCase()}${h.format==='tiff'?' · '+h.compression:''} · ${this.editor.detect==='watch'?'Save in the editor; PhotoCull waits for writes to settle.':'Apply and close the editor to continue.'}${!this.editor.path?' Browse to the application in Settings → External editors.':''}`;
-      this.startBatch.disabled=!n || !this.destination || !this.editor.path;
+      this.batchText.textContent=`${n} RAW photo(s) · ${h.colorSpace}, ${h.bitDepth}-bit ${h.format.toUpperCase()}${h.format==='tiff'?' · '+h.compression:''} · ${this.editor.detect==='watch'?'Save in the editor; PhotoCull waits for writes to settle.':'Apply and close the editor to continue.'}${!this.editor.path||this.editor.needsPath?' Browse to the application in Settings → External editors.':''}`;
+      this.startBatch.disabled=!n || !this.destination || !this.editor.path || this.editor.needsPath;
     }
     async pickDestination() {
       const folder=await this.api.pickFolder('Choose a local hand-off folder');

@@ -51,7 +51,7 @@ async function safeParent(root,relative) {
   }
 }
 class BackupService {
-  constructor(dataDir,{onProgress=()=>{},copyFile}={}) {this.folder=path.join(dataDir,'card-backups');this.onProgress=onProgress;this.copyFile=copyFile;this.active=null;}
+  constructor(dataDir,{onProgress=()=>{}}={}) {this.folder=path.join(dataDir,'card-backups');this.onProgress=onProgress;this.active=null;}
   recordPath(identity){return path.join(this.folder,createHash('sha256').update(identity).digest('hex')+'.json');}
   async read(identity){try{return JSON.parse(await fs.readFile(this.recordPath(identity),'utf8'));}catch(e){if(e.code==='ENOENT')return {version:1,identity,files:{}};throw e;}}
   async save(record){await fs.mkdir(this.folder,{recursive:true});await atomicWrite(this.recordPath(record.identity),JSON.stringify(record));}
@@ -63,7 +63,8 @@ class BackupService {
       if(valid){const target=await fs.lstat(saved.destination).catch(()=>null);valid=target?.isFile()&&!target.isSymbolicLink()&&target.size===saved.size&&target.mtimeMs===saved.destinationMtimeMs;}
       if(!valid||record.invalid?.includes(file.relative))missing.push({name:file.relative,reason:'New, changed, missing or unverified backup.'});
     }
-    return {total:files.length,verified:files.length-(missing.length-issues.length),safe:files.length>0&&!missing.length&&!record.invalid?.includes('Card inventory'),missing,checkedAt:record.checkedAt || null};
+    if(record.invalid?.includes('Card inventory'))missing.push({name:'Card inventory',reason:'Files changed during the last full check. Check again.'});
+    return {total:files.length,verified:Math.max(0,files.length-(missing.length-issues.length)),safe:files.length>0&&!missing.length,missing,checkedAt:record.checkedAt || null};
   }
   async status(source,identity,signal) {
     source=await fs.realpath(source);const record=await this.read(identity),{files,issues}=await inventory(source,signal),missing=[...issues];
@@ -96,7 +97,7 @@ class BackupService {
     const {files,issues}=await inventory(source,signal),progress={state:'copying',total:files.length,completed:0,verified:0,skipped:0,bytes:0,totalBytes:files.reduce((n,f)=>n+f.size,0),file:'',failures:[...issues],destination:root};
     const emit=()=>this.onProgress({...progress,failures:[...progress.failures]});emit();
     for(const file of files) {
-      if(signal.aborted)break;progress.file=file.relative;emit();let temporary=null;
+      if(signal.aborted)break;progress.file=file.relative;progress.state='hashing';emit();let temporary=null;
       try {
         const input=path.join(source,file.relative),target=path.join(root,file.relative);
         // Resolve each parent again so a changed directory or link cannot redirect a write.
@@ -112,12 +113,13 @@ class BackupService {
           progress.skipped++;
         } else {
           temporary=target+'.photocull-'+randomUUID()+'.partial';
-          if(this.copyFile)await this.copyFile(input,temporary,signal);
-          else {
+          progress.state='copying';emit();
+          {
             const output=await fs.open(temporary,'wx');
             try {for await(const chunk of createReadStream(input,{flags:constants.O_RDONLY|(constants.O_NOFOLLOW||0),signal,highWaterMark:1024*1024})){canceled(signal);await output.writeFile(chunk);}await output.sync();}
             finally {await output.close();}
           }
+          progress.state='verifying';emit();
           const output=await hashFile(temporary,signal);
           if(output.hash!==src.hash)throw new Error('Verification failed: copied bytes differ from the source.');
           const after=await hashFile(input,signal);
@@ -140,7 +142,7 @@ class BackupService {
         await this.save(record);progress.verified++;progress.bytes+=file.size;
       } catch(error) {if(!signal.aborted)progress.failures.push({name:file.relative,reason:error.message});}
       finally {if(temporary)await fs.rm(temporary,{force:true}).catch(()=>{});}
-      progress.completed++;emit();
+      progress.state='copying';progress.completed++;emit();
     }
     progress.file='';progress.state=signal.aborted?'canceled':'checking';emit();
     if(!signal.aborted)progress.status=await this.status(source,options.identity,signal).catch(error=>({safe:false,total:files.length,missing:[{name:'Card',reason:error.message}]}));

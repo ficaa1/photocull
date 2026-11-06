@@ -1,5 +1,5 @@
 // One table owns shortcuts, search, help and keyboard preferences. Mod means
-// Command on macOS and Control elsewhere; both are accepted for legacy keys.
+// Command on macOS and Control elsewhere; both are accepted for shared editing shortcuts.
 (function(root) {
   const ALL = ['review', 'grid', 'develop'];
   const table = [];
@@ -46,6 +46,7 @@
   add('go-photo','Go to photo by name','Navigation',[]);
   add('backup','Back up card or folder…','Files',[]);
   add('treat-card','Treat this folder as a camera card','Files',[]);
+  add('about','About PhotoCull','Help',[]);
   add('welcome','Welcome / essential keys','Help',[]);
   add('diagnostics','Copy diagnostics','Help',[]);
   add('logs','Open log folder','Help',[]);

@@ -677,7 +677,7 @@ const commandActions = {
   'review-space': () => { if (photo()) setMode('review'); }, 'review-zoom': () => { if (photo()) { setMode('review'); loupe.zoomIn(); } },
   'view-grid': () => setMode('grid'), 'view-review': () => setMode('review'), 'view-develop': () => setMode('develop'), help: () => openHelp(),
   'develop-copy': () => developView.copy(), 'develop-paste': () => developView.paste(), clipping: () => developView.toggleClipping(), before: () => developView.toggleBefore(),
-  palette: () => openPalette(), 'go-photo': () => openPalette('> '), backup: () => openBackup(), 'treat-card': () => treatCard(), welcome: () => showWelcome(), diagnostics: () => copyDiagnostics(), logs: () => api.openLogs(),
+  palette: () => openPalette(), 'go-photo': () => openPalette('> '), backup: () => openBackup(), 'treat-card': () => treatCard(), about: () => openSettings('about'), welcome: () => showWelcome(), diagnostics: () => copyDiagnostics(), logs: () => api.openLogs(),
 };
 for (let n=0;n<=8;n++) commandActions['color-alt-'+n] = () => decide({ color: n ? String(n) : '' });
 for (let n=0;n<=5;n++) commandActions['rating-'+n] = () => decide({ rating: n });
@@ -1130,7 +1130,7 @@ function openHelp() {
   if(!$('help-dialog').open)$('help-dialog').showModal();
 }
 const helpActions=workspaceNode('div',null,{class:'copy-actions'});
-for(const [text,id] of [['Command palette','palette'],['Welcome','welcome'],['Copy diagnostics','diagnostics'],['Open log folder','logs']])helpActions.append(workspaceButton(text,()=>{$('help-dialog').close();commands.execute(id);}));
+for(const [text,id] of [['About PhotoCull','about'],['Command palette','palette'],['Welcome','welcome'],['Copy diagnostics','diagnostics'],['Open log folder','logs']])helpActions.append(workspaceButton(text,()=>{$('help-dialog').close();commands.execute(id);}));
 $('help-dialog').prepend(helpActions);$('help-dialog').querySelector('h2').textContent='Help & shortcuts';
 const palette=workspaceNode('dialog',null,{id:'command-palette','aria-label':'Command palette'});
 palette.innerHTML='<label for="command-query">Command palette · type > to find a photo</label><input id="command-query" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="command-results" autocomplete="off" placeholder="Search commands or > photo name"><div id="command-results" role="listbox" aria-label="Commands"></div><p id="command-count" class="subtle small" role="status"></p>';
