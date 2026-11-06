@@ -221,7 +221,7 @@ footer .meta{grid-column:1/-1;display:flex;justify-content:space-between;gap:16p
           <a class="btn primary" href="https://github.com/ficaa1/photocull/releases/latest"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/></svg>Download PhotoCull</a>
           <a class="btn quiet" href="https://github.com/ficaa1/photocull">View the source</a>
         </div>
-        <p class="fact">Version 0.8.0 · Windows and macOS on Apple Silicon · MIT</p>
+        <p class="fact">Windows and macOS on Apple Silicon · Free and open source, MIT</p>
       </div>
     </div>
     <div class="frame">
@@ -378,8 +378,9 @@ footer .meta{grid-column:1/-1;display:flex;justify-content:space-between;gap:16p
         <p class="req">64-bit Windows with WebView2</p>
         <ol>
           <li>Download the <code>-setup.exe</code> or <code>.msi</code> from the latest release.</li>
-          <li>Run it. The installer is not code-signed, so Windows may ask you to confirm.</li>
+          <li>Run it. The installer is not code-signed, so SmartScreen may warn about an unknown publisher; choose More info, then Run anyway.</li>
         </ol>
+        <p class="limit">Windows is the platform PhotoCull is tested on day to day.</p>
         <div class="gap"></div>
         <a class="btn primary" href="https://github.com/ficaa1/photocull/releases/latest">Download for Windows</a>
       </article>
@@ -388,9 +389,9 @@ footer .meta{grid-column:1/-1;display:flex;justify-content:space-between;gap:16p
         <p class="req">Apple Silicon, macOS 11 or later</p>
         <ol>
           <li>Download the <code>.dmg</code> and move PhotoCull to Applications.</li>
-          <li>The app is not notarized: right-click it and choose Open the first time.</li>
+          <li>The app is not notarized: right-click it and choose Open, or allow it under System Settings → Privacy &amp; Security → Open Anyway.</li>
         </ol>
-        <p class="limit">The Mac build has not been verified on a Mac yet: menus, permissions, card discovery and deletion still need testing there. <a href="https://github.com/ficaa1/photocull/blob/main/docs/macos.md">macOS notes</a></p>
+        <p class="limit">Native launch, permissions and editor integration have not been verified on a Mac yet. Read the <a href="https://github.com/ficaa1/photocull/blob/main/docs/macos.md">macOS notes</a> before relying on it.</p>
         <div class="gap"></div>
         <a class="btn primary" href="https://github.com/ficaa1/photocull/releases/latest">Download for macOS</a>
       </article>
@@ -419,7 +420,7 @@ npm run build</code></pre>
   <div class="wrap">
     <div class="name">
       <a class="mark" href="./"><img src="icon.svg" alt="" width="28" height="28">PhotoCull</a>
-      <p>Version 0.8.0 · MIT licence · Windows and macOS</p>
+      <p>MIT licence · Windows and macOS</p>
     </div>
     <div class="col"><b>Project</b>
       <a href="https://github.com/ficaa1/photocull">Source code</a>
@@ -429,6 +430,7 @@ npm run build</code></pre>
     </div>
     <div class="col"><b>Docs</b>
       <a href="https://github.com/ficaa1/photocull#readme">Read me</a>
+      <a href="https://github.com/ficaa1/photocull/blob/main/docs/workflow.md">Workflow guide</a>
       <a href="https://github.com/ficaa1/photocull/blob/main/docs/external-editors.md">External editors</a>
       <a href="https://github.com/ficaa1/photocull/blob/main/docs/recipes-export.md">Recipes and export</a>
       <a href="https://github.com/ficaa1/photocull/blob/main/THIRD_PARTY_NOTICES.md">Third-party notices</a>

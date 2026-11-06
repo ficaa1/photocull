@@ -17,6 +17,7 @@ Start with the [project README](../README.md) for installation, quick start and 
 - [Commands, settings and backup validation](app-ux-validation.md): coverage and limits.
 - [Interface design](ui.md) and [interface validation](ui-redesign.md): current layout, tokens, accessibility and smokes.
 - [Display color](display-color.md) and [display color validation](display-color-validation.md): sRGB encoding, webview presentation and measured limits.
+- [Project page](../site/README.md): the page at www.filipbiljic.com/photocull/, its screenshots and how to recapture them.
 
 ## Pipeline investigations and measurements
 
