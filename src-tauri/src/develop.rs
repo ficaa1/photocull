@@ -11,7 +11,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Instant, SystemTime};
 
 use lightcraft_develop::{DevelopSettings, EmbeddedLens, WbMode, WbScale};
-use lightcraft_engine::export::{encode_rendered, ExportFormat, ExportOptions, OutputDepth, OutputSpace};
+use lightcraft_engine::export::{
+    encode_rendered, ExportFormat, ExportOptions, OutputDepth, OutputSpace,
+};
 use lightcraft_lensdb::LensDb;
 use lightcraft_pipeline::{RenderRequest, SourceInfo, StageCache};
 use lightcraft_raster::{Rgb32f, Rgba8};
@@ -82,16 +84,32 @@ impl Photo {
     fn open(file: PathBuf, db: Option<&LensDb>, generation: usize) -> Result<Photo, String> {
         let stamp = stamp(&file)?;
         let bytes = std::fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?;
-        let raw = lightcraft_raw::probe_info(&bytes).map_err(|e| format!("This RAW file could not be read: {e}"))?;
+        let raw = lightcraft_raw::probe_info(&bytes)
+            .map_err(|e| format!("This RAW file could not be read: {e}"))?;
         let meta = lightcraft_meta::extract(&bytes);
-        let camera = format!("{} {}", meta.make.clone().unwrap_or_default(), meta.model.clone().unwrap_or_default()).trim().to_string();
+        let camera = format!(
+            "{} {}",
+            meta.make.clone().unwrap_or_default(),
+            meta.model.clone().unwrap_or_default()
+        )
+        .trim()
+        .to_string();
         let lens_model = meta.lens_model.clone().unwrap_or_default();
         let (w, h) = raw.developed_size();
         let (lens, lens_name) = match lightcraft_engine::files::embedded_lens(&raw) {
-            Some(lens) => (Some(lens), Some("Correction embedded in the file".to_string())),
+            Some(lens) => (
+                Some(lens),
+                Some("Correction embedded in the file".to_string()),
+            ),
             None => match db {
                 Some(db) => (
-                    lightcraft_engine::lens_profiles::lookup(db, &meta, w as f64, h as f64, raw.orientation),
+                    lightcraft_engine::lens_profiles::lookup(
+                        db,
+                        &meta,
+                        w as f64,
+                        h as f64,
+                        raw.orientation,
+                    ),
                     lightcraft_engine::lens_profiles::profile_name(db, &camera, &lens_model),
                 ),
                 None => (None, None),
@@ -126,7 +144,11 @@ impl Photo {
             return Ok(level.clone());
         }
         let (src, info) = self.source(edge)?;
-        let level = Arc::new(Level { src, info, cache: StageCache::default() });
+        let level = Arc::new(Level {
+            src,
+            info,
+            cache: StageCache::default(),
+        });
         levels.insert(edge, level.clone());
         Ok(level)
     }
@@ -160,7 +182,8 @@ fn merge(into: &mut Value, patch: &Value) {
 fn settings_for(info: &SourceInfo, patch: &Value) -> Result<DevelopSettings, String> {
     let mut value = serde_json::to_value(base_settings(info)).map_err(|e| e.to_string())?;
     merge(&mut value, patch);
-    let mut s: DevelopSettings = serde_json::from_value(value).map_err(|e| format!("Invalid develop settings: {e}"))?;
+    let mut s: DevelopSettings =
+        serde_json::from_value(value).map_err(|e| format!("Invalid develop settings: {e}"))?;
     if s.wb.mode == WbMode::Custom {
         s.wb.scale = WbScale::Kelvin;
     }
@@ -183,10 +206,15 @@ fn encode_frame(img: &Rgba8) -> Result<Vec<u8>, String> {
     // display transform; embedding the source space also makes this explicit
     // for WKWebView and WebView2 without changing any export encoding.
     static SRGB: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
-    let icc = SRGB.get_or_init(|| lightcraft_codecs::icc::write_named(lightcraft_codecs::NamedSpace::Srgb));
+    let icc = SRGB
+        .get_or_init(|| lightcraft_codecs::icc::write_named(lightcraft_codecs::NamedSpace::Srgb));
     let e = lightcraft_codecs::EncodeImage::rgba8(img);
-    let meta = lightcraft_codecs::EncodeMeta { icc: Some(icc), ..Default::default() };
-    lightcraft_codecs::encode_jpeg(&e, 88, lightcraft_codecs::ChromaSubsampling::S420, &meta).map_err(|e| e.to_string())
+    let meta = lightcraft_codecs::EncodeMeta {
+        icc: Some(icc),
+        ..Default::default()
+    };
+    lightcraft_codecs::encode_jpeg(&e, 88, lightcraft_codecs::ChromaSubsampling::S420, &meta)
+        .map_err(|e| e.to_string())
 }
 
 /// One binary reply: a little-endian u32 header length, the JSON header, then the JPEG frame.
@@ -203,8 +231,14 @@ fn ms(t: Instant) -> f64 {
     (t.elapsed().as_secs_f64() * 1e4).round() / 10.0
 }
 
-fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> impl std::future::Future<Output = Result<T, String>> {
-    async move { tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())? }
+fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> impl std::future::Future<Output = Result<T, String>> {
+    async move {
+        tauri::async_runtime::spawn_blocking(f)
+            .await
+            .map_err(|e| e.to_string())?
+    }
 }
 
 impl Engine {
@@ -224,7 +258,10 @@ impl Engine {
         if db.is_none() && lightcraft_engine::lensfun_download::installed(&self.lens_dir) {
             match LensDb::load_dir(&self.lens_dir) {
                 Ok((loaded, _)) => *db = Some(Arc::new(loaded)),
-                Err(e) => { crate::logs::write(&format!("lens database: {e}")); eprintln!("lens database: {e}"); },
+                Err(e) => {
+                    crate::logs::write(&format!("lens database: {e}"));
+                    eprintln!("lens database: {e}");
+                }
             }
         }
         let generation = db.as_ref().map_or(0, |d| Arc::as_ptr(d) as usize);
@@ -232,7 +269,9 @@ impl Engine {
     }
 
     async fn context(backend: &Backend, session: &str, id: &str) -> Result<Context, String> {
-        let value = backend.call("develop-context", json!([session, id])).await?;
+        let value = backend
+            .call("develop-context", json!([session, id]))
+            .await?;
         serde_json::from_value(value).map_err(|e| e.to_string())
     }
 
@@ -242,7 +281,9 @@ impl Engine {
         let current = stamp(file)?;
         {
             let mut photos = lock(&self.photos);
-            if let Some(i) = photos.iter().position(|p| p.file == file && p.stamp == current && p.lens_db_generation == generation) {
+            if let Some(i) = photos.iter().position(|p| {
+                p.file == file && p.stamp == current && p.lens_db_generation == generation
+            }) {
                 let photo = photos.remove(i);
                 photos.insert(0, photo.clone());
                 return Ok(photo);
@@ -259,7 +300,12 @@ impl Engine {
 
 /// Opens a raw for development: sizes, as-shot white balance, lens correction and the base settings.
 #[tauri::command]
-pub async fn develop_info(engine: State<'_, Arc<Engine>>, backend: State<'_, Backend>, session: String, id: String) -> Result<Value, String> {
+pub async fn develop_info(
+    engine: State<'_, Arc<Engine>>,
+    backend: State<'_, Backend>,
+    session: String,
+    id: String,
+) -> Result<Value, String> {
     let ctx = Engine::context(&backend, &session, &id).await?;
     if !ctx.raw {
         return Err("Only RAW files can be developed.".into());
@@ -304,7 +350,13 @@ pub async fn develop_render(
         let load_ms = ms(t);
         let s = settings_for(&level.info, &settings)?;
         let t = Instant::now();
-        let r = lightcraft_pipeline::render_cached(&level.src, &level.info, &s, &RenderRequest::fit(edge, edge), &level.cache);
+        let r = lightcraft_pipeline::render_cached(
+            &level.src,
+            &level.info,
+            &s,
+            &RenderRequest::fit(edge, edge),
+            &level.cache,
+        );
         let render_ms = ms(t);
         let frame = encode_frame(&r.image)?;
         let header = json!({
@@ -320,23 +372,42 @@ pub async fn develop_render(
 fn known_handoff(tiff: Option<&str>) -> Result<PathBuf, String> {
     let path = PathBuf::from(tiff.ok_or("Develop a hand-off file for this photo first.")?);
     let meta = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
-    if !path.is_absolute() || !meta.is_file() || meta.file_type().is_symlink() || !path.extension().is_some_and(|s| s.eq_ignore_ascii_case("tif") || s.eq_ignore_ascii_case("tiff") || s.eq_ignore_ascii_case("png") || s.eq_ignore_ascii_case("jpg") || s.eq_ignore_ascii_case("jpeg")) {
+    if !path.is_absolute()
+        || !meta.is_file()
+        || meta.file_type().is_symlink()
+        || !path.extension().is_some_and(|s| {
+            s.eq_ignore_ascii_case("tif")
+                || s.eq_ignore_ascii_case("tiff")
+                || s.eq_ignore_ascii_case("png")
+                || s.eq_ignore_ascii_case("jpg")
+                || s.eq_ignore_ascii_case("jpeg")
+        })
+    {
         return Err("This photo has no regular hand-off image.".into());
     }
     Ok(path)
 }
 
 fn finished_preview(bytes: &[u8], edge: usize) -> Result<Rgba8, String> {
-    let decoded = lightcraft_codecs::decode(bytes, Default::default()).map_err(|e| e.to_string())?;
+    let decoded =
+        lightcraft_codecs::decode(bytes, Default::default()).map_err(|e| e.to_string())?;
     let orientation = lightcraft_geom::Orientation::from_exif(decoded.orientation);
     let img = decoded.to_srgb8().into_oriented(orientation);
     let scale = (edge as f64 / img.width.max(img.height) as f64).min(1.0);
-    Ok(resize_rgba(&img, (img.width as f64 * scale).round().max(1.0) as usize, (img.height as f64 * scale).round().max(1.0) as usize))
+    Ok(resize_rgba(
+        &img,
+        (img.width as f64 * scale).round().max(1.0) as usize,
+        (img.height as f64 * scale).round().max(1.0) as usize,
+    ))
 }
 
 /// Finished TIFF pixels, without applying the RAW develop settings a second time.
 #[tauri::command]
-pub async fn develop_result(backend: State<'_, Backend>, session: String, id: String) -> Result<Response, String> {
+pub async fn develop_result(
+    backend: State<'_, Backend>,
+    session: String,
+    id: String,
+) -> Result<Response, String> {
     let ctx = Engine::context(&backend, &session, &id).await?;
     blocking(move || {
         let path = known_handoff(ctx.tiff.as_deref())?;
@@ -349,11 +420,18 @@ pub async fn develop_result(backend: State<'_, Backend>, session: String, id: St
 }
 
 #[tauri::command]
-pub async fn reveal_develop(app: AppHandle, backend: State<'_, Backend>, session: String, id: String) -> Result<(), String> {
+pub async fn reveal_develop(
+    app: AppHandle,
+    backend: State<'_, Backend>,
+    session: String,
+    id: String,
+) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     let ctx = Engine::context(&backend, &session, &id).await?;
     let path = known_handoff(ctx.tiff.as_deref())?;
-    app.opener().reveal_item_in_dir(path).map_err(|e| e.to_string())
+    app.opener()
+        .reveal_item_in_dir(path)
+        .map_err(|e| e.to_string())
 }
 
 #[derive(Deserialize)]
@@ -394,7 +472,13 @@ impl Drop for Busy<'_> {
     }
 }
 
-fn render_full(photo: &Photo, settings: &Value, space: OutputSpace, depth: OutputDepth, size: Option<(usize, usize)>) -> Result<lightcraft_pipeline::Rendered, String> {
+fn render_full(
+    photo: &Photo,
+    settings: &Value,
+    space: OutputSpace,
+    depth: OutputDepth,
+    size: Option<(usize, usize)>,
+) -> Result<lightcraft_pipeline::Rendered, String> {
     let (src, info) = photo.source(usize::MAX)?;
     let s = settings_for(&info, settings)?;
     let (w, h) = size.unwrap_or((src.width, src.height));
@@ -425,30 +509,60 @@ pub async fn develop_tiffs(
     options: TiffOptions,
 ) -> Result<Value, String> {
     let format = match options.format.as_deref().unwrap_or("tiff") {
-        "tiff" => ExportFormat::Tiff, "png" => ExportFormat::Png, "jpeg" => ExportFormat::Jpeg,
+        "tiff" => ExportFormat::Tiff,
+        "png" => ExportFormat::Png,
+        "jpeg" => ExportFormat::Jpeg,
         _ => return Err("Invalid hand-off format.".into()),
     };
     let depth = options.bit_depth.unwrap_or(16);
-    if ![8, 16].contains(&depth) || format == ExportFormat::Jpeg && depth != 8 || options.jpeg_quality.is_some_and(|q| !(1..=100).contains(&q)) { return Err("Invalid hand-off depth or quality.".into()); }
+    if ![8, 16].contains(&depth)
+        || format == ExportFormat::Jpeg && depth != 8
+        || options
+            .jpeg_quality
+            .is_some_and(|q| !(1..=100).contains(&q))
+    {
+        return Err("Invalid hand-off depth or quality.".into());
+    }
     let compression = match options.compression.as_deref().unwrap_or("none") {
-        "none" => lightcraft_codecs::TiffCompression::None, "lzw" => lightcraft_codecs::TiffCompression::Lzw, "deflate" => lightcraft_codecs::TiffCompression::Deflate,
+        "none" => lightcraft_codecs::TiffCompression::None,
+        "lzw" => lightcraft_codecs::TiffCompression::Lzw,
+        "deflate" => lightcraft_codecs::TiffCompression::Deflate,
         _ => return Err("Invalid hand-off compression.".into()),
     };
     let folder = PathBuf::from(folder);
     if !folder.is_dir() {
         return Err("That folder does not exist.".into());
     }
-    let plan = backend.call("develop-plan", json!([session, items.iter().map(|i| &i.id).collect::<Vec<_>>(), folder.to_string_lossy(), format.extension()])).await?;
+    let plan = backend
+        .call(
+            "develop-plan",
+            json!([
+                session,
+                items.iter().map(|i| &i.id).collect::<Vec<_>>(),
+                folder.to_string_lossy(),
+                format.extension()
+            ]),
+        )
+        .await?;
     let mut jobs = Vec::new();
     for item in items {
         let ctx = Engine::context(&backend, &session, &item.id).await?;
-        let row = plan.as_array().and_then(|rows| rows.iter().find(|r| r["id"].as_str() == Some(item.id.as_str()))).cloned().ok_or("Missing TIFF destination.")?;
+        let row = plan
+            .as_array()
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|r| r["id"].as_str() == Some(item.id.as_str()))
+            })
+            .cloned()
+            .ok_or("Missing TIFF destination.")?;
         jobs.push((item, ctx, row));
     }
     let busy_engine = engine.inner().clone();
     let _busy = Busy::take(&busy_engine.busy)?;
     let ids: Vec<_> = jobs.iter().map(|(item, _, _)| item.id.clone()).collect();
-    backend.call("handoff-prepare", json!([session, ids])).await?;
+    backend
+        .call("handoff-prepare", json!([session, ids]))
+        .await?;
     let engine_ref = engine.inner().clone();
     let total = jobs.len();
     let results = blocking(move || {
@@ -514,9 +628,13 @@ pub async fn develop_tiffs(
             // Reopening a recorded file does not change its edit/export status or canonical cleanup path.
             if r["status"] == "exists" {
                 let previous = backend.call("develop-get", json!([session, id])).await?;
-                if previous["tiff"].as_str() == Some(tiff) { continue; }
+                if previous["tiff"].as_str() == Some(tiff) {
+                    continue;
+                }
             }
-            backend.call("develop-mark", json!([session, id, { "tiff": tiff }])).await?;
+            backend
+                .call("develop-mark", json!([session, id, { "tiff": tiff }]))
+                .await?;
         }
     }
     Ok(json!({ "results": results }))
@@ -529,38 +647,80 @@ pub fn develop_cancel(engine: State<'_, Arc<Engine>>) {
 
 /// Serialize cleanup with rendering, export and external-edit jobs.
 #[tauri::command]
-pub async fn clean_handoffs(engine: State<'_, Arc<Engine>>, backend: State<'_, Backend>, session: String, token: String, allow_unexported: bool) -> Result<Value, String> {
+pub async fn clean_handoffs(
+    engine: State<'_, Arc<Engine>>,
+    backend: State<'_, Backend>,
+    session: String,
+    token: String,
+    allow_unexported: bool,
+) -> Result<Value, String> {
     let _busy = Busy::take(&engine.busy)?;
-    backend.call("handoff-clean", json!([session, token, allow_unexported])).await
+    backend
+        .call("handoff-clean", json!([session, token, allow_unexported]))
+        .await
 }
 
 /// Launch only a saved editor, and mark each hand-off when its change is detected.
 #[tauri::command]
-pub async fn edit_external(engine: State<'_, Arc<Engine>>, backend: State<'_, Backend>, session: String, ids: Vec<String>, editor_id: String) -> Result<Value, String> {
-    let editor: crate::external::Editor = serde_json::from_value(backend.call("editor-context", json!([editor_id])).await?).map_err(|e| e.to_string())?;
-    if ids.is_empty() || ids.len() > 100_000 { return Err("Choose photos to edit.".into()); }
+pub async fn edit_external(
+    engine: State<'_, Arc<Engine>>,
+    backend: State<'_, Backend>,
+    session: String,
+    ids: Vec<String>,
+    editor_id: String,
+) -> Result<Value, String> {
+    let editor: crate::external::Editor =
+        serde_json::from_value(backend.call("editor-context", json!([editor_id])).await?)
+            .map_err(|e| e.to_string())?;
+    if ids.is_empty() || ids.len() > 100_000 {
+        return Err("Choose photos to edit.".into());
+    }
     let mut files = Vec::new();
-    for id in &ids { files.push(known_handoff(Engine::context(&backend, &session, id).await?.tiff.as_deref())?); }
+    for id in &ids {
+        files.push(known_handoff(
+            Engine::context(&backend, &session, id)
+                .await?
+                .tiff
+                .as_deref(),
+        )?);
+    }
     let engine = engine.inner().clone();
     let _busy = Busy::take(&engine.busy)?;
     engine.cancel.store(false, Ordering::SeqCst);
     let cancel = engine.cancel.clone();
-    backend.call("handoff-prepare", json!([session, ids])).await?;
+    backend
+        .call("handoff-prepare", json!([session, ids]))
+        .await?;
     let editor_id = editor.id.clone();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    let task = tauri::async_runtime::spawn_blocking(move || crate::external::run(&editor, &files, &cancel, |index| { let _ = tx.send(index); }));
+    let task = tauri::async_runtime::spawn_blocking(move || {
+        crate::external::run(&editor, &files, &cancel, |index| {
+            let _ = tx.send(index);
+        })
+    });
     let mut edited = Vec::new();
     let mut error = None;
     while let Some(index) = rx.recv().await {
         let id = &ids[index];
-        match backend.call("develop-mark", json!([session, id, { "editedBy": editor_id }])).await {
-            Ok(_) => edited.push(id.clone()), Err(e) => error = Some(e),
+        match backend
+            .call(
+                "develop-mark",
+                json!([session, id, { "editedBy": editor_id }]),
+            )
+            .await
+        {
+            Ok(_) => edited.push(id.clone()),
+            Err(e) => error = Some(e),
         }
     }
     let result = task.await.map_err(|e| e.to_string());
-    backend.call("handoff-release", json!([session, ids])).await?;
+    backend
+        .call("handoff-release", json!([session, ids]))
+        .await?;
     result??;
-    if let Some(e) = error { return Err(e); }
+    if let Some(e) = error {
+        return Err(e);
+    }
     Ok(json!({ "edited": !edited.is_empty(), "ids": edited }))
 }
 
@@ -582,7 +742,12 @@ fn resize_rgba(img: &Rgba8, w: usize, h: usize) -> Rgba8 {
     for (d, s) in f.data.iter_mut().zip(&img.data) {
         *d = s.map(|v| v as f32 / 255.0);
     }
-    let g = lightcraft_raster::resample::resize(&f, w, h, lightcraft_raster::resample::Filter::Lanczos3);
+    let g = lightcraft_raster::resample::resize(
+        &f,
+        w,
+        h,
+        lightcraft_raster::resample::Filter::Lanczos3,
+    );
     let mut out = Rgba8::new(g.width, g.height);
     for (d, s) in out.data.iter_mut().zip(&g.data) {
         *d = s.map(|v| (v * 255.0).round().clamp(0.0, 255.0) as u8);
@@ -591,15 +756,24 @@ fn resize_rgba(img: &Rgba8, w: usize, h: usize) -> Rgba8 {
 }
 
 /// Convert decoded, already finished pixels without running the develop tone/color pipeline again.
-fn encode_finished(bytes: &[u8], o: &ExportOptions, extra: &crate::export_encode::ExtraOptions, meta: Option<&lightcraft_meta::Metadata>) -> Result<Vec<u8>, String> {
+fn encode_finished(
+    bytes: &[u8],
+    o: &ExportOptions,
+    extra: &crate::export_encode::ExtraOptions,
+    meta: Option<&lightcraft_meta::Metadata>,
+) -> Result<Vec<u8>, String> {
     use lightcraft_engine::export::{encode_deep, DeepImage, DeepSamples};
-    let decoded = lightcraft_codecs::decode(bytes, Default::default()).map_err(|e| e.to_string())?;
+    let decoded =
+        lightcraft_codecs::decode(bytes, Default::default()).map_err(|e| e.to_string())?;
     let orientation = lightcraft_geom::Orientation::from_exif(decoded.orientation);
     // Profileless Dehancer TIFFs are interpreted as sRGB by the decoder. Honor a real ICC when present.
     if o.effective_depth() == OutputDepth::U8 && o.effective_space() == OutputSpace::Srgb {
         let img = decoded.to_srgb8().into_oriented(orientation);
         let img = match o.resize {
-            Some(r) => { let (w, h) = r.apply(img.width as f64, img.height as f64); resize_rgba(&img, w, h) }
+            Some(r) => {
+                let (w, h) = r.apply(img.width as f64, img.height as f64);
+                resize_rgba(&img, w, h)
+            }
             None => img,
         };
         return crate::export_encode::encode_pixels(&img, o, extra, meta);
@@ -609,21 +783,51 @@ fn encode_finished(bytes: &[u8], o: &ExportOptions, extra: &crate::export_encode
     let img = match o.resize {
         Some(r) => {
             let (w, h) = r.apply(img.width as f64, img.height as f64);
-            lightcraft_raster::resample::resize(&img, w, h, lightcraft_raster::resample::Filter::Lanczos3)
+            lightcraft_raster::resample::resize(
+                &img,
+                w,
+                h,
+                lightcraft_raster::resample::Filter::Lanczos3,
+            )
         }
         None => img,
     };
     let space = o.effective_space();
     let matrix = space.from_working();
-    let linear = matches!(o.effective_depth(), OutputDepth::F32Linear | OutputDepth::F32Hdr);
-    let values: Vec<f32> = img.data.iter().flat_map(|p| (0..3).map(move |i| {
-        let v = matrix[i][0] * p[0] + matrix[i][1] * p[1] + matrix[i][2] * p[2];
-        if linear { v.max(0.0) } else { space.trc().encode(v) }
-    })).collect();
-    let samples = if linear { DeepSamples::F32(values) } else {
-        DeepSamples::U16(values.into_iter().map(|v| (v * 65535.0).round().clamp(0.0, 65535.0) as u16).collect())
+    let linear = matches!(
+        o.effective_depth(),
+        OutputDepth::F32Linear | OutputDepth::F32Hdr
+    );
+    let values: Vec<f32> = img
+        .data
+        .iter()
+        .flat_map(|p| {
+            (0..3).map(move |i| {
+                let v = matrix[i][0] * p[0] + matrix[i][1] * p[1] + matrix[i][2] * p[2];
+                if linear {
+                    v.max(0.0)
+                } else {
+                    space.trc().encode(v)
+                }
+            })
+        })
+        .collect();
+    let samples = if linear {
+        DeepSamples::F32(values)
+    } else {
+        DeepSamples::U16(
+            values
+                .into_iter()
+                .map(|v| (v * 65535.0).round().clamp(0.0, 65535.0) as u16)
+                .collect(),
+        )
     };
-    let deep = DeepImage { width: img.width, height: img.height, space, samples };
+    let deep = DeepImage {
+        width: img.width,
+        height: img.height,
+        space,
+        samples,
+    };
     if o.effective_depth() == OutputDepth::U8 {
         crate::export_encode::encode_pixels(&deep.to_rgba8(), o, extra, meta)
     } else if o.format == ExportFormat::Avif {
@@ -634,15 +838,34 @@ fn encode_finished(bytes: &[u8], o: &ExportOptions, extra: &crate::export_encode
 }
 
 /// Nonempty preset fields replace existing values; keywords merge, then the policy filters them.
-fn export_metadata(mut m: lightcraft_meta::Metadata, o: &ExportOptions, overrides: Option<&Value>, size: (usize, usize)) -> Option<lightcraft_meta::Metadata> {
+fn export_metadata(
+    mut m: lightcraft_meta::Metadata,
+    o: &ExportOptions,
+    overrides: Option<&Value>,
+    size: (usize, usize),
+) -> Option<lightcraft_meta::Metadata> {
     use lightcraft_engine::export::MetadataPolicy;
     if let Some(v) = overrides {
-        for (key, dest) in [("creator", &mut m.artist), ("copyright", &mut m.copyright), ("title", &mut m.title), ("caption", &mut m.caption)] {
-            if let Some(text) = v[key].as_str().filter(|s| !s.trim().is_empty()) { *dest = Some(text.trim().to_string()); }
+        for (key, dest) in [
+            ("creator", &mut m.artist),
+            ("copyright", &mut m.copyright),
+            ("title", &mut m.title),
+            ("caption", &mut m.caption),
+        ] {
+            if let Some(text) = v[key].as_str().filter(|s| !s.trim().is_empty()) {
+                *dest = Some(text.trim().to_string());
+            }
         }
         if let Some(keys) = v["keywords"].as_array() {
-            for key in keys.iter().filter_map(Value::as_str).map(str::trim).filter(|s| !s.is_empty()) {
-                if !m.keywords.iter().any(|k| k == key) { m.keywords.push(key.to_string()); }
+            for key in keys
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                if !m.keywords.iter().any(|k| k == key) {
+                    m.keywords.push(key.to_string());
+                }
             }
         }
     }
@@ -653,36 +876,65 @@ fn export_metadata(mut m: lightcraft_meta::Metadata, o: &ExportOptions, override
     match o.metadata {
         MetadataPolicy::All => {}
         MetadataPolicy::AllExceptCamera => {
-            m.make = None; m.model = None; m.serial_number = None;
-            m.lens_make = None; m.lens_model = None; m.lens_serial_number = None; m.lens_spec = None;
-            m.iso = None; m.f_number = None; m.exposure_time = None; m.focal_length = None; m.focal_length_35mm = None; m.flash = None;
-            m.exposure_bias = None; m.exposure_program = None; m.metering_mode = None; m.white_balance = None;
+            m.make = None;
+            m.model = None;
+            m.serial_number = None;
+            m.lens_make = None;
+            m.lens_model = None;
+            m.lens_serial_number = None;
+            m.lens_spec = None;
+            m.iso = None;
+            m.f_number = None;
+            m.exposure_time = None;
+            m.focal_length = None;
+            m.focal_length_35mm = None;
+            m.flash = None;
+            m.exposure_bias = None;
+            m.exposure_program = None;
+            m.metering_mode = None;
+            m.white_balance = None;
             m.focus = None;
         }
         MetadataPolicy::Copyright => {
             m = lightcraft_meta::Metadata {
-                artist: m.artist, copyright: m.copyright, copyright_marked: m.copyright_marked,
-                usage_terms: m.usage_terms, copyright_url: m.copyright_url,
+                artist: m.artist,
+                copyright: m.copyright,
+                copyright_marked: m.copyright_marked,
+                usage_terms: m.usage_terms,
+                copyright_url: m.copyright_url,
                 ..Default::default()
             };
         }
         MetadataPolicy::None => return None,
     }
     if o.remove_location {
-        m.gps = None; m.sublocation = None; m.city = None; m.state = None; m.country = None;
+        m.gps = None;
+        m.sublocation = None;
+        m.city = None;
+        m.state = None;
+        m.country = None;
     }
     Some(m)
 }
 
 /// Publish a complete staging file, retaining the prior destination on any failure.
 fn publish_export(partial: &Path, dest: &Path, overwrite: bool) -> Result<(), String> {
-    if overwrite { return std::fs::rename(partial, dest).map_err(|e| e.to_string()); }
+    if overwrite {
+        return std::fs::rename(partial, dest).map_err(|e| e.to_string());
+    }
     match std::fs::hard_link(partial, dest) {
-        Ok(()) => { let _ = std::fs::remove_file(partial); Ok(()) }
+        Ok(()) => {
+            let _ = std::fs::remove_file(partial);
+            Ok(())
+        }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(e.to_string()),
         Err(_) => {
             // exFAT/FAT have no hard links. Claim a new name, then replace only our placeholder.
-            std::fs::OpenOptions::new().write(true).create_new(true).open(dest).map_err(|e| e.to_string())?;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(dest)
+                .map_err(|e| e.to_string())?;
             if let Err(e) = std::fs::rename(partial, dest) {
                 let _ = std::fs::remove_file(dest);
                 return Err(e.to_string());
@@ -710,19 +962,39 @@ pub async fn export_photos(
     if let Some(value) = options.get_mut("tiffCompression") {
         if let Some(name) = value.as_str() {
             *value = json!(match name.to_ascii_lowercase().as_str() {
-                "none" => "None", "deflate" => "Deflate", "lzw" => "Lzw", "packbits" => "PackBits", _ => name,
+                "none" => "None",
+                "deflate" => "Deflate",
+                "lzw" => "Lzw",
+                "packbits" => "PackBits",
+                _ => name,
             });
         }
     }
-    let extra: crate::export_encode::ExtraOptions = serde_json::from_value(options.clone()).map_err(|e| format!("Invalid encoder settings: {e}"))?;
-    let o: ExportOptions = serde_json::from_value(options).map_err(|e| format!("Invalid export settings: {e}"))?;
-    if !matches!(o.format, ExportFormat::Jpeg | ExportFormat::Png | ExportFormat::Tiff | ExportFormat::Webp | ExportFormat::Avif | ExportFormat::Jxl) {
+    let extra: crate::export_encode::ExtraOptions = serde_json::from_value(options.clone())
+        .map_err(|e| format!("Invalid encoder settings: {e}"))?;
+    let o: ExportOptions =
+        serde_json::from_value(options).map_err(|e| format!("Invalid export settings: {e}"))?;
+    if !matches!(
+        o.format,
+        ExportFormat::Jpeg
+            | ExportFormat::Png
+            | ExportFormat::Tiff
+            | ExportFormat::Webp
+            | ExportFormat::Avif
+            | ExportFormat::Jxl
+    ) {
         return Err("Unsupported export format.".into());
     }
-    if !(1..=100).contains(&o.quality) || o.ppi == 0 || o.bit_depth.is_some_and(|d| !ExportOptions::bit_depths(o.format).iter().any(|v| v.0 == d)) {
+    if !(1..=100).contains(&o.quality)
+        || o.ppi == 0
+        || o.bit_depth
+            .is_some_and(|d| !ExportOptions::bit_depths(o.format).iter().any(|v| v.0 == d))
+    {
         return Err("Invalid export quality, resolution or bit depth.".into());
     }
-    if o.resize.is_some_and(|r| !r.value.is_finite() || r.value <= 0.0 || r.height == 0) {
+    if o.resize
+        .is_some_and(|r| !r.value.is_finite() || r.value <= 0.0 || r.height == 0)
+    {
         return Err("Invalid export size.".into());
     }
     let mut jobs = Vec::new();
@@ -730,19 +1002,30 @@ pub async fn export_photos(
     let mut edited_exports = Vec::new();
     for item in items {
         let ctx = Engine::context(&backend, &session, &item.id).await?;
-        if item.edited || ctx.edited_by.is_none() { edited_exports.push(json!({"id": item.id, "path": ctx.tiff, "stamp": ctx.handoff_stamp})); }
+        if item.edited || ctx.edited_by.is_none() {
+            edited_exports
+                .push(json!({"id": item.id, "path": ctx.tiff, "stamp": ctx.handoff_stamp}));
+        }
         for file in std::iter::once(&ctx.file).chain(ctx.tiff.iter()) {
-            if let Ok(path) = std::fs::canonicalize(file) { protected.push(path); }
+            if let Ok(path) = std::fs::canonicalize(file) {
+                protected.push(path);
+            }
         }
         jobs.push((item, ctx));
     }
     let mut destinations = std::collections::HashSet::new();
     for (item, _) in &jobs {
         let dest = PathBuf::from(&item.dest);
-        if !dest.is_absolute() { return Err("Export destinations must be absolute and unique.".into()); }
+        if !dest.is_absolute() {
+            return Err("Export destinations must be absolute and unique.".into());
+        }
         let parent = dest.parent().ok_or("Invalid export destination.")?;
-        let resolved = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf()).join(dest.file_name().ok_or("Invalid export filename.")?);
-        if !destinations.insert(resolved.to_string_lossy().to_lowercase()) { return Err("Export destinations must be absolute and unique.".into()); }
+        let resolved = std::fs::canonicalize(parent)
+            .unwrap_or_else(|_| parent.to_path_buf())
+            .join(dest.file_name().ok_or("Invalid export filename.")?);
+        if !destinations.insert(resolved.to_string_lossy().to_lowercase()) {
+            return Err("Export destinations must be absolute and unique.".into());
+        }
     }
     let engine = engine.inner().clone();
     let total = jobs.len();
@@ -840,16 +1123,37 @@ pub async fn export_photos(
         Ok(results)
     })
     .await?;
-    emit_progress(&app, "export-progress", json!({ "done": total, "total": total }));
-    let exported: Vec<_> = edited_exports.iter().filter(|e| results.iter().any(|r| r["status"] == "exported" && r["id"] == e["id"])).collect();
-    let cleanup = backend.call("handoff-exported", json!([session, exported])).await;
-    Ok(json!({ "results": results, "cleanup": cleanup.as_ref().ok(), "cleanupWarning": cleanup.err() }))
+    emit_progress(
+        &app,
+        "export-progress",
+        json!({ "done": total, "total": total }),
+    );
+    let exported: Vec<_> = edited_exports
+        .iter()
+        .filter(|e| {
+            results
+                .iter()
+                .any(|r| r["status"] == "exported" && r["id"] == e["id"])
+        })
+        .collect();
+    let cleanup = backend
+        .call("handoff-exported", json!([session, exported]))
+        .await;
+    Ok(
+        json!({ "results": results, "cleanup": cleanup.as_ref().ok(), "cleanupWarning": cleanup.err() }),
+    )
 }
 
 // A 33 MP float source alone is ~400 MB, with multiple render/codec buffers in flight.
 // Use at most half the logical cores and three photos; do not retain full-resolution sources.
-fn export_workers() -> usize { (std::thread::available_parallelism().map_or(2, usize::from) / 2).clamp(1, 3) }
-fn ordered_export_map<T: Send, R: Send, F: Fn(T) -> R + Sync>(jobs: Vec<T>, workers: usize, work: F) -> Vec<R> {
+fn export_workers() -> usize {
+    (std::thread::available_parallelism().map_or(2, usize::from) / 2).clamp(1, 3)
+}
+fn ordered_export_map<T: Send, R: Send, F: Fn(T) -> R + Sync>(
+    jobs: Vec<T>,
+    workers: usize,
+    work: F,
+) -> Vec<R> {
     let total = jobs.len();
     let queue = Mutex::new(jobs.into_iter().enumerate());
     let out = Mutex::new((0..total).map(|_| None).collect::<Vec<Option<R>>>());
@@ -857,12 +1161,19 @@ fn ordered_export_map<T: Send, R: Send, F: Fn(T) -> R + Sync>(jobs: Vec<T>, work
         for _ in 0..workers.min(total) {
             let (queue, out, work) = (&queue, &out, &work);
             scope.spawn(move || loop {
-                let Some((i, job)) = lock(queue).next() else { break };
-                let result = work(job); lock(out)[i] = Some(result);
+                let Some((i, job)) = lock(queue).next() else {
+                    break;
+                };
+                let result = work(job);
+                lock(out)[i] = Some(result);
             });
         }
     });
-    out.into_inner().unwrap_or_else(PoisonError::into_inner).into_iter().map(Option::unwrap).collect()
+    out.into_inner()
+        .unwrap_or_else(PoisonError::into_inner)
+        .into_iter()
+        .map(Option::unwrap)
+        .collect()
 }
 
 // Export-only tests; no camera fixtures or develop-view state required.
@@ -875,78 +1186,149 @@ mod export_tests {
     #[test]
     fn parallel_export_preserves_order_and_cancels_queued_work() {
         use std::sync::atomic::AtomicUsize;
-        let active = AtomicUsize::new(0); let peak = AtomicUsize::new(0);
+        let active = AtomicUsize::new(0);
+        let peak = AtomicUsize::new(0);
         let rows = ordered_export_map((0..12).collect(), 3, |i| {
-            let n = active.fetch_add(1, Ordering::SeqCst) + 1; peak.fetch_max(n, Ordering::SeqCst);
-            std::thread::sleep(std::time::Duration::from_millis((12-i) as u64));
-            active.fetch_sub(1, Ordering::SeqCst); i
+            let n = active.fetch_add(1, Ordering::SeqCst) + 1;
+            peak.fetch_max(n, Ordering::SeqCst);
+            std::thread::sleep(std::time::Duration::from_millis((12 - i) as u64));
+            active.fetch_sub(1, Ordering::SeqCst);
+            i
         });
-        assert_eq!(rows, (0..12).collect::<Vec<_>>()); assert!(peak.load(Ordering::SeqCst) <= 3); assert!(peak.load(Ordering::SeqCst) > 1);
+        assert_eq!(rows, (0..12).collect::<Vec<_>>());
+        assert!(peak.load(Ordering::SeqCst) <= 3);
+        assert!(peak.load(Ordering::SeqCst) > 1);
         let cancelled = AtomicBool::new(false);
         let barrier = std::sync::Barrier::new(3);
         let rows = ordered_export_map((0..20).collect(), 3, |i| {
-            if cancelled.load(Ordering::SeqCst) { return None; }
+            if cancelled.load(Ordering::SeqCst) {
+                return None;
+            }
             if i < 3 {
                 barrier.wait();
-                if i == 0 { cancelled.store(true, Ordering::SeqCst); }
+                if i == 0 {
+                    cancelled.store(true, Ordering::SeqCst);
+                }
                 barrier.wait();
             }
             Some(i)
         });
-        assert_eq!(rows[..3], [Some(0), Some(1), Some(2)]); assert!(rows[3..].iter().all(Option::is_none));
-        let failures = ordered_export_map((0..5).collect(), 3, |i| if i == 2 { Err("codec error") } else { Ok(i) });
-        assert_eq!(failures, vec![Ok(0), Ok(1), Err("codec error"), Ok(3), Ok(4)]);
+        assert_eq!(rows[..3], [Some(0), Some(1), Some(2)]);
+        assert!(rows[3..].iter().all(Option::is_none));
+        let failures = ordered_export_map((0..5).collect(), 3, |i| {
+            if i == 2 {
+                Err("codec error")
+            } else {
+                Ok(i)
+            }
+        });
+        assert_eq!(
+            failures,
+            vec![Ok(0), Ok(1), Err("codec error"), Ok(3), Ok(4)]
+        );
     }
 
     #[test]
     fn publication_preserves_existing_files_unless_overwrite_is_explicit() {
-        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let dir = std::env::temp_dir().join(format!("photocull-export-{}-{unique}", std::process::id()));
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("photocull-export-{}-{unique}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let dest = dir.join("photo.jpg"); let partial = dir.join("photo.jpg.partial");
-        std::fs::write(&dest, b"existing").unwrap(); std::fs::write(&partial, b"finished").unwrap();
+        let dest = dir.join("photo.jpg");
+        let partial = dir.join("photo.jpg.partial");
+        std::fs::write(&dest, b"existing").unwrap();
+        std::fs::write(&partial, b"finished").unwrap();
         assert!(publish_export(&partial, &dest, false).is_err());
         assert_eq!(std::fs::read(&dest).unwrap(), b"existing");
         publish_export(&partial, &dest, true).unwrap();
-        assert_eq!(std::fs::read(&dest).unwrap(), b"finished"); assert!(!partial.exists());
+        assert_eq!(std::fs::read(&dest).unwrap(), b"finished");
+        assert!(!partial.exists());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn metadata_overrides_are_filtered_and_location_is_removed() {
         let meta = lightcraft_meta::Metadata {
-            model: Some("camera".into()), serial_number: Some("serial".into()),
-            city: Some("Paris".into()), keywords: vec!["existing".into()], ..Default::default()
+            model: Some("camera".into()),
+            serial_number: Some("serial".into()),
+            city: Some("Paris".into()),
+            keywords: vec!["existing".into()],
+            ..Default::default()
         };
         let overrides = json!({"creator": "Test Photographer", "copyright": "Copyright", "title": "Title", "caption": "Caption", "keywords": ["existing", "new"]});
-        let o = ExportOptions { metadata: MetadataPolicy::AllExceptCamera, remove_location: true, ..Default::default() };
+        let o = ExportOptions {
+            metadata: MetadataPolicy::AllExceptCamera,
+            remove_location: true,
+            ..Default::default()
+        };
         let m = export_metadata(meta.clone(), &o, Some(&overrides), (120, 80)).unwrap();
         assert_eq!(m.artist.as_deref(), Some("Test Photographer"));
         assert_eq!(m.keywords, vec!["existing", "new"]);
         assert!(m.model.is_none() && m.serial_number.is_none() && m.city.is_none());
         assert_eq!((m.width, m.height), (Some(120), Some(80)));
-        let m = export_metadata(meta.clone(), &ExportOptions { metadata: MetadataPolicy::Copyright, ..o.clone() }, Some(&overrides), (120, 80)).unwrap();
+        let m = export_metadata(
+            meta.clone(),
+            &ExportOptions {
+                metadata: MetadataPolicy::Copyright,
+                ..o.clone()
+            },
+            Some(&overrides),
+            (120, 80),
+        )
+        .unwrap();
         assert_eq!(m.copyright.as_deref(), Some("Copyright"));
         assert!(m.title.is_none() && m.keywords.is_empty());
-        assert!(export_metadata(meta, &ExportOptions { metadata: MetadataPolicy::None, ..o }, Some(&overrides), (120, 80)).is_none());
+        assert!(export_metadata(
+            meta,
+            &ExportOptions {
+                metadata: MetadataPolicy::None,
+                ..o
+            },
+            Some(&overrides),
+            (120, 80)
+        )
+        .is_none());
     }
 
     #[test]
     fn finished_pixels_honor_enlargement_depth_and_output_profile() {
         let mut img = Rgba8::new(12, 8);
         img.data.fill([128, 90, 50, 255]);
-        let source = encode_with_metadata(&img, &ExportOptions { format: ExportFormat::Png, ..Default::default() }, None).unwrap();
+        let source = encode_with_metadata(
+            &img,
+            &ExportOptions {
+                format: ExportFormat::Png,
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
         let o = ExportOptions {
-            format: ExportFormat::Png, bit_depth: Some(16), color_space: OutputSpace::DisplayP3,
-            resize: Some(Resize { mode: ResizeMode::LongEdge, value: 24.0, height: 24, dont_enlarge: false }),
+            format: ExportFormat::Png,
+            bit_depth: Some(16),
+            color_space: OutputSpace::DisplayP3,
+            resize: Some(Resize {
+                mode: ResizeMode::LongEdge,
+                value: 24.0,
+                height: 24,
+                dont_enlarge: false,
+            }),
             ..Default::default()
         };
         let bytes = encode_finished(&source, &o, &Default::default(), None).unwrap();
         let decoded = lightcraft_codecs::decode(&bytes, Default::default()).unwrap();
-        assert_eq!((decoded.width, decoded.height, decoded.bit_depth), (24, 16, 16));
+        assert_eq!(
+            (decoded.width, decoded.height, decoded.bit_depth),
+            (24, 16, 16)
+        );
         assert!(decoded.icc.is_some());
         let back = decoded.to_srgb8();
-        for (a, b) in back.data[0][..3].iter().zip([128i16, 90, 50]) { assert!((*a as i16 - b).abs() <= 1); }
+        for (a, b) in back.data[0][..3].iter().zip([128i16, 90, 50]) {
+            assert!((*a as i16 - b).abs() <= 1);
+        }
         let up = resize_rgba(&img, 24, 16);
         assert_eq!((up.width, up.height), (24, 16));
     }
@@ -964,7 +1346,10 @@ pub fn lens_database(engine: State<'_, Arc<Engine>>) -> Value {
 
 /// Downloads the lensfun database (pinned commit, checked SHA-256s) into PhotoCull's data folder.
 #[tauri::command]
-pub async fn download_lens_database(app: AppHandle, engine: State<'_, Arc<Engine>>) -> Result<Value, String> {
+pub async fn download_lens_database(
+    app: AppHandle,
+    engine: State<'_, Arc<Engine>>,
+) -> Result<Value, String> {
     use lightcraft_engine::lensfun_download::{mirrors, COMMIT, FILES};
     if engine.lens_downloading.swap(true, Ordering::SeqCst) {
         return Err("The lens database is already downloading.".into());
@@ -1015,10 +1400,18 @@ mod result_tests {
         let mut image = Rgba8::new(12, 8);
         image.data.fill([114, 175, 203, 255]);
         let tagged = encode_frame(&image).unwrap();
-        let old = lightcraft_codecs::encode_jpeg(&lightcraft_codecs::EncodeImage::rgba8(&image), 88,
-            lightcraft_codecs::ChromaSubsampling::S420, &Default::default()).unwrap();
+        let old = lightcraft_codecs::encode_jpeg(
+            &lightcraft_codecs::EncodeImage::rgba8(&image),
+            88,
+            lightcraft_codecs::ChromaSubsampling::S420,
+            &Default::default(),
+        )
+        .unwrap();
         let decode = |bytes: &[u8]| lightcraft_codecs::decode(bytes, Default::default()).unwrap();
-        assert_eq!(decode(&tagged).icc.unwrap(), lightcraft_codecs::icc::write_named(lightcraft_codecs::NamedSpace::Srgb));
+        assert_eq!(
+            decode(&tagged).icc.unwrap(),
+            lightcraft_codecs::icc::write_named(lightcraft_codecs::NamedSpace::Srgb)
+        );
         // ICC APP2 metadata is the only change; JPEG quantization is identical.
         let scan = old.windows(2).position(|m| m == [0xff, 0xda]).unwrap();
         assert!(tagged.ends_with(&old[scan..]));
@@ -1026,18 +1419,26 @@ mod result_tests {
 
     #[test]
     fn known_handoff_requires_a_recorded_absolute_regular_image() {
-        let unique = SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let dir = std::env::temp_dir().join(format!("photocull-result-{}-{unique}", std::process::id()));
+        let unique = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("photocull-result-{}-{unique}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let tiff = dir.join("photo.tif"); std::fs::write(&tiff, b"pixels").unwrap();
+        let tiff = dir.join("photo.tif");
+        std::fs::write(&tiff, b"pixels").unwrap();
         assert_eq!(known_handoff(tiff.to_str()).unwrap(), tiff);
         assert!(known_handoff(None).is_err());
         assert!(known_handoff(Some("relative.tif")).is_err());
         assert!(known_handoff(dir.to_str()).is_err());
-        let other = dir.join("photo.txt"); std::fs::write(&other, b"pixels").unwrap();
+        let other = dir.join("photo.txt");
+        std::fs::write(&other, b"pixels").unwrap();
         assert!(known_handoff(other.to_str()).is_err());
-        #[cfg(unix)] {
-            let link = dir.join("link.tif"); std::os::unix::fs::symlink(&tiff, &link).unwrap();
+        #[cfg(unix)]
+        {
+            let link = dir.join("link.tif");
+            std::os::unix::fs::symlink(&tiff, &link).unwrap();
             assert!(known_handoff(link.to_str()).is_err());
         }
         std::fs::remove_dir_all(dir).unwrap();
@@ -1045,7 +1446,9 @@ mod result_tests {
 
     #[test]
     fn finished_preview_reads_optional_dehancer_fixture() {
-        let Ok(file) = std::env::var("PHOTOCULL_DEHANCER_TIFF") else { return; };
+        let Ok(file) = std::env::var("PHOTOCULL_DEHANCER_TIFF") else {
+            return;
+        };
         let bytes = std::fs::read(known_handoff(Some(&file)).unwrap()).unwrap();
         let preview = finished_preview(&bytes, SETTLED_EDGE).unwrap();
         assert_eq!(preview.width.max(preview.height), SETTLED_EDGE);
@@ -1055,11 +1458,25 @@ mod result_tests {
 
     #[test]
     fn finished_tiff_preview_preserves_color_and_fits_without_enlarging() {
-        let mut image = Rgba8::new(12, 8); image.data.fill([200, 80, 30, 255]);
-        let bytes = encode_with_metadata(&image, &ExportOptions {format: ExportFormat::Tiff, bit_depth: Some(8), ..Default::default()}, None).unwrap();
-        let small = finished_preview(&bytes, 6).unwrap(); assert_eq!((small.width, small.height), (6, 4));
-        for (actual, expected) in small.data[0][..3].iter().zip([200i16, 80, 30]) { assert!((*actual as i16 - expected).abs() <= 1); }
-        let native = finished_preview(&bytes, 100).unwrap(); assert_eq!((native.width, native.height), (12, 8));
+        let mut image = Rgba8::new(12, 8);
+        image.data.fill([200, 80, 30, 255]);
+        let bytes = encode_with_metadata(
+            &image,
+            &ExportOptions {
+                format: ExportFormat::Tiff,
+                bit_depth: Some(8),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        let small = finished_preview(&bytes, 6).unwrap();
+        assert_eq!((small.width, small.height), (6, 4));
+        for (actual, expected) in small.data[0][..3].iter().zip([200i16, 80, 30]) {
+            assert!((*actual as i16 - expected).abs() <= 1);
+        }
+        let native = finished_preview(&bytes, 100).unwrap();
+        assert_eq!((native.width, native.height), (12, 8));
         assert!(finished_preview(b"broken TIFF", 6).is_err());
     }
 }
