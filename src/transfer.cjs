@@ -58,15 +58,15 @@ class TransferService {
     for (const [index, item] of picks.entries()) {
       if (signal.aborted) break;
       try {
-        const originalRelative = path.relative(sourceRoot, item.path);
+        const stat = await sourceStat(item.path), sourcePath = await fs.realpath(item.path);
+        const originalRelative = path.relative(sourceRoot, sourcePath);
         const captured = needsCapture(options.naming.template) ? await this.captureDate(item) : null;
         const renamed = renderName(item.name, options.naming, index, { captured, now });
         const directory = options.folders.mode === 'preserve' ? path.dirname(originalRelative) : options.folders.mode === 'named' ? options.folders.name : '';
         const relative = path.join(directory, renamed.filename);
-        if (!relative || !inside(sourceRoot, item.path)) throw new Error('Photo is outside the source folder.');
-        const stat = await sourceStat(item.path);
+        if (!relative || !inside(sourceRoot, sourcePath)) throw new Error('Photo is outside the source folder.');
         if (stat.size !== item.size || stat.mtimeMs !== item.mtimeMs) throw new Error('Source changed. Reopen the folder before copying.');
-        const files = [{ source: item.path, relative, stat }];
+        const files = [{ source: sourcePath, relative, stat }];
         if (options.includeJpeg && item.companion) {
           const stat = await sourceStat(item.companion);
           if (item.companionSize !== undefined && (stat.size !== item.companionSize || stat.mtimeMs !== item.companionMtimeMs)) throw new Error('Companion JPEG changed. Reopen the folder before copying.');
@@ -79,7 +79,7 @@ class TransferService {
             if (info.size > 2 * 1024 ** 2) throw new Error('Existing XMP exceeds 2 MB.');
             xml = await fs.readFile(item.sidecar, 'utf8');
           } catch (error) { if (error.code !== 'ENOENT') throw error; }
-          const bytes = Buffer.from(updateXmp(xml, { ...item, photoRoot: session.folder, develop: item.develop ? { ...item.develop, settings: item.develop.settings ?? this.recipeSettings(item.develop.recipe) ?? null } : null }, options.metadataSettings));
+          const bytes = Buffer.from(updateXmp(xml, { ...item, path: sourcePath, photoRoot: sourceRoot, develop: item.develop ? { ...item.develop, settings: item.develop.settings ?? this.recipeSettings(item.develop.recipe) ?? null } : null }, options.metadataSettings));
           const darktable = item.sidecar === item.path + '.xmp';
           files.push({ bytes, relative: path.join(directory, renamed.stem + (darktable ? renamed.extension : '') + '.xmp') });
         }

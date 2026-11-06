@@ -251,11 +251,11 @@ async function writeXmp(file, decision, settings) {
 
 // Sidecars use slash-separated relative paths on every platform. Absolute paths
 // outside the photo tree stay absolute; never reinterpret a foreign drive path.
-function portablePath(file, photo, root) {
+function portablePath(file, photo, root, realPath = file) {
   if (typeof file !== 'string' || !photo) return file;
   const api = path.win32.isAbsolute(photo) && !path.posix.isAbsolute(photo) ? path.win32 : path;
-  const relative = api.relative(api.dirname(photo), file);
-  const inRoot = root && !api.relative(root, file).split(api.sep).includes('..') && !api.isAbsolute(api.relative(root, file));
+  const relative = api.relative(api.dirname(photo), realPath);
+  const inRoot = root && !api.relative(root, realPath).split(api.sep).includes('..') && !api.isAbsolute(api.relative(root, realPath));
   return relative && (inRoot || relative !== '..' && !relative.startsWith('..' + api.sep) && !api.isAbsolute(relative)) ? relative.split(api.sep).join('/') : file;
 }
 function resolvePath(file, photo, root = path.dirname(photo)) {
@@ -269,7 +269,8 @@ function resolvePath(file, photo, root = path.dirname(photo)) {
 function portableDevelop(state, photo, root) {
   if (!state) return null;
   const { missing, ...saved } = state;
-  return { ...saved, tiff: portablePath(state.tiff, photo, root), handoffs: (state.handoffs || []).map(r => ({ ...r, path: portablePath(r.path, photo, root), realPath: portablePath(r.realPath, photo, root) })) };
+  const handoffs = state.handoffs || [], realPaths = new Map(handoffs.map(r => [r.path, r.realPath]));
+  return { ...saved, tiff: portablePath(state.tiff, photo, root, realPaths.get(state.tiff)), handoffs: handoffs.map(r => ({ ...r, path: portablePath(r.path, photo, root, r.realPath), realPath: portablePath(r.realPath, photo, root) })) };
 }
 function resolveDevelop(state, photo, root) {
   if (!state) return null;
