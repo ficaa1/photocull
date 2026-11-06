@@ -77,6 +77,7 @@ async function main(){
   for(let n=0;n<50;n++){if(await fs.stat(bundleFile).catch(()=>null))break;await new Promise(r=>setTimeout(r,20));}
   assert.equal(JSON.parse(await fs.readFile(bundleFile,'utf8')).recipes.length,3);
   await recipeAction('develop-recipe-default');await page.waitForFunction(()=>state.settings.defaultRecipe===document.querySelector('#develop-recipe').value);
+  const recipeCount=await page.locator('#develop-recipe option').count();await page.keyboard.press('Control+k');await page.locator('#command-query').fill('duplicate recipe');assert.equal(await page.locator('#command-results [role=option]').first().getAttribute('aria-disabled'),'false');await page.keyboard.press('Enter');await page.waitForFunction(n=>document.querySelectorAll('#develop-recipe option').length===n+1,recipeCount);
   await page.evaluate(()=>{state.marked=new Set(state.session.items.filter(i=>i.raw).map(i=>i.id));render();});
   await page.locator('#develop-send').click();await page.locator('#develop-batch-start').click();await page.getByRole('button',{name:'Edit existing files',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#develop-batch-status').textContent.includes('Finished'));
   assert.equal(await page.evaluate(()=>window.__developMock.edits.length),2);assert.equal(await page.evaluate(()=>window.__developMock.editMax),1);assert.equal(await page.evaluate(()=>state.session.items.filter(i=>i.externalEdit).length),2);assert.equal(await page.evaluate(()=>window.__developMock.tiffs[0].options.bitDepth),16);

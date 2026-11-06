@@ -42,8 +42,9 @@ async function main(){
   assert.equal(await page.getByRole('menuitem',{name:'Edit in Dehancer…'}).isDisabled(),true);await page.locator('#configure-editors').click();
   await page.locator('[data-settings-page="editors"]').waitFor({state:'visible'});await page.locator('#settings-cancel').click();
   // Every menu action is reachable from the palette.
+  await page.keyboard.press('Control+k');await page.locator('#command-query').fill('treat this folder');assert.equal(await page.locator('#command-results [role=option]').first().getAttribute('aria-disabled'),'true','palette respects card eligibility');await page.keyboard.press('Escape');
   const paletteRows=async query=>{await page.keyboard.press('Control+k');await page.locator('#command-query').fill(query);const rows=await page.locator('#command-results [role=option]').allTextContents();await page.keyboard.press('Escape');return rows.join('\n');};
-  for(const [query,expected] of [['copy picks','Copy picks…'],['configure editors','Configure external editors…'],['edit in dehancer','Edit in Dehancer…'],['export finished','Export finished images…'],['back up','Back up card or folder…'],['treat folder','Treat this folder as a camera card']])assert.match(await paletteRows(query),new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const [query,expected] of [['copy picks','Copy picks…'],['configure editors','Configure external editors…'],['edit in dehancer','Edit in Dehancer…'],['export finished','Export finished images…'],['back up','Back up card or folder…'],['treat folder','Treat this folder as a camera card'],['duplicate recipe','Duplicate recipe'],['recipe default','Set recipe as default'],['export user recipes','Export user recipes…']])assert.match(await paletteRows(query),new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   await page.locator('#device-list .device-backup button').click();await page.locator('#backup-destination-choose').click();await page.locator('#backup-folder-template').fill('ui-backup');await page.locator('#backup-start').click();await page.waitForFunction(()=>document.querySelector('#backup-status').textContent.includes('safe to format'),null,{timeout:30000});
   assert.equal(await fs.readFile(path.join(dest,'ui-backup','camera.dat'),'utf8'),'all files, not just photos');await page.locator('#backup-close').click();assert.match(await page.locator('#device-list').textContent(),/All 5 files backed up and verified/);
   await fs.writeFile(path.join(card,'changed.txt'),'new file');await page.locator('#device-list .device-backup button').click();await page.locator('#backup-check').click();await page.waitForFunction(()=>document.querySelector('#backup-failures').textContent.includes('changed.txt'));assert.doesNotMatch(await page.locator('#backup-status').textContent(),/safe to format/);await page.locator('#backup-close').click();
@@ -53,6 +54,16 @@ async function main(){
   await app.close();app=null;
   app=await launch({env:{...process.env,PHOTOCULL_DATA_DIR:data,PHOTOCULL_TEST_WELCOME:'1'}});const reopened=await app.firstWindow();assert.equal(await reopened.locator('#welcome-panel').isVisible(),false,'dismissal survives restart');
   await app.close();app=null;
+  // First run with a card attached: Welcome decides before the card opens automatically.
+  app=await launch({env:{...process.env,PHOTOCULL_DATA_DIR:path.join(root,'welcome-card'),PHOTOCULL_TEST_WELCOME:'1',PHOTOCULL_TEST_DEVICES:deviceFile}});const cardRun=await app.firstWindow();
+  await cardRun.locator('#welcome-panel:not([hidden])').waitFor();await cardRun.waitForFunction(()=>state.devices.length===1&&state.settingsReady);await cardRun.waitForTimeout(800);
+  assert.equal(await cardRun.evaluate(()=>state.session),null,'no session opens behind Welcome');
+  await cardRun.keyboard.press('Escape');await cardRun.waitForFunction(()=>document.querySelector('#count-all').textContent==='4');await app.close();app=null;
+  // Choose camera card reveals hidden Sources and opens the only card.
+  app=await launch({env:{...process.env,PHOTOCULL_DATA_DIR:path.join(root,'welcome-choose'),PHOTOCULL_TEST_WELCOME:'1',PHOTOCULL_TEST_DEVICES:deviceFile}});const chooseRun=await app.firstWindow();
+  await chooseRun.locator('#welcome-panel:not([hidden])').waitFor();await chooseRun.waitForFunction(()=>state.devices.length===1);await chooseRun.evaluate(()=>{layoutPrefs.sources=false;applyPaneLayout();});
+  await chooseRun.locator('#welcome-card').click();await chooseRun.waitForFunction(()=>document.querySelector('#count-all').textContent==='4');
+  assert.equal(await chooseRun.locator('#toggle-sidebar').getAttribute('aria-expanded'),'true');assert.equal(await chooseRun.locator('#device-list').isVisible(),true);await app.close();app=null;
   app=await launch({env:{...process.env,PHOTOCULL_DATA_DIR:path.join(root,'fresh-welcome'),PHOTOCULL_TEST_WELCOME:'1'}});const firstRun=await app.firstWindow();await firstRun.locator('#welcome-panel:not([hidden])').waitFor();assert.equal(await firstRun.evaluate(()=>document.activeElement.id),'welcome-open');
   for(let i=0;i<6;i++){await firstRun.keyboard.press('Tab');assert.equal(await firstRun.evaluate(()=>!!document.activeElement.closest('#welcome-panel')||document.activeElement===document.body),true,'welcome keeps focus');}
   await firstRun.keyboard.press('Escape');await firstRun.locator('#welcome-panel').waitFor({state:'hidden'});await firstRun.waitForFunction(()=>state.settings.welcomeDismissed===true);assert.equal((await firstRun.evaluate(()=>photocull.settings())).welcomeDismissed,true);

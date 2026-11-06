@@ -8,6 +8,8 @@ let filmSignature = '';
 const culling = { metadata:new Map(), jobs:new Map(), scores:new Map(), bursts:[], byId:new Map(), expanded:new Set(), epoch:0, paused:false, running:false };
 let survey, burstPrompt=null;
 const menus = [];
+// Automatic card opening waits until first-run Welcome has been shown and answered.
+let welcomeSettled = false;
 let layoutPrefs = { sources: true, details: true, gridSize: 205 };
 try { const saved = JSON.parse(localStorage.getItem('photocull-layout') || '{}'); layoutPrefs = { sources: saved.sources !== false, details: saved.details !== false, gridSize: Math.min(320, Math.max(160, Number(saved.gridSize) || 205)) }; } catch {}
 const glyph = paths => `<svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
@@ -152,7 +154,7 @@ function receiveDevices(snapshot) {
   state.devices = snapshot.devices; state.deviceError = snapshot.error;
   renderDevices();
   const cameras = state.devices.filter(d => d.camera);
-  if (state.settingsReady && state.settings.autoOpenCards && !document.querySelector('dialog[open]') && !state.session && !state.busy && cameras.length === 1 && !state.autoOpened.has(cameras[0].id)) {
+  if (welcomeSettled && state.settingsReady && state.settings.autoOpenCards && !document.querySelector('dialog[open]') && !state.session && !state.busy && cameras.length === 1 && !state.autoOpened.has(cameras[0].id)) {
     state.autoOpened.add(cameras[0].id); void openDevice(cameras[0]);
   } else if (state.session && state.devices.some(d => !previous.has(d.id))) toast('Card connected');
   for (const id of state.autoOpened) if (!state.devices.some(d => d.id === id)) state.autoOpened.delete(id);
@@ -702,6 +704,7 @@ const commandActions = {
   'focus-overlay': event => {if(!event.repeat)return toggleFocus();}, 'focus-zoom': () => zoomFocus(), 'burst-stack': event => {if(!event.repeat)toggleBurst();}, 'burst-keep': () => promptKeepSharpest(),
   'view-compare': () => setMode(state.mode==='compare'?'review':'compare'), 'develop-split': () => developView.toggleSplit(),
   settings: () => openSettings(), open: () => openFolder(), export: () => imageExport.open(), 'copy-picks': () => $('export').click(), 'configure-editors': () => openSettings('editors'),
+  ...Object.fromEntries(PhotoCullCommands.table.filter(c=>c.button).map(c=>[c.id,()=>$(c.button).click()])),
   'fullscreen-system': () => setFullscreen(), 'fullscreen-key': () => setFullscreen(), fullscreen: () => setFullscreen(),
   'switch-view': () => setMode(state.mode === 'review' ? 'grid' : 'review'), edit: () => developView.openBatch(), original: () => toggleOriginal(),
   escape: () => { if(state.mode==='compare'){setMode('review');return;}if (state.marked.size > 1) { resetSelection(); render(); } else if (state.fullscreen) return setFullscreen(false); else if (state.mode === 'review' && loupe.zoomed) loupe.fit(); },
@@ -724,7 +727,7 @@ const commands = PhotoCullCommands.create({ platform: api.platform, actions: Obj
   if(id==='pan'){if(!event.key)return loupe.handleKey(event,'toggle');panKey=event.code || event.key;}
   try { return Promise.resolve(run(event)).catch(error=>toast(error.message)); } catch(error) { toast(error.message); }
 }])), context: () => state.mode, custom: () => state.settings.shortcuts || {},
-  enabled: command => (!command.when || state.filter===command.when) && (!['burst-stack','burst-keep'].includes(command.id) || !!culling.byId.get(state.selected)) && (command.id!=='burst-keep' || !!bestIn(culling.byId.get(state.selected))) && (!/^(flag-|rating-|color-|navigate-|extend-|delete|restore|select-all)/.test(command.id) || !!photo()) && (command.id!=='go-photo'||state.session?.items.some(item=>!item.trashed)) && (command.id!=='copy-picks'||!$('export').disabled) && (!['zoom-in','zoom-out','fit','zoom-toggle','pan','review-zoom'].includes(command.id) || !!photo()),
+  enabled: command => (!command.when || state.filter===command.when) && (!['burst-stack','burst-keep'].includes(command.id) || !!culling.byId.get(state.selected)) && (command.id!=='burst-keep' || !!bestIn(culling.byId.get(state.selected))) && (!/^(flag-|rating-|color-|navigate-|extend-|delete|restore|select-all)/.test(command.id) || !!photo()) && (command.id!=='go-photo'||state.session?.items.some(item=>!item.trashed)) && (command.id!=='copy-picks'||!$('export').disabled) && (command.id!=='treat-card'||canTreatCard()) && (!command.button||!$(command.button).matches(':disabled')) && (!['zoom-in','zoom-out','fit','zoom-toggle','pan','review-zoom'].includes(command.id) || !!photo()),
   onRun: command => { if(command.id!=='palette'){ recentCommands=[command.id,...recentCommands.filter(id=>id!==command.id)].slice(0,12); try{localStorage.setItem('photocull-recent-commands',JSON.stringify(recentCommands));}catch{} } } });
 try { recentCommands=JSON.parse(localStorage.getItem('photocull-recent-commands')||'[]').filter(id=>commands.commands.some(c=>c.id===id)).slice(0,12); } catch {}
 document.addEventListener('keydown', event => {
@@ -1091,7 +1094,7 @@ function renderEditorActions() {
   const menu = $('external-editor-list'), signature = JSON.stringify(state.settings.editors?.map(e=>[e.id,e.name]));
   if(menu.dataset.editors!==signature){menu.dataset.editors=signature;menu.replaceChildren(...(state.settings.editors || []).map(e=>{const item=menuItem(`Edit in ${e.name}…`,()=>developView.openBatch(e.id));item.dataset.editor=e.id;return item;}),menuSeparator(),menuItem('Configure editors…',()=>openSettings('editors'),'configure-editors'));}
   for(const item of menu.querySelectorAll('[data-editor]'))item.disabled=$('edit-external').disabled;
-  if($('treat-card'))$('treat-card').disabled=!state.session||!!state.session.removable;
+  if($('treat-card'))$('treat-card').disabled=!canTreatCard();
   $('handoff-cleanup').disabled = !state.session || busy;
   const usageKey = state.session ? `${state.session.id}:${state.session.items.map(i=>i.developRevision || 0).join(',')}` : '';
   if(usageKey!==handoffUsageKey){handoffUsageKey=usageKey;const generation=++handoffUsageGeneration;$('handoff-usage').textContent='';if(state.session)void api.handoffUsage(state.session.id).then(u=>{if(generation===handoffUsageGeneration)$('handoff-usage').textContent=`Hand-off files: ${u.count} · ${fileSize(u.bytes)}`;}).catch(e=>toast(e.message));}
@@ -1267,11 +1270,29 @@ const welcome=workspaceNode('dialog',null,{id:'welcome-panel','aria-labelledby':
 welcome.innerHTML='<h2 id="welcome-title">Welcome to PhotoCull</h2><p>Open a photo folder or choose a connected camera card in the sidebar.</p><div id="welcome-keys" class="shortcut-list"></div><div id="welcome-actions" class="copy-actions"></div>';
 document.body.append(welcome);
 function showWelcome() {for(const open of document.querySelectorAll('dialog[open]'))if(open!==welcome)open.close();welcome.hidden=false;if(!welcome.open)welcome.showModal();$('welcome-keys').replaceChildren();for(const id of ['open','navigate-right','flag-pick','flag-reject','rating-5','zoom-toggle','view-grid','palette']){const c=commands.commands.find(c=>c.id===id);$('welcome-keys').append(workspaceNode('span',c.title),workspaceNode('kbd',shortcutLabel(c)));}}
-async function dismissWelcome(){welcome.hidden=true;if(welcome.open)welcome.close();state.settings=await api.settings({welcomeDismissed:true});}
-welcome.addEventListener('cancel',e=>{e.preventDefault();void dismissWelcome().catch(error=>toast(error.message));});
-$('welcome-actions').append(workspaceButton('Skip',dismissWelcome,'welcome-skip'),workspaceButton('Choose camera card',async()=>{await dismissWelcome();$('devices-panel').scrollIntoView();$('device-list').querySelector('button')?.focus();},'welcome-card'),workspaceButton('Set up an external editor',async()=>{await dismissWelcome();await openSettings('editors');}),workspaceButton('Open folder…',async()=>{await dismissWelcome();await openFolder();},'welcome-open'));
+function settleWelcome(autoOpen) {
+  welcomeSettled=true;
+  if(!autoOpen)for(const device of state.devices)if(device.camera)state.autoOpened.add(device.id);
+  receiveDevices({devices:state.devices,error:state.deviceError});
+}
+async function dismissWelcome(autoOpen=true){welcome.hidden=true;if(welcome.open)welcome.close();state.settings=await api.settings({welcomeDismissed:true});settleWelcome(autoOpen);}
+// Shows the Sources pane in both the docked and the narrow overlay layout.
+function revealSources() {
+  if(matchMedia('(max-width: 900px)').matches)document.body.classList.add('mobile-sources');
+  else if(!layoutPrefs.sources){layoutPrefs.sources=true;storeLayout();}
+  applyPaneLayout();
+}
+async function chooseCard() {
+  const cameras=state.devices.filter(d=>d.camera);
+  revealSources();
+  if(cameras.length===1)return openDevice(cameras[0]);
+  if(!state.devices.length)return toast('No camera card found. Insert a card, or use Open folder… for a copied card.');
+  $('devices-panel').scrollIntoView({block:'nearest'});$('device-list').querySelector('button')?.focus();
+}
+welcome.addEventListener('cancel',e=>{e.preventDefault();void dismissWelcome(true).catch(error=>toast(error.message));});
+$('welcome-actions').append(workspaceButton('Skip',()=>dismissWelcome(true),'welcome-skip'),workspaceButton('Choose camera card',async()=>{await dismissWelcome(false);await chooseCard();},'welcome-card'),workspaceButton('Set up an external editor',async()=>{await dismissWelcome(false);await openSettings('editors');}),workspaceButton('Open folder…',async()=>{await dismissWelcome(false);await openFolder();},'welcome-open'));
 $('welcome-open').className='button primary';$('welcome-open').autofocus=true;
-void Promise.all([api.workspaceInfo(),api.settings()]).then(([info,settings])=>{if(info.welcome&&!settings.welcomeDismissed)showWelcome();}).catch(error=>toast(error.message));
+void Promise.all([api.workspaceInfo(),api.settings()]).then(([info,settings])=>{if(info.welcome&&!settings.welcomeDismissed)showWelcome();else settleWelcome(true);}).catch(error=>{settleWelcome(true);toast(error.message);});
 async function copyDiagnostics() {
   const color=await api.displayColor().catch(()=>({mode:'unavailable'}));let gpu='unavailable';
   try{const gl=document.createElement('canvas').getContext('webgl'),ext=gl?.getExtension('WEBGL_debug_renderer_info');if(ext)gpu=gl.getParameter(ext.UNMASKED_RENDERER_WEBGL);}catch{}
@@ -1291,7 +1312,8 @@ api.onBackupProgress(progress=>{if(backupRunning)showBackupProgress(progress);})
 $('backup-start').onclick=async()=>{setBackupBusy(true);try{const source=$('backup-source').value,result=await api.backupStart(source,$('backup-destination').value,{template:$('backup-folder-template').value});showBackupProgress(result);if(result.status)cardStatuses.set(source,result.status);else cardStatuses.delete(source);}catch(e){$('backup-status').textContent=e.message;}finally{setBackupBusy(false);}};
 $('backup-check').onclick=async()=>{setBackupBusy(true);$('backup-status').textContent='Checking every source and destination hash…';try{const source=$('backup-source').value,status=await api.backupStatus(source);cardStatuses.set(source,status);$('backup-status').textContent=backupStatusText(status);$('backup-failures').textContent=status.missing.map(f=>`${f.name}: ${f.reason}`).join('\n');}catch(e){$('backup-status').textContent=e.message;cardStatuses.set($('backup-source').value,{safe:false,total:0,verified:0,missing:[{name:'Card',reason:e.message}]});}finally{setBackupBusy(false);}};
 $('backup-cancel').onclick=()=>api.backupCancel();$('backup-close').onclick=()=>backupDialog.close();backupDialog.addEventListener('cancel',e=>{if(backupRunning)e.preventDefault();});
-async function treatCard(){if(!state.session)return toast('Open a folder first.');receiveDevices(await api.manualCard(state.session.folder));state.session.removable=true;toast('Folder is now treated as a camera card.');}
+function canTreatCard() {return !!state.session&&!state.session.removable;}
+async function treatCard(){if(!state.session)return toast('Open a folder first.');if(!canTreatCard())return toast('This session is already a camera card.');receiveDevices(await api.manualCard(state.session.folder));state.session.removable=true;toast('Folder is now treated as a camera card.');}
 function deviceBackupRow(device){const row=workspaceNode('div',null,{class:'device-backup'}),status=cardStatuses.get(device.root) || device.backup;row.append(workspaceButton('Back up card…',()=>openBackup(device.root)));if(status){row.append(workspaceNode('p',backupStatusText(status),{class:status.safe?'backup-safe':'backup-pending'}));if(status.missing.length){const detail=workspaceNode('details');detail.append(workspaceNode('summary','Files needing backup'),workspaceNode('pre',status.missing.map(f=>`${f.name}: ${f.reason}`).join('\n')));row.append(detail);}}return row;}
 // Add discoverable entry points alongside the existing folder controls.
 $('source-menu').append(menuItem('Open folder…',openFolder),menuSeparator(),menuItem('Back up card or folder…',()=>openBackup(),'backup-open'),menuItem('Treat folder as card',treatCard,'treat-card'));
@@ -1357,7 +1379,7 @@ function toggleBurst() {
   if(culling.expanded.has(burst.id))culling.expanded.delete(burst.id);else culling.expanded.add(burst.id);
   filmSignature='';render();
 }
-function setAnalysis(text,phase) {$('analysis-status').textContent=text;$('analysis-status').dataset.phase=phase;}
+function setAnalysis(text,phase) {$('analysis-status').textContent=text;$('analysis-status').dataset.phase=phase;$('analysis-status').closest('.analysis').title=text;}
 function cancelCulling() {culling.epoch++;culling.running=false;void api.cancelSharpness().catch(()=>{});}
 async function analyzeCulling() {
   cancelCulling();culling.paused=false;culling.running=true;const epoch=culling.epoch,session=state.session?.id,items=[...(state.session?.items || [])];

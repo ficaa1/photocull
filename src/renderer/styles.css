@@ -184,6 +184,8 @@ kbd { color: var(--text-2); font-family: inherit; font-size: var(--fs-xs); borde
 /* Main column and view toolbar. */
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 0 var(--s3); background: var(--app); }
 .toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); min-height: 44px; }
+.toolbar-right { flex: 1 1 auto; min-width: 0; }
+.view-heading { flex: 0 0 auto; }
 .view-heading { display: flex; gap: var(--s2); align-items: center; min-width: 0; }
 h1 { font-size: var(--fs-l); margin: 0; font-weight: 600; letter-spacing: -.1px; white-space: nowrap; }
 .view-count { font-size: var(--fs-s); font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
@@ -202,9 +204,9 @@ h1 { font-size: var(--fs-l); margin: 0; font-weight: 600; letter-spacing: -.1px;
 @keyframes pulse { 50% { opacity: .3; } }
 .analysis .text-button { font-size: var(--fs-s); padding: 2px 0; }
 #color-filter { width: 112px; font-size: var(--fs-s); }
-.search-field { position: relative; display: flex; align-items: center; color: var(--muted); }
+.search-field { position: relative; display: flex; align-items: center; flex: 0 1 150px; min-width: 96px; color: var(--muted); }
 .search-field .icon { position: absolute; left: 8px; width: 13px; height: 13px; pointer-events: none; }
-input[type=search] { width: 150px; padding-left: 26px; font-size: var(--fs-s); }
+input[type=search] { width: 100%; padding-left: 26px; font-size: var(--fs-s); }
 .grid-size-control { display: flex; align-items: center; gap: 6px; color: var(--muted); margin-left: auto; }
 .grid-size-control > .icon { width: 14px; height: 14px; }
 #grid-size { width: 96px; }
@@ -270,7 +272,7 @@ button.chip:hover, select.chip:hover { background: #2a2d30f0; color: var(--text)
 .photo-name strong { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: var(--fs-m); font-weight: 600; color: var(--text); }
 .photo-name .small { color: var(--muted); }
 .rating { display: flex; gap: 0; flex-shrink: 0; }
-.rating button { background: none; border: 0; color: var(--star-empty); font-size: 19px; line-height: 1; padding: 4px 3px; border-radius: var(--r1); }
+.rating button { min-width: 24px; min-height: 24px; background: none; border: 0; color: var(--star-empty); font-size: 19px; line-height: 1; padding: 4px 3px; border-radius: var(--r1); }
 .rating button:hover { color: #a5abb0; }
 .rating button.selected { color: var(--star); }
 .flag-buttons { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-shrink: 0; }
@@ -498,7 +500,6 @@ dialog details > summary:hover { color: var(--text); }
 @media (max-width: 1320px) {
   .sidebar { width: 184px; }
   .inspector { padding-inline: var(--s3); }
-  input[type=search] { width: 120px; }
   #color-filter { width: 100px; }
 }
 @media (max-width: 1150px) {
@@ -520,7 +521,6 @@ dialog details > summary:hover { color: var(--text); }
 @media (max-width: 1050px) {
   .brand > span { display: none; }
   .view-actions .button { padding: 0 6px; }
-  input[type=search] { width: 96px; }
   #open-folder > span { display: none; }
   #open-folder { width: var(--control); padding: 0; }
 }
@@ -538,7 +538,6 @@ dialog details > summary:hover { color: var(--text); }
   .topbar .button { font-size: var(--fs-s); padding-inline: 6px; }
   .main { padding-inline: var(--s1); }
   .toolbar-right { gap: 4px; }
-  input[type=search] { width: 80px; }
   #color-filter { width: 80px; }
   .view-heading { display: none; }
   .decision-bar { grid-template-columns: minmax(0, 1fr) auto auto; }
@@ -713,3 +712,15 @@ dialog details > summary:hover { color: var(--text); }
 #image-export-destination-summary-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .destination-summary-change { color: var(--accent); white-space: nowrap; }
 #image-export-reveal:not([hidden]) + .destination-summary { margin-right: 0; }
+
+/* The recipe menu spans the action row so it stays inside the Develop panel however the row wraps. */
+[data-develop-group="Recipe"] .develop-actions { position: relative; }
+[data-develop-group="Recipe"] .develop-actions > .split-button { position: static; }
+#develop-recipe-menu { left: 0; right: 0; min-width: 0; }
+/* Compact toolbar: analysis shows its dot only and Compare its icon, so one row fits at 1280 px with burst actions. */
+@media (max-width: 1320px) {
+  .analysis-status { font-size: 0; gap: 0; }
+  .analysis-status::before { width: 8px; height: 8px; }
+  #compare-mode > span { display: none; }
+  #compare-mode { width: var(--control); padding: 0; }
+}

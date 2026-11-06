@@ -12,6 +12,8 @@
   add('edit', 'Edit in external editor…', 'Files', ['Mod+E'], ALL, { allowModifiers: ['Alt'] });
   add('copy-picks', 'Copy picks…', 'Files', []);
   add('configure-editors', 'Configure external editors…', 'Application', []);
+  for (const [id, title, button] of [['recipe-reset','Reset photo to recipe','develop-reset'],['recipe-update','Update recipe','develop-recipe-update'],['recipe-duplicate','Duplicate recipe','develop-recipe-duplicate'],['recipe-default','Set recipe as default','develop-recipe-default'],['recipe-delete','Delete recipe','develop-recipe-delete'],['recipe-import','Import recipes…','develop-recipe-import'],['recipe-export','Export recipe…','develop-recipe-export'],['recipes-export','Export user recipes…','develop-recipes-export']])
+    add(id, title, 'Develop', [], ['develop'], { button });
   add('original', 'Show original / external edit', 'View', ['\\'], ['review','grid','compare'], { ignoreShift: true });
   add('escape', 'Clear selection / exit fullscreen / fit', 'View', ['Escape'], ALL, { ignoreShift: true, allowModifiers: ['Ctrl','Meta','Alt'] });
   add('fullscreen', 'Toggle fullscreen', 'View', ['F'], ALL, { ignoreShift: true });
