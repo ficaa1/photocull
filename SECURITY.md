@@ -12,4 +12,4 @@ PhotoCull stores sessions, decisions, recipes, previews and settings locally. Th
 
 Source images are read-only during culling and finished-image export. Copy export writes metadata only to destination copies. Source XMP autosave follows the configured policy: ordinary folders by default, recognized camera cards excluded. The source-XMP export command is explicit; disk deletion always requires confirmation. Treat image parsers, metadata, external editor paths and downloaded lens profiles as untrusted input.
 
-Lensfun data downloads only on request. The external Dehancer plugin is separately installed. Installers are currently unsigned and macOS builds are not notarized. Check release provenance before installing.
+Lensfun data downloads only on request. The external Dehancer plugin is separately installed. Installers are not signed with a publisher certificate: Windows installers are unsigned, and macOS builds are ad-hoc signed but not notarized. Check release provenance before installing.

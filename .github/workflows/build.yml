@@ -72,6 +72,14 @@ jobs:
       - run: npm run test:ui
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml
       - run: npm run build
+      # Without a valid bundle signature, macOS calls a downloaded app "damaged".
+      - name: Check the ad-hoc signature
+        if: runner.os == 'macOS'
+        run: |
+          app=src-tauri/target/release/bundle/macos/PhotoCull.app
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dv "$app" 2>&1 | grep -q 'Signature=adhoc'
+          codesign -d --entitlements - "$app/Contents/MacOS/node" | grep -q allow-jit
       - uses: actions/upload-artifact@v4
         with:
           name: PhotoCull-${{ matrix.os }}

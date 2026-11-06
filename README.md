@@ -13,7 +13,7 @@ PhotoCull is under active development. Windows is the locally validated desktop 
 Download an installer for your platform from [Releases](https://github.com/ficaa1/photocull/releases):
 
 - **Windows:** use the `.msi` or `-setup.exe` installer. Windows needs WebView2. Builds are unsigned, so SmartScreen may show an unknown-publisher warning; for a download you trust, use **More info → Run anyway** if Windows offers it.
-- **macOS Apple Silicon:** open the `.dmg` and move PhotoCull to Applications. Builds are unsigned and not notarized. Read [macOS setup](docs/macos.md) for Gatekeeper steps and the validation limits before using the app.
+- **macOS Apple Silicon:** open the `.dmg` and move PhotoCull to Applications. Builds are ad-hoc signed but not notarized, so the first launch needs **Open Anyway**. Read [macOS setup](docs/macos.md) for Gatekeeper steps and the validation limits before using the app.
 
 The desktop bundle includes its Node runtime and image tools; Node and Rust are only needed when building from source. Use a backed-up folder for your first session.
 

@@ -19,9 +19,11 @@ npm run build
 
 The outputs are `src-tauri/target/release/bundle/macos/PhotoCull.app` and a `.dmg` under `src-tauri/target/release/bundle/dmg/`. Build natively because sharp and ExifTool include platform-specific binaries. Build the `.dmg` on the Mac itself; installer builds run locally.
 
-## Opening an unsigned build
+## Opening a downloaded build
 
-Bundles are unsigned and not notarized. Move `PhotoCull.app` to Applications, then right-click it and choose **Open**. If macOS blocks that route, try opening once, then use **System Settings → Privacy & Security → Open Anyway** and confirm. If quarantine still prevents opening a build you trust, remove its quarantine attribute in Terminal using the actual app path:
+Bundles are ad-hoc signed but not notarized, so Gatekeeper blocks a downloaded copy the first time. Move `PhotoCull.app` to Applications and open it once. When macOS says it cannot verify the app, open **System Settings → Privacy & Security** within the hour, click **Open Anyway** and confirm. Right-click → **Open** no longer works for this on macOS 15 and later. Builds made on the same Mac are not quarantined and open directly.
+
+Releases before 0.9.2 had no bundle signature, so macOS reports them as **damaged** and does not offer **Open Anyway**. For one of those builds you trust, remove the quarantine attribute in Terminal using the actual app path:
 
 ```sh
 xattr -dr com.apple.quarantine "/Applications/PhotoCull.app"

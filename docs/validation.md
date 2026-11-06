@@ -18,7 +18,7 @@ Renderer smokes cover recipes, preview scheduling, histogram interaction, loupe 
 
 For native Windows checks, launch a separate test instance with `PHOTOCULL_DATA_DIR`, `WEBVIEW2_USER_DATA_FOLDER` and `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=PORT`. Use `develop-windows.cjs` or `image-export-windows.cjs` with explicit copied fixture paths. Follow export with `image-export-readback.cjs` for codec readback. Dehancer is separately installed and its round trip is a manual check.
 
-Known limits: unsigned installers, unverified local macOS launch, variable lens-profile coverage, slow AVIF encoding, and externally saved TIFFs that may be 8-bit without ICC metadata. See [display colour validation](display-color-validation.md) for pixel and ICC checks. Environment-specific timings are observations, not performance guarantees.
+Known limits: installers without a publisher signature (macOS builds are ad-hoc signed, not notarized), unverified local macOS launch, variable lens-profile coverage, slow AVIF encoding, and externally saved TIFFs that may be 8-bit without ICC metadata. See [display colour validation](display-color-validation.md) for pixel and ICC checks. Environment-specific timings are observations, not performance guarantees.
 
 ## Focus, bursts and Compare (2026-11-06)
 
