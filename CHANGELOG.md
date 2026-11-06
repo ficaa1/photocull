@@ -9,6 +9,10 @@ All notable changes to PhotoCull are documented here. This file follows [Keep a 
 - Searchable command palette, customizable shortcuts and portable settings bundles with import preview and backup.
 - Skippable welcome, local diagnostics with rotating logs, and configurable camera-card detection.
 - Resumable whole-card backups with SHA-256 verification and complete-backup status; optional verification for Copy picks.
+- Autofocus-point overlays, persisted visibility and 100% zoom centered on recorded focus coordinates.
+- Capture-time burst stacks, cached background sharpness ranking and confirmed, undoable keep-sharpest decisions.
+- Two-to-four-photo Compare with linked zoom/pan, and draggable Develop before/after splits.
+
 - MIT license, contributor and security guidance, third-party inventory and in-app About credits.
 - Guarded public-repository build workflow and portable Windows symlink checks.
 - Configurable external editors with format, color space, destination and cleanup controls.
