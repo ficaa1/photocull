@@ -9,7 +9,7 @@ const culling = { metadata:new Map(), jobs:new Map(), scores:new Map(), bursts:[
 let survey, burstPrompt=null;
 const menus = [];
 // Automatic card opening waits until first-run Welcome has been shown and answered.
-let welcomeSettled = false;
+let welcomeSettled = false, autoOpenSuppressed = false;
 let layoutPrefs = { sources: true, details: true, gridSize: 205 };
 try { const saved = JSON.parse(localStorage.getItem('photocull-layout') || '{}'); layoutPrefs = { sources: saved.sources !== false, details: saved.details !== false, gridSize: Math.min(320, Math.max(160, Number(saved.gridSize) || 205)) }; } catch {}
 const glyph = paths => `<svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
@@ -154,7 +154,7 @@ function receiveDevices(snapshot) {
   state.devices = snapshot.devices; state.deviceError = snapshot.error;
   renderDevices();
   const cameras = state.devices.filter(d => d.camera);
-  if (welcomeSettled && state.settingsReady && state.settings.autoOpenCards && !document.querySelector('dialog[open]') && !state.session && !state.busy && cameras.length === 1 && !state.autoOpened.has(cameras[0].id)) {
+  if (welcomeSettled && !autoOpenSuppressed && state.settingsReady && state.settings.autoOpenCards && !document.querySelector('dialog[open]') && !state.session && !state.busy && cameras.length === 1 && !state.autoOpened.has(cameras[0].id)) {
     state.autoOpened.add(cameras[0].id); void openDevice(cameras[0]);
   } else if (state.session && state.devices.some(d => !previous.has(d.id))) toast('Card connected');
   for (const id of state.autoOpened) if (!state.devices.some(d => d.id === id)) state.autoOpened.delete(id);
@@ -1272,7 +1272,8 @@ document.body.append(welcome);
 function showWelcome() {for(const open of document.querySelectorAll('dialog[open]'))if(open!==welcome)open.close();welcome.hidden=false;if(!welcome.open)welcome.showModal();$('welcome-keys').replaceChildren();for(const id of ['open','navigate-right','flag-pick','flag-reject','rating-5','zoom-toggle','view-grid','palette']){const c=commands.commands.find(c=>c.id===id);$('welcome-keys').append(workspaceNode('span',c.title),workspaceNode('kbd',shortcutLabel(c)));}}
 function settleWelcome(autoOpen) {
   welcomeSettled=true;
-  if(!autoOpen)for(const device of state.devices)if(device.camera)state.autoOpened.add(device.id);
+  // Covers cards discovered after this choice as well: the user picked another path for this launch.
+  if(!autoOpen)autoOpenSuppressed=true;
   receiveDevices({devices:state.devices,error:state.deviceError});
 }
 async function dismissWelcome(autoOpen=true){welcome.hidden=true;if(welcome.open)welcome.close();state.settings=await api.settings({welcomeDismissed:true});settleWelcome(autoOpen);}
@@ -1286,7 +1287,8 @@ async function chooseCard() {
   const cameras=state.devices.filter(d=>d.camera);
   revealSources();
   if(cameras.length===1)return openDevice(cameras[0]);
-  if(!state.devices.length)return toast('No camera card found. Insert a card, or use Open folder… for a copied card.');
+  if(!cameras.length)toast('No camera card found. Insert a card, or use Open folder… for a copied card.');
+  if(!state.devices.length)return;
   $('devices-panel').scrollIntoView({block:'nearest'});$('device-list').querySelector('button')?.focus();
 }
 welcome.addEventListener('cancel',e=>{e.preventDefault();void dismissWelcome(true).catch(error=>toast(error.message));});
@@ -1313,7 +1315,7 @@ $('backup-start').onclick=async()=>{setBackupBusy(true);try{const source=$('back
 $('backup-check').onclick=async()=>{setBackupBusy(true);$('backup-status').textContent='Checking every source and destination hash…';try{const source=$('backup-source').value,status=await api.backupStatus(source);cardStatuses.set(source,status);$('backup-status').textContent=backupStatusText(status);$('backup-failures').textContent=status.missing.map(f=>`${f.name}: ${f.reason}`).join('\n');}catch(e){$('backup-status').textContent=e.message;cardStatuses.set($('backup-source').value,{safe:false,total:0,verified:0,missing:[{name:'Card',reason:e.message}]});}finally{setBackupBusy(false);}};
 $('backup-cancel').onclick=()=>api.backupCancel();$('backup-close').onclick=()=>backupDialog.close();backupDialog.addEventListener('cancel',e=>{if(backupRunning)e.preventDefault();});
 function canTreatCard() {return !!state.session&&!state.session.removable;}
-async function treatCard(){if(!state.session)return toast('Open a folder first.');if(!canTreatCard())return toast('This session is already a camera card.');receiveDevices(await api.manualCard(state.session.folder));state.session.removable=true;toast('Folder is now treated as a camera card.');}
+async function treatCard(){if(!state.session)return toast('Open a folder first.');if(!canTreatCard())return toast('This session is already a camera card.');receiveDevices(await api.manualCard(state.session.folder));state.session.removable=true;renderEditorActions();toast('Folder is now treated as a camera card.');}
 function deviceBackupRow(device){const row=workspaceNode('div',null,{class:'device-backup'}),status=cardStatuses.get(device.root) || device.backup;row.append(workspaceButton('Back up card…',()=>openBackup(device.root)));if(status){row.append(workspaceNode('p',backupStatusText(status),{class:status.safe?'backup-safe':'backup-pending'}));if(status.missing.length){const detail=workspaceNode('details');detail.append(workspaceNode('summary','Files needing backup'),workspaceNode('pre',status.missing.map(f=>`${f.name}: ${f.reason}`).join('\n')));row.append(detail);}}return row;}
 // Add discoverable entry points alongside the existing folder controls.
 $('source-menu').append(menuItem('Open folder…',openFolder),menuSeparator(),menuItem('Back up card or folder…',()=>openBackup(),'backup-open'),menuItem('Treat folder as card',treatCard,'treat-card'));
@@ -1379,11 +1381,12 @@ function toggleBurst() {
   if(culling.expanded.has(burst.id))culling.expanded.delete(burst.id);else culling.expanded.add(burst.id);
   filmSignature='';render();
 }
+function setPauseLabel(text) {$('analysis-pause').textContent=text;$('analysis-pause').dataset.action=text.split(' ')[0].toLowerCase();}
 function setAnalysis(text,phase) {$('analysis-status').textContent=text;$('analysis-status').dataset.phase=phase;$('analysis-status').closest('.analysis').title=text;}
 function cancelCulling() {culling.epoch++;culling.running=false;void api.cancelSharpness().catch(()=>{});}
 async function analyzeCulling() {
   cancelCulling();culling.paused=false;culling.running=true;const epoch=culling.epoch,session=state.session?.id,items=[...(state.session?.items || [])];
-  $('analysis-pause').hidden=!items.length;$('analysis-pause').textContent='Pause analysis';
+  $('analysis-pause').hidden=!items.length;setPauseLabel('Pause analysis');
   const current=()=>epoch===culling.epoch && session===state.session?.id && !culling.paused;
   const yieldUI=()=>new Promise(resolve=>setTimeout(resolve,35));let failures=0;
   try {
@@ -1402,7 +1405,7 @@ async function analyzeCulling() {
         setAnalysis(`Focus ${culling.scores.size}/${items.length}`,'running');filmSignature='';render();await yieldUI();
       }
     }
-    if(current()){setAnalysis(failures?`${failures} unavailable`:api.canAnalyze?'Focus ready':'Desktop scores',failures?'warn':'done');$('analysis-pause').hidden=!failures;$('analysis-pause').textContent='Retry analysis';}
+    if(current()){setAnalysis(failures?`${failures} unavailable`:api.canAnalyze?'Focus ready':'Desktop scores',failures?'warn':'done');$('analysis-pause').hidden=!failures;setPauseLabel('Retry analysis');}
   }finally{if(epoch===culling.epoch)culling.running=false;}
 }
 function promptKeepSharpest() {
@@ -1414,7 +1417,7 @@ function promptKeepSharpest() {
 }
 $('focus-toggle').onclick=()=>commands.execute('focus-overlay');$('compare-mode').onclick=()=>commands.execute('view-compare');
 $('burst-stack').onclick=()=>commands.execute('burst-stack');$('burst-keep').onclick=()=>commands.execute('burst-keep');
-$('analysis-pause').onclick=()=>{if(culling.running){cancelCulling();culling.paused=true;setAnalysis('Analysis paused','paused');$('analysis-pause').textContent='Resume analysis';}else void analyzeCulling();};
+$('analysis-pause').onclick=()=>{if(culling.running){cancelCulling();culling.paused=true;setAnalysis('Analysis paused','paused');setPauseLabel('Resume analysis');}else void analyzeCulling();};
 $('burst-cancel').onclick=()=>{$('burst-dialog').close();burstPrompt=null;};
 $('burst-dialog').addEventListener('cancel',()=>{burstPrompt=null;});
 $('burst-confirm').onclick=async()=>{

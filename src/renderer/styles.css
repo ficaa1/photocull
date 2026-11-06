@@ -724,3 +724,17 @@ dialog details > summary:hover { color: var(--text); }
   #compare-mode > span { display: none; }
   #compare-mode { width: var(--control); padding: 0; }
 }
+
+/* Toolbar: the right group shrinks (search first) before the whole group drops below the title. */
+.toolbar { flex-wrap: wrap; }
+.toolbar-right { flex: 1 1 0; flex-wrap: nowrap; }
+@media (max-width: 1150px) {
+  #color-filter { width: 100px; }
+  .analysis .text-button { font-size: 0; width: 24px; justify-content: center; border-radius: var(--r1); }
+  .analysis .text-button:hover { background: var(--hover); text-decoration: none; }
+  .analysis .text-button::before { font-size: 11px; color: var(--text-2); }
+  .analysis .text-button[data-action=pause]::before { content: '❚❚'; letter-spacing: -2px; }
+  .analysis .text-button[data-action=resume]::before { content: '▶'; }
+  .analysis .text-button[data-action=retry]::before { content: '↻'; font-size: 14px; }
+  .view-actions .button { padding: 0 7px; }
+}

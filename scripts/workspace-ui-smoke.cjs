@@ -59,6 +59,14 @@ async function main(){
   await cardRun.locator('#welcome-panel:not([hidden])').waitFor();await cardRun.waitForFunction(()=>state.devices.length===1&&state.settingsReady);await cardRun.waitForTimeout(800);
   assert.equal(await cardRun.evaluate(()=>state.session),null,'no session opens behind Welcome');
   await cardRun.keyboard.press('Escape');await cardRun.waitForFunction(()=>document.querySelector('#count-all').textContent==='4');await app.close();app=null;
+  // Device discovery that finishes after another Welcome choice must not open the card either.
+  for(const [name,choose] of [['welcome-folder',async run=>{await run.locator('#welcome-open').click();}],['welcome-editor',async run=>{await run.getByRole('button',{name:'Set up an external editor'}).click();await run.locator('#settings-cancel').click();}]]){
+    app=await launch({env:{...process.env,PHOTOCULL_DATA_DIR:path.join(root,name),PHOTOCULL_TEST_WELCOME:'1',PHOTOCULL_TEST_DEVICES:deviceFile}});const run=await app.firstWindow();const held=[];
+    await run.route('**/rpc**',route=>{if(route.request().postDataJSON()?.method==='devices')held.push(route);else route.continue();});await run.reload();
+    await run.locator('#welcome-panel:not([hidden])').waitFor();assert.equal(await run.evaluate(()=>state.devices.length),0);await choose(run);
+    await run.waitForFunction(()=>!document.querySelector('dialog[open]'));assert.ok(held.length>0,'discovery was held');for(const route of held.splice(0))await route.continue();
+    await run.waitForFunction(()=>state.devices.length===1);await run.waitForTimeout(800);assert.equal(await run.evaluate(()=>state.session),null,name+': late discovery stays closed');await app.close();app=null;
+  }
   // Choose camera card reveals hidden Sources and opens the only card.
   app=await launch({env:{...process.env,PHOTOCULL_DATA_DIR:path.join(root,'welcome-choose'),PHOTOCULL_TEST_WELCOME:'1',PHOTOCULL_TEST_DEVICES:deviceFile}});const chooseRun=await app.firstWindow();
   await chooseRun.locator('#welcome-panel:not([hidden])').waitFor();await chooseRun.waitForFunction(()=>state.devices.length===1);await chooseRun.evaluate(()=>{layoutPrefs.sources=false;applyPaneLayout();});
