@@ -3,15 +3,17 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
+const { normalizeSettings } = require('../src/preferences.cjs');
 const { Library } = require('../src/library.cjs');
 const { TransferService } = require('../src/transfer.cjs');
 const { updateXmp, readXmp } = require('../src/xmp.cjs');
-async function setup(t) {
+// Transfer-only tests isolate copying from the separate source autosave policy.
+async function setup(t, settings = { writeSidecars: 'never' }) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'photocull-transfer-'));
-  t.after(() => fs.rm(root, { recursive: true, force: true }));
   const photos = path.join(root, 'photos'), destination = path.join(root, 'keepers');
   await fs.mkdir(photos); await fs.mkdir(destination);
-  const library = new Library(path.join(root, 'state'));
+  const library = new Library(path.join(root, 'state'), { settings: () => normalizeSettings(settings) });
+  t.after(async () => { await library.close(); await fs.rm(root, { recursive: true, force: true }); });
   return { root, photos, destination, library };
 }
 async function pickAll(library, photos, recursive = false) {
@@ -40,6 +42,30 @@ test('copy picks transfers original bytes only; optional companion and destinati
   assert.match(exported, /xmp:Label="Blue"/, 'Independent imported color survives a pick decision'); assert.match(exported, /preserve me/);
   assert.equal(await fs.readFile(path.join(photos, 'a.xmp'), 'utf8'), xml);
   assert.equal(events.at(-1).state, 'done'); assert.equal(result.bytesCopied, result.totalBytes);
+});
+test('copy preserves current sidecar metadata after automatic source writes have completed', async t => {
+  const { photos, destination, library } = await setup(t, {});
+  const photo = path.join(photos, 'a.ARW'), sidecar = path.join(photos, 'a.xmp');
+  await fs.writeFile(photo, 'camera original');
+  const original = updateXmp('', { flag: 'none', rating: 1 }).replace('xmp:Label=""', 'xmp:Label="Blue" custom="preserve me"');
+  await fs.writeFile(sidecar, original);
+  const session = await library.scan(photos), id = session.items[0].id;
+  await library.decide(session.id, id, { flag: 'pick', rating: 5 });
+  // Force the schedule that used to race the source equality assertion.
+  await library.flushSidecars();
+  const saved = await fs.readFile(sidecar, 'utf8');
+  assert.notEqual(saved, original); assert.equal(readXmp(saved).rating, 5); assert.match(saved, /custom="preserve me"/);
+  const copies = new TransferService(); t.after(() => copies.close());
+  const result = await copies.copy(library.get(session.id), destination, { includeXmp: true });
+  assert.equal(result.copied, 1); assert.deepEqual(result.failures, []);
+  assert.equal(await fs.readFile(sidecar, 'utf8'), saved, 'Copying itself must not rewrite the source sidecar');
+  assert.equal(await fs.readFile(path.join(photos, 'a.xmp.photocull-backup'), 'utf8'), original);
+  assert.equal(await fs.readFile(path.join(destination, 'a.ARW'), 'utf8'), 'camera original');
+  assert.equal(await fs.readFile(photo, 'utf8'), 'camera original');
+  const xml = await fs.readFile(path.join(destination, 'a.xmp'), 'utf8');
+  assert.equal(readXmp(xml).rating, 5); assert.match(xml, /custom="preserve me"/);
+  const portable = readXmp(xml, normalizeSettings({}), { portable: true });
+  assert.equal(portable.flag, 'pick'); assert.equal(portable.rating, 5);
 });
 test('default export excludes companion JPEGs and XMP; JPEG-only picks are copied', async t => {
   const { photos, destination, library } = await setup(t);

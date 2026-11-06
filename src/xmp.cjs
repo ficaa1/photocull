@@ -24,8 +24,10 @@ function parse(xml) {
 }
 
 function property(doc, name, namespace = XMP) {
-  for (const desc of Array.from(doc.getElementsByTagNameNS(RDF, 'Description'))) {
-    if (desc.parentNode?.namespaceURI !== RDF || desc.parentNode.localName !== 'RDF') continue;
+  const descriptions = Array.from(doc.getElementsByTagNameNS(RDF, 'Description')).filter(desc => desc.parentNode?.namespaceURI === RDF && desc.parentNode.localName === 'RDF');
+  const subject = descriptions[0]?.getAttributeNS(RDF, 'about') || '';
+  for (const desc of descriptions) {
+    if ((desc.getAttributeNS(RDF, 'about') || '') !== subject) continue;
     if (desc.hasAttributeNS(namespace, name)) return desc.getAttributeNS(namespace, name);
     const el = Array.from(desc.childNodes).find(n => n.namespaceURI === namespace && n.localName === name);
     if (el) return el.textContent;
@@ -63,20 +65,51 @@ function readXmp(xml, settings, { portable = false } = {}) {
   return result;
 }
 
-// XML is validated with the DOM above, but only owned property spans are changed.
-// Keeping the rest of the original string avoids reformatting foreign develop data,
-// namespace aliases, comments, processing instructions or entity spellings.
+// Generated properties can share the original Description without changing its
+// foreign XML. Choose unused prefixes if another application binds ours elsewhere.
+function generatedProperties(description, scopes) {
+  const doc = description.ownerDocument, bindings = new Map();
+  const prefixFor = (namespace, preferred) => {
+    if (namespace === XML) return 'xml';
+    if (bindings.has(namespace)) return bindings.get(namespace);
+    let prefix = preferred;
+    for (let n = 1; scopes[prefix] && scopes[prefix] !== namespace || [...bindings].some(([ns, p]) => p === prefix && ns !== namespace); n++) prefix = preferred + n;
+    bindings.set(namespace, prefix); return prefix;
+  };
+  const name = node => node.namespaceURI ? prefixFor(node.namespaceURI, node.prefix || 'ns') + ':' + node.localName : node.nodeName;
+  const copy = (node, root = false) => {
+    if (node.nodeType !== 1) return node.cloneNode(true);
+    const result = doc.createElementNS(node.namespaceURI, name(node));
+    for (const attr of Array.from(node.attributes)) {
+      if (attr.namespaceURI === XMLNS || root && attr.namespaceURI === RDF && attr.localName === 'about') continue;
+      result.setAttributeNS(attr.namespaceURI, name(attr), attr.value);
+    }
+    for (const child of Array.from(node.childNodes)) result.appendChild(copy(child));
+    return result;
+  };
+  const result = copy(description, true);
+  for (const [namespace, prefix] of bindings) if (scopes[prefix] !== namespace) result.setAttributeNS(XMLNS, 'xmlns:' + prefix, namespace);
+  const serializer = new XMLSerializer(), xml = serializer.serializeToString(result);
+  const opening = /^<[^>"']*(?:(?:"[^"]*"|'[^']*')[^>"']*)*>/.exec(xml)[0];
+  return { attributes: Array.from(result.attributes).map(attr => serializer.serializeToString(attr)).join(''),
+    children: result.childNodes.length ? xml.slice(opening.length, -('</' + result.nodeName + '>').length) : '' };
+}
+
+// Validate with the DOM, then edit only owned XML spans. Unknown attributes,
+// elements, comments, namespace aliases and entity spellings retain their bytes.
 function patchProperties(xml, owned, description) {
   const tokens = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<\/?[^>"']*(?:(?:"[^"]*"|'[^']*')[^>"']*)*>/g;
   const stack = [], edits = [];
-  let match, insertion;
+  let match, insertion, target, subject;
   const key = (ns, name) => ns + ':' + name;
+  const decode = value => value.replace(/&(#x[\da-f]+|#\d+|amp|quot|apos|lt|gt);/gi, (_, entity) => entity[0] === '#' ? String.fromCodePoint(parseInt(entity.slice(entity[1].toLowerCase() === 'x' ? 2 : 1), entity[1].toLowerCase() === 'x' ? 16 : 10)) : ({ amp: '&', quot: '"', apos: "'", lt: '<', gt: '>' })[entity.toLowerCase()]);
   while ((match = tokens.exec(xml))) {
     const token = match[0], start = match.index, end = tokens.lastIndex;
     if (/^<[!?]/.test(token)) { if (stack.at(-1)?.desc) stack.at(-1).replaceable = false; continue; }
     if (token.startsWith('</')) {
       const node = stack.pop();
-      if (node.replaceable) {
+      if (node === target) edits.push([start, start, node.generated.children]);
+      else if (node.replaceable) {
         for (let i = edits.length - 1; i >= 0; i--) if (edits[i][0] >= node.start) edits.splice(i, 1);
         edits.push([node.start, end, '']);
       } else if (node.remove) edits.push([node.start, end, '']);
@@ -86,30 +119,40 @@ function patchProperties(xml, owned, description) {
     const parent = stack.at(-1), scopes = { ...parent?.scopes };
     const attrs = [...token.matchAll(/\s+([^\s=/>]+)\s*=\s*("[^"]*"|'[^']*')/g)];
     for (const attr of attrs) {
-      if (attr[1] === 'xmlns') scopes[''] = attr[2].slice(1, -1);
-      else if (attr[1].startsWith('xmlns:')) scopes[attr[1].slice(6)] = attr[2].slice(1, -1);
+      if (attr[1] === 'xmlns') scopes[''] = decode(attr[2].slice(1, -1));
+      else if (attr[1].startsWith('xmlns:')) scopes[attr[1].slice(6)] = decode(attr[2].slice(1, -1));
     }
     const name = /^<([^\s/>]+)/.exec(token)[1], parts = name.split(':');
     const local = parts.at(-1), ns = scopes[parts.length > 1 ? parts[0] : ''];
-    const desc = ns === RDF && local === 'Description' && parent?.ns === RDF && parent?.local === 'RDF';
+    const about = attrs.find(a => a[1].split(':')[1] === 'about' && scopes[a[1].split(':')[0]] === RDF);
+    const candidate = ns === RDF && local === 'Description' && parent?.ns === RDF && parent?.local === 'RDF';
+    const currentSubject = about ? decode(about[2].slice(1, -1)) : '';
+    if (candidate && subject === undefined) subject = currentSubject;
+    const desc = candidate && currentSubject === subject;
     if (parent?.desc && !owned.has(key(ns, local))) parent.replaceable = false;
-    const replaceable = desc && attrs.some(a => a[1].split(':').at(-1) === 'version' && scopes[a[1].split(':')[0]] === PHOTOCULL) && attrs.every(a => a[1] === 'xmlns' || a[1].startsWith('xmlns:') && [RDF, XMP, PHOTOCULL, DC].includes(a[2].slice(1, -1)) || a[1].split(':').at(-1) === 'about' && scopes[a[1].split(':')[0]] === RDF || owned.has(key(scopes[a[1].split(':')[0]], a[1].split(':')[1])));
+    const replaceable = desc && attrs.some(a => a[1].split(':').at(-1) === 'version' && scopes[a[1].split(':')[0]] === PHOTOCULL) && attrs.every(a => a[1] === 'xmlns' || a[1].startsWith('xmlns:') && [RDF, XMP, PHOTOCULL, DC].includes(decode(a[2].slice(1, -1))) || a[1].split(':').at(-1) === 'about' && scopes[a[1].split(':')[0]] === RDF || owned.has(key(scopes[a[1].split(':')[0]], a[1].split(':')[1])));
     const remove = !stack.some(n => n.remove) && parent?.desc && owned.has(key(ns, local));
+    const node = { scopes, ns, local, start, desc, remove, replaceable };
+    if (desc && !target) { target = node; node.generated = generatedProperties(description, scopes); }
     if (desc && !stack.some(n => n.remove) && !remove) for (const attr of attrs) {
       const [prefix, field] = attr[1].split(':');
       if (field && owned.has(key(scopes[prefix], field))) edits.push([start + attr.index, start + attr.index + attr[0].length, '']);
     }
     if (/\/\s*>$/.test(token)) {
-      if (remove || replaceable) {
+      if (node === target) edits.push([end - 2, end, node.generated.attributes + '>' + node.generated.children + '</' + name + '>']);
+      else if (remove || replaceable) {
         for (let i = edits.length - 1; i >= 0; i--) if (edits[i][0] >= start) edits.splice(i, 1);
         edits.push([start, end, '']);
       }
       if (ns === RDF && local === 'RDF' && insertion === undefined) {
-        edits.push([end - 2, end, '>' + description + '</' + name + '>']); insertion = -1;
+        edits.push([end - 2, end, '>' + new XMLSerializer().serializeToString(description) + '</' + name + '>']); insertion = -1;
       }
-    } else stack.push({ scopes, ns, local, start, desc, remove, replaceable });
+    } else {
+      if (node === target) edits.push([end - 1, end - 1, node.generated.attributes]);
+      stack.push(node);
+    }
   }
-  if (insertion >= 0) edits.push([insertion, insertion, description]);
+  if (!target && insertion >= 0) edits.push([insertion, insertion, new XMLSerializer().serializeToString(description)]);
   if (insertion === undefined) throw new Error('Unsupported RDF structure; existing sidecar left intact.');
   for (const [start, end, value] of edits.sort((a, b) => b[0] - a[0])) xml = xml.slice(0, start) + value + xml.slice(end);
   return xml;
@@ -177,7 +220,7 @@ function updateXmp(xml, decision, settings) {
   scalar(PHOTOCULL, 'photocull', 'modified', new Date(decision.modified || Date.now()).toISOString());
   if (Object.hasOwn(decision, 'develop')) scalar(PHOTOCULL, 'photocull', 'develop', JSON.stringify({ version: 1, state: decision.develop ? { ...portableDevelop(decision.develop, decision.path, decision.photoRoot), edited: !!decision.develop.editedBy } : null }));
   desc.setAttributeNS(XMLNS, 'xmlns:rdf', RDF);
-  return patchProperties(xml || base, owned, new XMLSerializer().serializeToString(desc));
+  return patchProperties(xml || base, owned, desc);
 }
 
 async function atomicWrite(file, data) {

@@ -65,7 +65,7 @@ test('naming renders custom text, sequence, capture/export dates and rejects uns
 test('renamed RAW, companion and metadata share a stem; collisions skip every conflicting group', async t => {
   const dir=await temporary(t),photos=path.join(dir,'photos'),destination=path.join(dir,'out'); await fs.mkdir(photos);await fs.mkdir(destination);
   for(const name of ['a.ARW','a.JPG','b.ARW'])await fs.writeFile(path.join(photos,name),name);
-  const library=new Library(path.join(dir,'state')),session=await library.scan(photos);
+  const library=new Library(path.join(dir,'state'),{settings:()=>normalizeSettings({writeSidecars:'never'})}),session=await library.scan(photos);
   for(const item of session.items)await library.decide(session.id,item.id,{flag:'pick',color:'4',rating:5});
   const config=normalizeSettings({metadata:{creator:'Test Photographer'},naming:{template:'{text}_{capturedate}_{seq:3}',text:'Trip',start:7}});
   const copies=new TransferService({captureDate:async()=>'2026:09:26'});
@@ -73,7 +73,7 @@ test('renamed RAW, companion and metadata share a stem; collisions skip every co
   assert.equal(result.copied,2); assert.deepEqual((await fs.readdir(destination)).sort(),['Trip_20260926_007.ARW','Trip_20260926_007.JPG','Trip_20260926_007.xmp','Trip_20260926_008.ARW','Trip_20260926_008.xmp']);
   const xmp=await fs.readFile(path.join(destination,'Trip_20260926_007.xmp'),'utf8');assert.match(xmp,/Test Photographer/); assert.match(xmp,/xmp:Label="Blue"/);
   const collision=await copies.copy(library.get(session.id),destination,{naming:{template:'same',text:'',start:1}});assert.equal(collision.skipped.length,2);assert.equal(collision.copied,0);
-  assert.deepEqual((await fs.readdir(photos)).sort(),['a.ARW','a.JPG','b.ARW']);
+  assert.deepEqual((await fs.readdir(photos)).sort(),['a.ARW','a.JPG','b.ARW']);await library.close();await copies.close();
 });
 
 test('unreadable settings are retained and a deleted active preset does not lock preferences', async t => {

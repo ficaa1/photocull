@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
+const { DOMParser } = require('@xmldom/xmldom');
 const { performance } = require('node:perf_hooks');
 const { Library } = require('../src/library.cjs');
 const { normalizeSettings, DEFAULTS } = require('../src/preferences.cjs');
@@ -19,6 +20,9 @@ async function setup(t, settings = {}, names = ['photo.ARW']) {
   t.after(async () => { await library.close(); await fs.rm(root, { recursive: true, force: true }); });
   return { root, photos, data, library, setSettings: patch => { config = normalizeSettings(patch, config); } };
 }
+const RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
+const parse = xml => new DOMParser({ onError: (level, message) => { throw new Error(message); } }).parseFromString(xml, 'application/xml');
+const descriptions = xml => Array.from(parse(xml).getElementsByTagNameNS(RDF, 'Description'));
 const fixture = name => fs.readFile(path.join(__dirname, 'fixtures', 'xmp', name + '.xmp'), 'utf8');
 const state = xml => readXmp(xml, DEFAULTS, { portable: true });
 
@@ -29,7 +33,10 @@ for (const name of ['lightroom', 'darktable', 'capture-one']) test(`${name} keep
       : [xml.match(/   <dc:subject>[\s\S]*?<\/dc:rights>/)[0]];
   let next = xml;
   const item = { flag: 'reject', rating: 4, color: '5', modified: 1700000000000, develop: { recipe: 'camera', settings: { light: { exposure: 0.5 } }, tiff: null, editedBy: null } };
-  for (let n = 0; n < 8; n++) next = updateXmp(next, item);
+  for (let n = 0; n < 8; n++) {
+    next = updateXmp(next, item);
+    assert.equal(descriptions(next).length, 1, 'New properties must merge into the existing Description');
+  }
   for (const bytes of foreign) assert.ok(next.includes(bytes), 'Foreign properties must not be serialized or reformatted');
   assert.equal((next.match(/photocull:version=/g) || []).length, 1);
   assert.equal((next.match(/xmp:Rating=/g) || []).length, 1);
@@ -45,6 +52,55 @@ test('namespace aliases, nested foreign properties, quoted markup and empty RDF 
   assert.equal(readXmp(next).rating, 5);
   const empty = `<x:xmpmeta xmlns:x="adobe:ns:meta/"><r:RDF xmlns:r="http://www.w3.org/1999/02/22-rdf-syntax-ns#"/></x:xmpmeta>`;
   assert.equal(readXmp(updateXmp(empty, { flag: 'pick', rating: 3 })).rating, 3);
+});
+
+test('new packets and self-closing descriptions keep a single photo Description', () => {
+  let xml = '';
+  for (let n = 0; n < 5; n++) {
+    xml = updateXmp(xml, { flag: 'pick', rating: n, develop: null });
+    assert.equal(descriptions(xml).length, 1);
+    assert.equal(state(xml).rating, n);
+  }
+});
+
+test('merging properties avoids foreign prefix collisions and preserves their XML bytes', () => {
+  const foreign = `<xmp:Curve rdf:value="keep &amp; preserve"/><photocull:note>foreign</photocull:note><dc:title>foreign title</dc:title>`;
+  let xml = `<x:xmpmeta xmlns:x="adobe:ns:meta/"><r:RDF xmlns:r="${RDF}"><r:Description r:about="" xmlns:xmp="urn:foreign:xmp" xmlns:photocull="urn:foreign:photocull" xmlns:rdf="urn:foreign:rdf" xmlns:dc="urn:foreign:dc" xmp:Rating='99'>${foreign}</r:Description></r:RDF></x:xmpmeta>`;
+  const config = normalizeSettings({ metadata: { creator: 'Test Photographer', keywords: ['travel'] } });
+  for (let n = 0; n < 5; n++) {
+    xml = updateXmp(xml, { flag: 'pick', rating: 4, develop: null }, config);
+    const [desc] = descriptions(xml);
+    assert.equal(descriptions(xml).length, 1);
+    assert.equal(desc.getAttributeNS('urn:foreign:xmp', 'Rating'), '99');
+    assert.equal(desc.getAttributeNS('http://ns.adobe.com/xap/1.0/', 'Rating'), '4');
+    assert.equal(desc.getElementsByTagNameNS('http://purl.org/dc/elements/1.1/', 'creator')[0].textContent, 'Test Photographer');
+    assert.equal(desc.getElementsByTagNameNS(RDF, 'li').length, 2);
+    assert.ok(xml.includes(foreign)); assert.ok(xml.includes("xmp:Rating='99'"));
+    assert.equal(state(xml).flag, 'pick');
+  }
+});
+
+test('namespace entities and default RDF namespaces merge without duplicate fields', () => {
+  const xml = `<x:xmpmeta xmlns:x="adobe:ns:meta/"><RDF xmlns="${RDF}"><Description xmlns:p="http:&#47;&#47;ns.adobe.com/xap/1.0/" p:Rating="1"><p:Label>Blue</p:Label></Description></RDF></x:xmpmeta>`;
+  const next = updateXmp(xml, { flag: 'reject', rating: 3 });
+  assert.equal(descriptions(next).length, 1); assert.equal(state(next).rating, 3);
+  assert.ok(next.includes('xmlns:p="http:&#47;&#47;ns.adobe.com/xap/1.0/"'));
+  assert.equal(next.includes('p:Rating="1"'), false);
+});
+
+test('a single named RDF subject keeps its identity and properties in one Description', () => {
+  const xml = `<x:xmpmeta xmlns:x="adobe:ns:meta/"><r:RDF xmlns:r="${RDF}"><r:Description r:about='urn:photo:123' xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:Rating="1"/></r:RDF></x:xmpmeta>`;
+  const next = updateXmp(xml, { flag: 'pick', rating: 4 });
+  assert.equal(descriptions(next).length, 1); assert.ok(next.includes("r:about='urn:photo:123'"));
+  assert.equal(state(next).rating, 4); assert.equal(state(next).flag, 'pick');
+});
+
+test('old redundant owned descriptions are removed and unrelated RDF subjects stay intact', () => {
+  const other = `<r:Description r:about="urn:another-photo" xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:Rating="1"/>`;
+  const xml = `<x:xmpmeta xmlns:x="adobe:ns:meta/"><r:RDF xmlns:r="${RDF}"><r:Description r:about="" custom='preserve me'/><r:Description r:about="" xmlns:photocull="https://www.filipbiljic.com/photocull/ns/1.0/" photocull:version="1" photocull:flag="none"/>${other}</r:RDF></x:xmpmeta>`;
+  const next = updateXmp(xml, { flag: 'pick', rating: 5 });
+  assert.equal(descriptions(next).length, 2); assert.ok(next.includes(other)); assert.ok(next.includes("custom='preserve me'"));
+  assert.equal(state(next).rating, 5); assert.equal(state(next).flag, 'pick');
 });
 
 test('newest sidecar wins on reopen; a newer local decision and timestamp ties keep the session', async t => {
