@@ -45,6 +45,7 @@ class CullingService {
     const batch=ids.map(id=>{const item=this.library.item(session,id),before={flag:item.flag,rating:item.rating,color:item.color,trashed:item.trashed===true};return {id,before,after:{...before,flag:id===best?'pick':'reject'}};});
     s.undo.push({batch});if(s.undo.length>500)s.undo.shift();s.redo=[];
     const items=batch.map(({id,after})=>{Object.assign(this.library.item(session,id),after,{edited:true});return {id,...after,edited:true};});
+    this.library.changed(s,ids.map(id=>this.library.item(session,id)));
     await this.library.save(s);return {items,best};
   }
 }

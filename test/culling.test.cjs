@@ -40,13 +40,13 @@ test('survey deduplicates, limits to four, chooses a neighbour and swaps only ac
 test('sharpness cache uses file identity and keep-sharpest is one undo step',async t=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'photocull-analysis-test-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
   const photos=path.join(root,'photos');await fs.mkdir(photos);for(const name of ['one.jpg','two.jpg','three.jpg'])await fs.writeFile(path.join(photos,name),'disposable fixture');
-  const library=new Library(root),session=await library.scan(photos),items=library.get(session.id).items;
+  const library=new Library(root,{settings:()=>normalizeSettings({writeSidecars:'never'})});t.after(()=>library.close());const session=await library.scan(photos),items=library.get(session.id).items;
   const previews={cacheDir:path.join(root,'cache'),key:(i,k)=>`${i.id}-${i.fingerprint.replaceAll(':','-')}-${k}`,metadata:async item=>({captureTime:items.indexOf(items.find(i=>i.id===item.id))*100,cameraKey:'Sony:fixture',focus:null})};await fs.mkdir(previews.cacheDir);
   const service=new CullingService(library,previews,()=>({burstGap:1}));
   for(const [i,item] of items.entries()){const r=await service.record(session.id,item.id);await service.store(session.id,item.id,r.key,[1,9,2][i]);assert.equal((await service.source(session.id,item.id)).score,[1,9,2][i]);}
   await library.decide(session.id,items[0].id,{rating:4,flag:'pick'});
   const count=library.get(session.id).undo.length;
-  const result=await service.keep(session.id,items.map(i=>i.id));assert.equal(result.best,items[1].id);assert.deepEqual(items.map(i=>i.flag),['reject','pick','reject']);assert.equal(items[0].rating,4);assert.equal(library.get(session.id).undo.length,count+1);
+  const result=await service.keep(session.id,items.map(i=>i.id));assert.equal(result.best,items[1].id);assert.deepEqual(items.map(i=>i.flag),['reject','pick','reject']);assert.equal(items[0].rating,4);assert.ok(items.every(item=>Number.isFinite(item.modified)));assert.equal(library.get(session.id).undo.length,count+1);
   await library.history(session.id,'undo');assert.deepEqual(items.map(i=>i.flag),['pick','none','none']);await library.history(session.id,'redo');assert.deepEqual(items.map(i=>i.flag),['reject','pick','reject']);
   const old=(await service.record(session.id,items[0].id)).key;items[0].fingerprint+='changed';assert.notEqual((await service.record(session.id,items[0].id)).key,old);assert.equal((await service.record(session.id,items[0].id)).score,null);
   await assert.rejects(service.keep(session.id,items.map(i=>i.id)),/Wait for every frame/);
