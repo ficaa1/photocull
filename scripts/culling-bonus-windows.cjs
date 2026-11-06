@@ -6,7 +6,7 @@ const {spawn}=require('node:child_process'),{createHash}=require('node:crypto'),
 const {normalizeFocus,numbers,orientPoint}=require('../src/renderer/culling.js');
 async function main() {
   if(process.platform!=='win32')throw new Error('Run this check on Windows.');
-  const executable=path.resolve(process.argv[2]),reports=path.resolve(process.argv[3]),source=path.resolve(process.argv[4] || 'C:/Users/alex/Pictures/photo-samples');
+  const executable=path.resolve(process.argv[2]),reports=path.resolve(process.argv[3]),source=process.env.PHOTOCULL_SONY_DIR||process.argv[4];if(!source)throw new Error('Pass a folder of Sony ARW test copies as the third argument or PHOTOCULL_SONY_DIR.');
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'photocull-bonus-native-')),photos=path.join(root,'photos'),data=path.join(root,'state');await fs.mkdir(photos);await fs.mkdir(reports,{recursive:true});
   const hash=async file=>createHash('sha256').update(await fs.readFile(file)).digest('hex'),files=(await fs.readdir(source)).filter(n=>/\.arw$/i.test(n)).slice(0,3),hashes=[];
   assert.ok(files.length>0,'Supply a folder containing ARW fixtures.');
