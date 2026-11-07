@@ -4,7 +4,6 @@ const state = { deleting: false, session: null, selected: null, marked: new Set(
   generation: 0, previewRevision: 0, showOriginal: false, pendingSaves: 0, saveError: false, busy: false, settings: { autoAdvance: true, recursive: false, autoOpenCards: true, colors: [], naming: { template: '{filename}', text: '', start: 1 } }, settingsReady: false, colorFilter: '', devices: [], deviceError: '', autoOpened: new Set(), copy: { running: false, destination: null, copiedTo: null } };
 let toastTimer, metadataTimer, framePending = false, handoffUsageKey = '', handoffUsageGeneration = 0;
 const gridNodes = new Map(), filmNodes = new Map();
-let filmSignature = '';
 const culling = { metadata:new Map(), jobs:new Map(), scores:new Map(), bursts:[], byId:new Map(), expanded:new Set(), epoch:0, paused:false, running:false };
 let survey, burstPrompt=null;
 const menus = [];
@@ -41,7 +40,20 @@ const loupe = PhotoCullLoupe.create({ api,
   context: () => ({ session: state.session, items: state.session ? filtered() : [], mode: state.mode, revision: state.previewRevision, original: state.showOriginal, fullscreen: state.fullscreen }),
   settings: () => state.settings,
   onLoaded: item => { void loadMetadata(item); },
-  onClickZoomChange: async percent => { try { state.settings = await api.settings({ zoomPercent: percent }); } catch (error) { toast(error.message); } } });
+  onClickZoomChange: async percent => { try { state.settings = await api.settings({ zoomPercent: percent }); } catch (error) { toast(error.message); } },
+  onSwipe: swipe => photoSwipe(swipe) });
+// Touch swipes on a photo at Fit: left and right change photos, up picks, down rejects.
+// Up and down show what releasing will do; sideways the photo itself moves.
+const SWIPES = { left: () => navigate(1), right: () => navigate(-1), up: () => decide({ flag: 'pick' }), down: () => decide({ flag: 'reject' }) };
+function photoSwipe({ direction, armed, done }) {
+  const hint = $('swipe-hint'), vertical = direction === 'up' || direction === 'down';
+  hint.hidden = done || !vertical;
+  if (!hint.hidden) {
+    hint.textContent = direction === 'up' ? '⚑ Pick' : '× Reject';
+    hint.className = `swipe-hint ${direction === 'up' ? 'pick' : 'reject'}${armed ? ' armed' : ''}`;
+  }
+  if (done && armed && state.mode === 'review' && photo()) SWIPES[direction]?.();
+}
 matchMedia('(max-width: 900px)').addEventListener('change', applyPaneLayout);
 applyPaneLayout();
 // Develop owns its controls and render queue; app hooks keep selection and badges shared.
@@ -115,7 +127,7 @@ function loadSession(session) {
   $('breadcrumb').textContent = session.folder;
   $('breadcrumb').title = session.folder;
   $('export').disabled = !session.items.length;
-  gridNodes.clear(); filmNodes.clear(); filmSignature = ''; $('grid-content').replaceChildren();
+  gridNodes.clear(); filmNodes.clear(); $('grid-content').replaceChildren();
   render(); renderDevices();
   setStatus('Saved');void analyzeCulling();
   if (session.warnings.length) toast(`${session.warnings.length} file or sidecar warning(s): ${session.warnings[0]}`);
@@ -319,7 +331,6 @@ function renderFilmstrip(items, index) {
   items=stackItems(items);index=items.findIndex(i=>i.id===state.selected);
   const start = Math.max(0, index - 3), nearby = items.slice(start, Math.min(items.length, index + 5));
   if (state.mode === 'review') void api.visible(state.session.id, nearby.map(i => i.id)).catch(() => {});
-  const signature = `${state.session.id}:${state.previewRevision}:${nearby.map(item => item.id).join(':')}`;
   const nodes = nearby.map((item, i) => {
     let button = filmNodes.get(item.id);
     if (!button || button.dataset.revision !== String(state.previewRevision)) {
@@ -334,7 +345,10 @@ function renderFilmstrip(items, index) {
     button.querySelector('.film-label').textContent = String(start + i + 1).padStart(2, '0');
     button.querySelectorAll('.badge-row').forEach(node => node.remove()); addFlag(button, item); button.setAttribute('aria-description', thumbStatus(item) || 'Unreviewed'); return button;
   });
-  if (signature !== filmSignature) { $('filmstrip').replaceChildren(...nodes); filmSignature = signature; }
+  // Only when the cards differ: re-inserting a card drops its hover state, so a card under the
+  // pointer or a finger blinked on every analysis tick.
+  const strip = $('filmstrip');
+  if (nodes.length !== strip.children.length || nodes.some((node, i) => strip.children[i] !== node)) strip.replaceChildren(...nodes);
   const retained = new Set(nearby.map(item => item.id)); for (const id of filmNodes.keys()) if (!retained.has(id)) filmNodes.delete(id);
 
 }
@@ -412,6 +426,8 @@ $('grid').addEventListener('click', event => {
 }, true);
 $('grid').addEventListener('pointerdown', event => {
   if (event.button !== 0 || !event.isPrimary || state.deleting) return;
+  // A finger or pen drag scrolls the grid; only the mouse draws a selection box.
+  if (event.pointerType !== 'mouse') return;
   const bounds = $('grid').getBoundingClientRect();
   // Presses on the scrollbar scroll; they never start a selection box.
   if (event.clientX - bounds.left >= $('grid').clientWidth || event.clientY - bounds.top >= $('grid').clientHeight) return;
@@ -749,7 +765,7 @@ document.addEventListener('keydown', event => {
 // Deletion. Camera cards have no trash, so photos there are always deleted
 // permanently; elsewhere the user's last choice is remembered in settings.
 // PhotoCull's own Trash view is "Trash"; the operating system's is named here.
-const systemTrash = api.platform === 'win32' ? 'Recycle Bin' : 'system Trash';
+const systemTrash = api.trashName || (api.platform === 'win32' ? 'Recycle Bin' : 'system Trash');
 function trashAvailable() { return api.canTrash && !state.session?.removable; }
 function deleteMode() { return trashAvailable() ? state.settings.deleteMode || 'trash' : 'permanent'; }
 function plural(count, word) { return `${count} ${word}${count === 1 ? '' : 's'}`; }
@@ -782,7 +798,7 @@ function removeFromSession(ids) {
   state.session.items = state.session.items.filter(i => !gone.has(i.id));
   regroupBursts();
   for (const id of gone) { gridNodes.get(id)?.remove(); gridNodes.delete(id); filmNodes.delete(id); }
-  filmSignature = ''; $('review-image').dataset.itemId = ''; $('review-image').dataset.stamp = '';
+  $('review-image').dataset.itemId = ''; $('review-image').dataset.stamp = '';
   $('folder-detail').textContent = `${state.session.items.length} photos`;
   $('export').disabled = !state.session.items.length;
 }
@@ -1074,6 +1090,7 @@ void api.settings().then(syncSettings).catch(error => toast(error.message));
 
 // Browser mode lets smoke tests open a folder without a native dialog.
 if (api.platform === 'web') window.loadTestFolder = async (folder, recursive) => loadSession(await api.openPath(folder, recursive));
+if (api.server) void window.PhotoCullServer.attach(loadSession, () => state.session);
 render();
 
 $('handoff-folder-choose').onclick = async () => { try { const folder=await api.pickFolder('Choose a local hand-off folder'); if(folder){await api.developFolderCheck(folder); $('handoff-folder').value=folder;} } catch(e){toast(e.message);} };
@@ -1379,7 +1396,7 @@ function renderCulling() {
 function toggleBurst() {
   const burst=culling.byId.get(state.selected);if(!burst)return toast('This photo is not part of a detected burst.');
   if(culling.expanded.has(burst.id))culling.expanded.delete(burst.id);else culling.expanded.add(burst.id);
-  filmSignature='';render();
+  render();
 }
 function setPauseLabel(text) {$('analysis-pause').textContent=text;$('analysis-pause').dataset.action=text.split(' ')[0].toLowerCase();}
 function setAnalysis(text,phase) {$('analysis-status').textContent=text;$('analysis-status').dataset.phase=phase;$('analysis-status').closest('.analysis').title=text;}
@@ -1393,7 +1410,7 @@ async function analyzeCulling() {
     for(const [index,item] of items.entries()) {
       if(!current())return;try{await cullingMetadata(item.id,session);}catch{failures++;}
       if(!current())return;
-      if(index%8===0 || index===items.length-1){regroupBursts();filmSignature='';render();setAnalysis(`Metadata ${index+1}/${items.length}`,'running');}
+      if(index%8===0 || index===items.length-1){regroupBursts();render();setAnalysis(`Metadata ${index+1}/${items.length}`,'running');}
       await yieldUI();
     }
     if(api.canAnalyze) {
@@ -1402,7 +1419,7 @@ async function analyzeCulling() {
         if(!current())return;if(culling.scores.has(item.id))continue;
         try{const score=await api.sharpness(session,item.id);if(!current())return;if(Number.isFinite(score))culling.scores.set(item.id,score);}catch{if(current())failures++;}
         if(!current())return;
-        setAnalysis(`Focus ${culling.scores.size}/${items.length}`,'running');filmSignature='';render();await yieldUI();
+        setAnalysis(`Focus ${culling.scores.size}/${items.length}`,'running');render();await yieldUI();
       }
     }
     if(current()){setAnalysis(failures?`${failures} unavailable`:api.canAnalyze?'Focus ready':'Desktop scores',failures?'warn':'done');$('analysis-pause').hidden=!failures;setPauseLabel('Retry analysis');}

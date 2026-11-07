@@ -96,6 +96,10 @@ Sidecars use standard `xmp:Rating` and `xmp:Label` for ratings/rejects and label
 
 Existing unrelated Lightroom/darktable/Capture One XMP content is preserved. PhotoCull reads both `name.xmp` and `name.ext.xmp`, respects existing naming, backs up an existing sidecar on first write, and reports malformed or ambiguous sidecars. Reopening a folder merges newer sidecar state with locally saved decisions; this is not live synchronization. Keep sidecars and any hand-off subfolder with the photos when moving between computers. See [sidecars and portability](docs/workflow.md#sidecars-and-moving-between-computers).
 
+## Self-hosted server
+
+PhotoCull can also run as a web app on a home server, next to a photo library, for culling from a phone, tablet or another computer on the network. Open a folder in the server's folder browser and it prepares thumbnails, previews and focus scores in the background, even with the browser closed. Delete moves photos to a dated server trash folder that is emptied after 30 days. Develop, external editors, export and camera cards stay in the desktop app. It ships as a Docker image with a `compose.yaml` template; see [PhotoCull server](docs/server.md).
+
 ## Local data and privacy
 
 No account, telemetry or remote logging is used. Photo processing, sessions and diagnostics stay local. The app serves image bytes through a token-protected server bound to `127.0.0.1`; this is local traffic. The optional **Lensfun database download** makes outbound requests only when requested in the Lens panel. Project/license links open the system browser. External editors are separate applications with their own privacy behavior.

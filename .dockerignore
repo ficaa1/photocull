@@ -1,0 +1,6 @@
+*
+!package.json
+!package-lock.json
+!src/
+!LICENSE
+!THIRD_PARTY_NOTICES.md

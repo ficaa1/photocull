@@ -130,3 +130,14 @@ test('zoom and relative position carry over to the next photo', () => {
   const small = V.place({ width: 1200, height: 800 }, view, 1, kept);
   near(V.centerOf(small, view).x, 500 / 1200); near(V.centerOf(small, view).y, 350 / 800);
 });
+
+test('a touch swipe counts after a fifth of the view or a quick flick, along the axis it started on', () => {
+  const view = { width: 400, height: 600 };
+  assert.equal(V.swipeDirection(-60, 5, 400, view, 'x'), null, 'a slow short drag springs back');
+  assert.equal(V.swipeDirection(-90, 5, 400, view, 'x'), 'left');
+  assert.equal(V.swipeDirection(40, 0, 60, view, 'x'), 'right', 'a flick counts though short');
+  assert.equal(V.swipeDirection(20, 0, 10, view, 'x'), null, 'a twitch never counts');
+  assert.equal(V.swipeDirection(5, -130, 500, view, 'y'), 'up');
+  assert.equal(V.swipeDirection(200, 100, 500, view, 'y'), null, 'only the starting axis counts');
+  assert.equal(V.swipeDirection(5, 70, 100, view, 'y'), 'down');
+});

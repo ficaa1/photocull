@@ -3,10 +3,11 @@ const path = require('node:path');
 const { hash } = require('./library.cjs');
 const { atomicWrite } = require('./xmp.cjs');
 const { groupBursts, sharpest } = require('./renderer/culling.js');
+const { scoreFile } = require('./sharpness.cjs');
 
 // Analysis only reads original display previews. Scores and metadata live in the app cache.
 class CullingService {
-  constructor(library,previews,settings) { this.library=library;this.previews=previews;this.settings=settings; }
+  constructor(library,previews,settings) { this.library=library;this.previews=previews;this.settings=settings;this.scoring=new Map(); }
   async record(session,id) {
     const item=this.library.item(session,id),original={...item,develop:null};
     const stat=await fs.stat(item.path);
@@ -26,6 +27,17 @@ class CullingService {
     // A memory hit can outlive a disk-cache eviction.
     await atomicWrite(file,data);
     return {key:record.key,file,focus:record.metadata.focus,score:null};
+  }
+  // Scores without the desktop shell (server mode). Photo ids are path hashes, so
+  // concurrent requests for one photo share a single computation.
+  score(session,id) {
+    let job=this.scoring.get(id);
+    if(!job){
+      job=(async()=>{const source=await this.source(session,id);if(source.score!==null)return source.score;return this.store(session,id,source.key,await scoreFile(source.file,source.focus));})()
+        .finally(()=>this.scoring.delete(id));
+      this.scoring.set(id,job);
+    }
+    return job;
   }
   async store(session,id,key,score) {
     if (!Number.isFinite(score) || score<0) throw new Error('Invalid sharpness score.');
