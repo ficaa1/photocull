@@ -73,6 +73,14 @@
     return clampCenter(source, view, box.width / source.width, centerOf({ ...box, left: box.left + dx, top: box.top + dy }, view));
   }
   const isDrag = (dx, dy, threshold = DRAG_THRESHOLD) => Math.hypot(dx, dy) > threshold;
+  // A touch swipe on a photo at Fit counts once it travels a fifth of the view (at least 48 px), or
+  // flicks: 24 px at 0.45 px/ms. axis is the one the finger first moved along. Returns the
+  // direction the finger went, or null.
+  function swipeDirection(dx, dy, ms, size, axis) {
+    const along = axis === 'x' ? dx : dy, span = axis === 'x' ? size.width : size.height, distance = Math.abs(along);
+    if (distance <= Math.max(48, span * .2) && !(distance > 24 && distance / Math.max(1, ms) > .45)) return null;
+    return axis === 'x' ? (along < 0 ? 'left' : 'right') : (along < 0 ? 'up' : 'down');
+  }
 
   // Ctrl/Cmd +/- step through ZOOM_LEVELS above Fit. Returns a percent, or
   // null for Fit.
@@ -121,11 +129,14 @@
 
   class ImageView {
     // onClick({ position, inside }) for a press released without dragging;
-    // onChange() after any zoom/pan; onHandUse() when the Space hand is used.
-    constructor(viewport, image, { onClick = () => {}, onChange = () => {}, onHandUse = () => {} } = {}) {
+    // onChange() after any zoom/pan; onHandUse() when the Space hand is used;
+    // onSwipe({ direction, armed, done }) while a finger swipes a photo at Fit
+    // (direction 'left' | 'right' | 'up' | 'down'; armed: releasing now counts;
+    // done with armed: it counted). Without onSwipe, touch only pans and taps.
+    constructor(viewport, image, { onClick = () => {}, onChange = () => {}, onHandUse = () => {}, onSwipe = null } = {}) {
       this.viewport = viewport; this.image = image;
       this.focusOverlay = new FocusOverlay(viewport);
-      this.onClick = onClick; this.onChange = onChange; this.onHandUse = onHandUse;
+      this.onClick = onClick; this.onChange = onChange; this.onHandUse = onHandUse; this.onSwipe = onSwipe;
       this.zoom = { mode: 'fit', percent: 100 }; this.center = { x: .5, y: .5 };
       this.source = null; this.exact = false; this.visible = false;
       this.pointer = null; this.hover = null; this.hand = false; this.animation = null; this.drawn = null;
@@ -237,7 +248,8 @@
       this.finish();
       const position = this.position(event), box = this.box();
       if (this.hand) this.onHandUse();
-      this.pointer = { id: event.pointerId, startX: event.clientX, startY: event.clientY, box, position, inside: inside(position, box), moved: false };
+      this.pointer = { id: event.pointerId, startX: event.clientX, startY: event.clientY, box, position, inside: inside(position, box), moved: false,
+        touch: event.pointerType !== 'mouse' && !!this.onSwipe, time: event.timeStamp, swipe: null };
       this.viewport.setPointerCapture(event.pointerId);
       event.preventDefault();
     }
@@ -245,21 +257,44 @@
       this.hover = this.position(event);
       const pointer = this.pointer; if (!pointer || pointer.id !== event.pointerId) return;
       const dx = event.clientX - pointer.startX, dy = event.clientY - pointer.startY;
-      if (!pointer.moved && isDrag(dx, dy)) pointer.moved = true;
+      if (!pointer.moved && isDrag(dx, dy)) {
+        pointer.moved = true;
+        // A finger on a photo that has nothing to pan swipes along the axis it first moved in.
+        if (pointer.touch && !this.hand && !this.pannable()) pointer.swipe = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
+      }
+      if (pointer.swipe) { this.swipe(pointer, dx, dy, event.timeStamp); return; }
       if (!pointer.moved || !this.pannable()) return;
       this.viewport.classList.add('panning');
       this.center = panCenter(this.source, this.size(), pointer.box, dx, dy);
       this.draw(this.box());
       this.onChange();
     }
+    // The photo follows the finger: fully sideways, damped up and down.
+    swipe(pointer, dx, dy, time) {
+      const box = this.box(), sideways = pointer.swipe === 'x';
+      this.draw(box, { ...box, left: box.left + (sideways ? dx : 0), top: box.top + (sideways ? 0 : dy * .5) });
+      const direction = sideways ? (dx < 0 ? 'left' : 'right') : (dy < 0 ? 'up' : 'down');
+      this.onSwipe({ direction, armed: swipeDirection(dx, dy, time - pointer.time, this.size(), pointer.swipe) === direction, done: false });
+    }
     up(event) {
       const pointer = this.pointer; if (!pointer || pointer.id !== event.pointerId) return;
-      const click = !pointer.moved && !isDrag(event.clientX - pointer.startX, event.clientY - pointer.startY);
+      const dx = event.clientX - pointer.startX, dy = event.clientY - pointer.startY;
+      const click = !pointer.moved && !isDrag(dx, dy);
+      const swiped = pointer.swipe && swipeDirection(dx, dy, event.timeStamp - pointer.time, this.size(), pointer.swipe);
+      if (pointer.swipe) { pointer.swipe = null; this.endSwipe(swiped); }
       this.cancel();
       if (click && !this.hand) this.onClick({ position: pointer.position, inside: pointer.inside });
     }
+    // A swipe that counted leaves the next photo (or the decision) to replace the view;
+    // one that did not slides back.
+    endSwipe(direction) {
+      const from = this.drawn, box = this.box();
+      if (!direction && from && !this.reduced.matches) this.animate(from, box); else this.draw(box);
+      this.onSwipe({ direction, armed: !!direction, done: true });
+    }
     cancel() {
       const pointer = this.pointer; this.pointer = null; this.viewport.classList.remove('panning');
+      if (pointer?.swipe) { pointer.swipe = null; this.endSwipe(null); }
       if (pointer && this.viewport.hasPointerCapture(pointer.id)) this.viewport.releasePointerCapture(pointer.id);
     }
     wheel(event) {
@@ -283,7 +318,7 @@
   }
 
   const api = { MAX_PERCENT, ZOOM_LEVELS, CLICK_ZOOMS, DRAG_THRESHOLD, ANIMATION_MS, fitScale, fillScale, scaleFor, percentOf, place, layout, centerOf, clampCenter,
-    pointAt, pointInImage, inside, zoomAround, centerOn, panCenter, isDrag, stepPercent, wheelDelta, wheelPercent, visibleRect, FocusOverlay, ImageView };
+    pointAt, pointInImage, inside, zoomAround, centerOn, panCenter, isDrag, swipeDirection, stepPercent, wheelDelta, wheelPercent, visibleRect, FocusOverlay, ImageView };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.PhotoCullView = api;
 })(globalThis);

@@ -64,7 +64,7 @@
       <section id="compare" class="compare" hidden aria-label="Compare photographs"></section>
       <section id="review" class="review" hidden aria-label="Photo review">
         <div class="image-stage" id="image-stage">
-          <div class="image-topline"><span id="format-badge" class="chip">RAW</span><span id="image-position" class="chip">1 / 1</span><span id="burst-context" class="chip" hidden></span><span id="camera-preview" class="chip camera-preview" tabindex="0" hidden>Camera preview</span></div>
+          <div class="image-topline"><span id="format-badge" class="chip">RAW</span><span id="image-position" class="chip">1 / 1</span><span class="burst-menu-wrap"><button id="burst-context" class="chip" type="button" aria-haspopup="menu" aria-expanded="false" title="Burst actions" hidden></button><div id="burst-menu" class="menu" role="menu" aria-label="Burst" hidden></div></span><span id="camera-preview" class="chip camera-preview" tabindex="0" hidden>Camera preview</span></div>
           <div id="image-viewport" class="image-viewport" role="button" tabindex="0" aria-label="Click to zoom"><img id="review-image" alt="Selected photograph" draggable="false"></div>
           <div id="image-loading" class="loading-badge">Loading preview…</div>
           <div id="image-error" class="image-error" hidden></div>
@@ -73,6 +73,7 @@
           <button id="next" class="image-nav next" aria-label="Next image"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 6 6 6-6 6"/></svg></button>
           <div class="image-bottomline"><span id="preview-source" class="chip">Embedded preview</span><div class="zoom-controls"><span id="zoom-level" class="zoom-level" aria-live="off"></span><button id="zoom" class="chip" title="Fit (Ctrl+0)" aria-pressed="true">Fit</button><button id="zoom-fill" class="chip" title="Fill the view" aria-pressed="false">Fill</button><select id="zoom-percent" class="chip" aria-label="Click zoom" title="Click zoom: the ratio a click, Z or Space zooms to"><option value="12.5">12.5%</option><option value="25">25%</option><option value="33.3">33.3%</option><option value="50">50%</option><option value="66.7">66.7%</option><option value="100" selected>100%</option><option value="200">200%</option><option value="300">300%</option><option value="400">400%</option><option value="800">800%</option><option value="1600">1600%</option></select><button id="fullscreen" class="chip" title="Fullscreen (F)" aria-label="Fullscreen" aria-pressed="false">⛶</button></div></div>
           <div id="flag-overlay" class="flag-overlay" hidden></div>
+          <div id="swipe-hint" class="swipe-hint" hidden aria-hidden="true"></div>
           <div id="navigator-overlay" class="navigator-overlay" hidden></div>
         </div>
         <div id="review-dock" class="review-dock">
@@ -167,7 +168,7 @@
   <dialog id="burst-dialog" aria-labelledby="burst-title"><div class="dialog-header"><h2 id="burst-title">Keep sharpest in burst</h2></div><p id="burst-summary"></p><pre id="burst-changes"></pre><p class="subtle small">Flags only. Files stay on disk. Undo restores the whole burst.</p><div class="copy-actions dialog-actions"><button id="burst-cancel" class="button">Cancel</button><button id="burst-confirm" class="button primary">Apply flags</button></div></dialog>
   <dialog id="settings-dialog">
     <div class="dialog-header"><h2>Settings</h2><button class="close-dialog" aria-label="Close">×</button></div>
-    <nav class="settings-tabs" aria-label="Settings"><button data-settings-tab="general" class="active">General</button><button data-settings-tab="editors">External editors</button><button data-settings-tab="metadata">Metadata</button><button data-settings-tab="colors">Colors</button><button data-settings-tab="naming">File naming</button><button data-settings-tab="about">About</button></nav>
+    <nav class="settings-tabs" aria-label="Settings"><button data-settings-tab="general" class="active">General</button><button data-settings-tab="editors">External editors</button><button data-settings-tab="metadata">Metadata</button><button data-settings-tab="colors">Colors</button><button data-settings-tab="naming" class="desktop-only">File naming</button><button data-settings-tab="about">About</button></nav>
     <section data-settings-page="editors" hidden>
       <div id="external-editors"></div>
       <div class="copy-actions"><button id="editor-add" class="button quiet" type="button">Add editor</button></div>
@@ -188,34 +189,34 @@
     </section>
     <section data-settings-page="general">
       <!-- Develop preferences. -->
-      <div class="field-row"><label for="default-recipe">Default recipe</label><select id="default-recipe"><option value="neutral">Neutral</option></select></div>
+      <div class="field-row desktop-only"><label for="default-recipe">Default recipe</label><select id="default-recipe"><option value="neutral">Neutral</option></select></div>
       <!-- End Develop preferences. -->
       <div class="field-row"><label for="burst-gap">Burst gap (seconds)</label><input id="burst-gap" type="number" min="0.1" max="10" step="0.1" value="1"></div>
       <label class="toggle-row"><input type="checkbox" id="focus-preference"> Show autofocus points (A)</label>
       <label class="toggle-row"><input type="checkbox" id="auto-advance"> Auto advance</label>
-      <label class="toggle-row"><input type="checkbox" id="recursive"> Include subfolders</label>
-      <label class="toggle-row"><input type="checkbox" id="auto-open-cards"> Open camera cards automatically</label>
+      <label class="toggle-row desktop-only"><input type="checkbox" id="recursive"> Include subfolders</label>
+      <label class="toggle-row desktop-only"><input type="checkbox" id="auto-open-cards"> Open camera cards automatically</label>
       <label class="toggle-row" title="Off (Lightroom's default): the clicked point stays under the pointer"><input type="checkbox" id="zoom-click-center"> Zoom clicked point to center</label>
       <div class="field-row"><label for="write-sidecars">Write XMP sidecars</label><select id="write-sidecars"><option value="always">Always</option><option value="except-cards">Except camera cards</option><option value="never">Never</option></select></div>
-      <div class="field-row"><label for="raw-rendering">RAW rendering</label><select id="raw-rendering"><option value="missing">Missing previews</option><option value="small">Missing or small previews</option><option value="off">Off</option></select></div>
-      <div class="field-row"><label for="preview-cache-limit">Preview cache</label><select id="preview-cache-limit"><option value="1">Up to 1 GB</option><option value="2">Up to 2 GB</option><option value="5">Up to 5 GB</option><option value="10">Up to 10 GB</option></select></div>
-      <div class="field-row cache-row"><span id="preview-cache-usage" class="subtle">Checking…</span><button id="preview-cache-clear" class="button" type="button">Clear preview cache</button></div>
-      <label class="toggle-row"><input type="checkbox" id="default-jpeg"> Copy companion JPEGs</label>
-      <label class="toggle-row"><input type="checkbox" id="default-xmp"> Include XMP</label>
-      <label class="toggle-row" title="Writes metadata inside exported copies"><input type="checkbox" id="default-metadata"> Embed metadata in copies</label>
+      <div class="field-row desktop-only"><label for="raw-rendering">RAW rendering</label><select id="raw-rendering"><option value="missing">Missing previews</option><option value="small">Missing or small previews</option><option value="off">Off</option></select></div>
+      <div class="field-row desktop-only"><label for="preview-cache-limit">Preview cache</label><select id="preview-cache-limit"><option value="1">Up to 1 GB</option><option value="2">Up to 2 GB</option><option value="5">Up to 5 GB</option><option value="10">Up to 10 GB</option></select></div>
+      <div class="field-row cache-row desktop-only"><span id="preview-cache-usage" class="subtle">Checking…</span><button id="preview-cache-clear" class="button" type="button">Clear preview cache</button></div>
+      <label class="toggle-row desktop-only"><input type="checkbox" id="default-jpeg"> Copy companion JPEGs</label>
+      <label class="toggle-row desktop-only"><input type="checkbox" id="default-xmp"> Include XMP</label>
+      <label class="toggle-row desktop-only" title="Writes metadata inside exported copies"><input type="checkbox" id="default-metadata"> Embed metadata in copies</label>
     </section>
     <section data-settings-page="metadata" hidden>
       <div class="field-row preset-row"><label for="metadata-preset">Preset</label><select id="metadata-preset"></select><button id="preset-delete" class="text-button" title="Delete preset" aria-label="Delete preset">−</button></div>
       <div class="field-row"><input id="preset-name" type="text" maxlength="80" placeholder="Preset name" aria-label="Preset name"><button id="preset-save" class="button quiet">Save as</button></div>
       <div class="inline-options"><label><input type="checkbox" id="write-ratings"> Ratings</label><label><input type="checkbox" id="write-labels"> Labels</label><label><input type="checkbox" id="reject-rating"> Reject = −1</label></div>
       <div class="mapping-row"><label for="pick-color">Pick</label><select id="pick-color"></select><label for="reject-color">Reject</label><select id="reject-color"></select></div>
-      <div class="metadata-fields"><label>Creator<input id="meta-creator" maxlength="1024"></label><label>Copyright<input id="meta-copyright" maxlength="1024"></label><label>Title<input id="meta-title" maxlength="1024"></label><label>Caption<textarea id="meta-caption" rows="2" maxlength="8192"></textarea></label><label>Keywords<input id="meta-keywords" placeholder="Comma separated"></label></div>
-      <details id="metadata-export"><summary>Export metadata</summary><div class="copy-actions"><button id="export-xmp" class="button quiet" title="Write sidecars beside source photos">Write source XMP</button><button id="export-json" class="button quiet">Save JSON</button></div><pre id="metadata-results" hidden></pre></details>
+      <div class="metadata-fields"><label>Creator<input id="meta-creator" maxlength="1024"></label><label>Copyright<input id="meta-copyright" maxlength="1024"></label><label class="desktop-only">Title<input id="meta-title" maxlength="1024"></label><label class="desktop-only">Caption<textarea id="meta-caption" rows="2" maxlength="8192"></textarea></label><label class="desktop-only">Keywords<input id="meta-keywords" placeholder="Comma separated"></label></div>
+      <details id="metadata-export"><summary>Export metadata</summary><div class="copy-actions"><button id="export-xmp" class="button quiet" title="Write sidecars beside source photos">Write source XMP</button><button id="export-json" class="button quiet desktop-only">Save JSON</button></div><pre id="metadata-results" hidden></pre></details>
     </section>
     <section data-settings-page="colors" hidden><div class="color-header"><span>Color</span><span>Name</span><span>XMP label</span></div><div id="color-settings"></div></section>
     <section data-settings-page="naming" hidden><div class="field-row"><label for="settings-folder-mode">Folder</label><select id="settings-folder-mode"><option value="flat">No subfolder</option><option value="named">Named subfolder</option><option value="preserve">Keep source folders</option></select></div><div class="field-row" id="settings-folder-name-row" hidden><label for="settings-folder-name">Name</label><input id="settings-folder-name" maxlength="120" placeholder="Folder name"></div><div id="settings-naming-fields"></div><div id="settings-name-preview" class="name-preview"></div></section>
     <p id="settings-status" class="subtle small" role="status"></p>
-    <div class="settings-footer"><button id="settings-folder" class="text-button">Open settings folder</button><button id="settings-cancel" class="button">Cancel</button><button id="settings-save" class="button primary">Save</button></div>
+    <div class="settings-footer"><button id="settings-folder" class="text-button desktop-only">Open settings folder</button><button id="settings-cancel" class="button">Cancel</button><button id="settings-save" class="button primary">Save</button></div>
   </dialog>
   <dialog id="delete-dialog" class="delete-dialog">
     <div class="dialog-header"><h2 id="delete-title">Delete rejected photos</h2><button class="close-dialog" aria-label="Close">×</button></div>
@@ -229,7 +230,7 @@
     <p id="delete-status" class="subtle small" role="status" aria-live="polite"></p>
     <pre id="delete-results" hidden></pre>
   </dialog>
-  <div id="delete-prompt" class="delete-prompt" role="alertdialog" aria-live="assertive" hidden><span id="delete-prompt-text"></span><span class="delete-prompt-keys"><kbd>Enter</kbd> delete · any other key cancels</span></div>
+  <div id="delete-prompt" class="delete-prompt" role="alertdialog" aria-live="assertive" hidden><span id="delete-prompt-text"></span><span class="delete-prompt-keys"><kbd>Enter</kbd> delete · any other key cancels</span><span class="delete-prompt-buttons"><button id="delete-prompt-cancel" class="button" type="button">Cancel</button><button id="delete-prompt-confirm" class="button danger" type="button">Delete</button></span></div>
   <div id="toast" role="status" hidden></div>
   <script src="bridge.js"></script>
   <script src="naming.js"></script>

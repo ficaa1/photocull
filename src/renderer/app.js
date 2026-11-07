@@ -4,7 +4,6 @@ const state = { deleting: false, session: null, selected: null, marked: new Set(
   generation: 0, previewRevision: 0, showOriginal: false, pendingSaves: 0, saveError: false, busy: false, settings: { autoAdvance: true, recursive: false, autoOpenCards: true, colors: [], naming: { template: '{filename}', text: '', start: 1 } }, settingsReady: false, colorFilter: '', devices: [], deviceError: '', autoOpened: new Set(), copy: { running: false, destination: null, copiedTo: null } };
 let toastTimer, metadataTimer, framePending = false, handoffUsageKey = '', handoffUsageGeneration = 0;
 const gridNodes = new Map(), filmNodes = new Map();
-let filmSignature = '';
 const culling = { metadata:new Map(), jobs:new Map(), scores:new Map(), bursts:[], byId:new Map(), expanded:new Set(), epoch:0, paused:false, running:false };
 let survey, burstPrompt=null;
 const menus = [];
@@ -41,7 +40,20 @@ const loupe = PhotoCullLoupe.create({ api,
   context: () => ({ session: state.session, items: state.session ? filtered() : [], mode: state.mode, revision: state.previewRevision, original: state.showOriginal, fullscreen: state.fullscreen }),
   settings: () => state.settings,
   onLoaded: item => { void loadMetadata(item); },
-  onClickZoomChange: async percent => { try { state.settings = await api.settings({ zoomPercent: percent }); } catch (error) { toast(error.message); } } });
+  onClickZoomChange: async percent => { try { state.settings = await api.settings({ zoomPercent: percent }); } catch (error) { toast(error.message); } },
+  onSwipe: swipe => photoSwipe(swipe) });
+// Touch swipes on a photo at Fit: left and right change photos, up picks, down rejects.
+// Up and down show what releasing will do; sideways the photo itself moves.
+const SWIPES = { left: () => navigate(1), right: () => navigate(-1), up: () => decide({ flag: 'pick' }), down: () => decide({ flag: 'reject' }) };
+function photoSwipe({ direction, armed, done }) {
+  const hint = $('swipe-hint'), vertical = direction === 'up' || direction === 'down';
+  hint.hidden = done || !vertical;
+  if (!hint.hidden) {
+    hint.textContent = direction === 'up' ? '⚑ Pick' : '× Reject';
+    hint.className = `swipe-hint ${direction === 'up' ? 'pick' : 'reject'}${armed ? ' armed' : ''}`;
+  }
+  if (done && armed && state.mode === 'review' && photo()) SWIPES[direction]?.();
+}
 matchMedia('(max-width: 900px)').addEventListener('change', applyPaneLayout);
 applyPaneLayout();
 // Develop owns its controls and render queue; app hooks keep selection and badges shared.
@@ -115,7 +127,7 @@ function loadSession(session) {
   $('breadcrumb').textContent = session.folder;
   $('breadcrumb').title = session.folder;
   $('export').disabled = !session.items.length;
-  gridNodes.clear(); filmNodes.clear(); filmSignature = ''; $('grid-content').replaceChildren();
+  gridNodes.clear(); filmNodes.clear(); $('grid-content').replaceChildren();
   render(); renderDevices();
   setStatus('Saved');void analyzeCulling();
   if (session.warnings.length) toast(`${session.warnings.length} file or sidecar warning(s): ${session.warnings[0]}`);
@@ -319,7 +331,6 @@ function renderFilmstrip(items, index) {
   items=stackItems(items);index=items.findIndex(i=>i.id===state.selected);
   const start = Math.max(0, index - 3), nearby = items.slice(start, Math.min(items.length, index + 5));
   if (state.mode === 'review') void api.visible(state.session.id, nearby.map(i => i.id)).catch(() => {});
-  const signature = `${state.session.id}:${state.previewRevision}:${nearby.map(item => item.id).join(':')}`;
   const nodes = nearby.map((item, i) => {
     let button = filmNodes.get(item.id);
     if (!button || button.dataset.revision !== String(state.previewRevision)) {
@@ -334,7 +345,10 @@ function renderFilmstrip(items, index) {
     button.querySelector('.film-label').textContent = String(start + i + 1).padStart(2, '0');
     button.querySelectorAll('.badge-row').forEach(node => node.remove()); addFlag(button, item); button.setAttribute('aria-description', thumbStatus(item) || 'Unreviewed'); return button;
   });
-  if (signature !== filmSignature) { $('filmstrip').replaceChildren(...nodes); filmSignature = signature; }
+  // Only when the cards differ: re-inserting a card drops its hover state, so a card under the
+  // pointer or a finger blinked on every analysis tick.
+  const strip = $('filmstrip');
+  if (nodes.length !== strip.children.length || nodes.some((node, i) => strip.children[i] !== node)) strip.replaceChildren(...nodes);
   const retained = new Set(nearby.map(item => item.id)); for (const id of filmNodes.keys()) if (!retained.has(id)) filmNodes.delete(id);
 
 }
@@ -394,7 +408,7 @@ function renderGrid() {
       const name = document.createElement('span'); name.textContent = item.name;
       const type = document.createElement('span'); type.textContent = item.raw ? 'RAW' : item.name.split('.').pop().toUpperCase(); type.className = 'subtle';
       caption.append(name, type); node.append(wrap, caption);
-      node.onclick = event => select(item.id, event); node.ondblclick = () => setMode('review');
+      node.onclick = event => { select(item.id, event); if (gridPointer === 'touch' && !event.shiftKey && !additive(event)) setMode('review'); }; node.ondblclick = () => setMode('review');
       node.setAttribute('aria-label', item.name); node.setAttribute('aria-description', thumbStatus(item) || 'Unreviewed'); container.append(node); gridNodes.set(item.id, node);
     }
     node.classList.toggle('selected', state.marked.has(item.id)); node.classList.toggle('current', item.id === state.selected);
@@ -405,13 +419,16 @@ function renderGrid() {
   for (const [id, node] of gridNodes) { if (!retained.has(id)) { node.remove(); gridNodes.delete(id); } }
 }
 
-let marquee = null, suppressGridClick = false;
+let marquee = null, suppressGridClick = false, gridPointer = 'mouse';
+$('grid').addEventListener('pointerdown', event => { gridPointer = event.pointerType; }, true);
 $('grid').addEventListener('dragstart', event => event.preventDefault());
 $('grid').addEventListener('click', event => {
   if (suppressGridClick) { event.preventDefault(); event.stopPropagation(); suppressGridClick = false; }
 }, true);
 $('grid').addEventListener('pointerdown', event => {
   if (event.button !== 0 || !event.isPrimary || state.deleting) return;
+  // A finger or pen drag scrolls the grid; only the mouse draws a selection box.
+  if (event.pointerType !== 'mouse') return;
   const bounds = $('grid').getBoundingClientRect();
   // Presses on the scrollbar scroll; they never start a selection box.
   if (event.clientX - bounds.left >= $('grid').clientWidth || event.clientY - bounds.top >= $('grid').clientHeight) return;
@@ -569,6 +586,9 @@ $('previous').onclick = () => navigate(-1); $('next').onclick = () => navigate(1
 $('pick').onclick = () => decide({ flag: photo()?.flag === 'pick' ? 'none' : 'pick' });
 $('reject').onclick = () => decide({ flag: photo()?.flag === 'reject' ? 'none' : 'reject' });
 $('clear').onclick = () => decide({ flag: 'none' });
+// The burst chip on the photo offers Expand and Keep sharpest, whose toolbar buttons phones hide.
+const burstMenu={stack:menuItem('Expand burst',()=>commands.execute('burst-stack')),keep:menuItem('Keep sharpest…',()=>commands.execute('burst-keep'))};
+$('burst-menu').append(burstMenu.stack,burstMenu.keep);bindMenu($('burst-context'),$('burst-menu'));
 let dockTimer, fullscreenRequest = 0, fullscreenPending = 0, fullscreenQueue = Promise.resolve();
 function dockActive() { return $('review-dock').matches(':hover, :focus-within') || $('filmstrip-hotspot').matches(':hover'); }
 function showDock() { clearTimeout(dockTimer); document.body.classList.add('filmstrip-visible'); }
@@ -723,11 +743,14 @@ for (const flag of ['pick','reject','none']) commandActions['flag-'+flag] = () =
 for (const direction of ['left','right','up','down']) for (const extend of [false,true]) commandActions[(extend?'extend-':'navigate-')+direction] = () => navigate((['left','up'].includes(direction)?-1:1) * (['up','down'].includes(direction) && state.mode==='grid' ? gridLayout().columns : 1), extend && (!['up','down'].includes(direction) || state.mode==='grid'));
 for (const [id,action] of Object.entries({'zoom-in':'zoom-in','zoom-out':'zoom-out',fit:'fit','zoom-toggle':'toggle',pan:'space'})) commandActions[id] = event => state.mode==='compare' ? survey.zoomAction(action) : loupe.handleKey(event, action);
 let recentCommands = [], panKey = null;
+// The server offers culling only: no Develop, external editors, export, camera cards or local files.
+const DESKTOP_COMMANDS = new Set(['export', 'edit', 'configure-editors', 'view-develop', 'backup', 'treat-card', 'diagnostics', 'logs']);
+function offered(command) { return !api.server || !DESKTOP_COMMANDS.has(command.id) && command.context.some(mode => mode !== 'develop'); }
 const commands = PhotoCullCommands.create({ platform: api.platform, actions: Object.fromEntries(Object.entries(commandActions).map(([id,run]) => [id,event => {
   if(id==='pan'){if(!event.key)return loupe.handleKey(event,'toggle');panKey=event.code || event.key;}
   try { return Promise.resolve(run(event)).catch(error=>toast(error.message)); } catch(error) { toast(error.message); }
 }])), context: () => state.mode, custom: () => state.settings.shortcuts || {},
-  enabled: command => (!command.when || state.filter===command.when) && (!['burst-stack','burst-keep'].includes(command.id) || !!culling.byId.get(state.selected)) && (command.id!=='burst-keep' || !!bestIn(culling.byId.get(state.selected))) && (!/^(flag-|rating-|color-|navigate-|extend-|delete|restore|select-all)/.test(command.id) || !!photo()) && (command.id!=='go-photo'||state.session?.items.some(item=>!item.trashed)) && (command.id!=='copy-picks'||!$('export').disabled) && (command.id!=='treat-card'||canTreatCard()) && (!command.button||!$(command.button).matches(':disabled')) && (!['zoom-in','zoom-out','fit','zoom-toggle','pan','review-zoom'].includes(command.id) || !!photo()),
+  enabled: command => offered(command) && (!command.when || state.filter===command.when) && (!['burst-stack','burst-keep'].includes(command.id) || !!culling.byId.get(state.selected)) && (command.id!=='burst-keep' || !!bestIn(culling.byId.get(state.selected))) && (!/^(flag-|rating-|color-|navigate-|extend-|delete|restore|select-all)/.test(command.id) || !!photo()) && (command.id!=='go-photo'||state.session?.items.some(item=>!item.trashed)) && (command.id!=='copy-picks'||!$('export').disabled) && (command.id!=='treat-card'||canTreatCard()) && (!command.button||!$(command.button).matches(':disabled')) && (!['zoom-in','zoom-out','fit','zoom-toggle','pan','review-zoom'].includes(command.id) || !!photo()),
   onRun: command => { if(command.id!=='palette'){ recentCommands=[command.id,...recentCommands.filter(id=>id!==command.id)].slice(0,12); try{localStorage.setItem('photocull-recent-commands',JSON.stringify(recentCommands));}catch{} } } });
 try { recentCommands=JSON.parse(localStorage.getItem('photocull-recent-commands')||'[]').filter(id=>commands.commands.some(c=>c.id===id)).slice(0,12); } catch {}
 document.addEventListener('keydown', event => {
@@ -749,7 +772,7 @@ document.addEventListener('keydown', event => {
 // Deletion. Camera cards have no trash, so photos there are always deleted
 // permanently; elsewhere the user's last choice is remembered in settings.
 // PhotoCull's own Trash view is "Trash"; the operating system's is named here.
-const systemTrash = api.platform === 'win32' ? 'Recycle Bin' : 'system Trash';
+const systemTrash = api.trashName || (api.platform === 'win32' ? 'Recycle Bin' : 'system Trash');
 function trashAvailable() { return api.canTrash && !state.session?.removable; }
 function deleteMode() { return trashAvailable() ? state.settings.deleteMode || 'trash' : 'permanent'; }
 function plural(count, word) { return `${count} ${word}${count === 1 ? '' : 's'}`; }
@@ -782,7 +805,7 @@ function removeFromSession(ids) {
   state.session.items = state.session.items.filter(i => !gone.has(i.id));
   regroupBursts();
   for (const id of gone) { gridNodes.get(id)?.remove(); gridNodes.delete(id); filmNodes.delete(id); }
-  filmSignature = ''; $('review-image').dataset.itemId = ''; $('review-image').dataset.stamp = '';
+  $('review-image').dataset.itemId = ''; $('review-image').dataset.stamp = '';
   $('folder-detail').textContent = `${state.session.items.length} photos`;
   $('export').disabled = !state.session.items.length;
 }
@@ -817,7 +840,9 @@ async function confirmDeletePrompt() {
   if (state.session?.id !== session || viewKey() !== view || !sameIds(ids) || !ids.every(id => visible.has(id)) || document.querySelector('dialog[open]')) return;
   await deletePhotos(ids, mode);
 }
-document.addEventListener('pointerdown', () => { if (deletePrompt) hideDeletePrompt(); }, true);
+document.addEventListener('pointerdown', event => { if (deletePrompt && !$('delete-prompt').contains(event.target)) hideDeletePrompt(); }, true);
+$('delete-prompt-confirm').onclick = () => void confirmDeletePrompt();
+$('delete-prompt-cancel').onclick = () => hideDeletePrompt();
 // The dialog's selection is its own state: saving the preference happens in
 // the background and its replies must not change what the user sees chosen.
 let deleteChoice = 'trash', deleteSaves = 0;
@@ -1004,9 +1029,20 @@ function readSettings() {
   value.colors = [...$('color-settings').children].map(row => ({ id: row.dataset.id, ...Object.fromEntries([...row.querySelectorAll('input')].map(input => [input.dataset.field, input.value])) }));
   readWorkspaceSettings(value); value.naming = readNaming('settings'); return value;
 }
+// Save sends only what the dialog changed, so a dialog left open on one device cannot undo
+// a change made meanwhile on another (the server shares one settings file).
+let settingsBase = null;
+function settingsPatch(before, after) {
+  const patch = {}, same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  for (const [key, value] of Object.entries(after)) {
+    if (['presets', 'folder', 'warning'].includes(key) || same(before[key], value)) continue;
+    patch[key] = key === 'metadata' ? Object.fromEntries(Object.entries(value).filter(([field, v]) => !same(before.metadata?.[field], v))) : value;
+  }
+  return patch;
+}
 async function openSettings(tab = 'general') {
   if (state.copy.running || backupRunning) return;
-  try { const value = await api.settings(); state.settings = value; settingsDraft = clone(value); const recipes = await api.recipes(); $('default-recipe').replaceChildren(...recipes.recipes.map(r => option(r.id, r.name))); fillSettings(settingsDraft); setSettingsTab(tab); $('settings-status').textContent = value.warning || ''; $('settings-dialog').showModal(); }
+  try { const value = await api.settings(); state.settings = value; settingsDraft = clone(value); settingsBase = clone(value); const recipes = await api.recipes(); $('default-recipe').replaceChildren(...recipes.recipes.map(r => option(r.id, r.name))); fillSettings(settingsDraft); setSettingsTab(tab); $('settings-status').textContent = value.warning || ''; $('settings-dialog').showModal(); }
   catch (error) { toast(error.message); }
 }
 // The preview cache is disposable: clearing only costs regenerating previews.
@@ -1040,7 +1076,7 @@ document.querySelectorAll('[data-project-link]').forEach(link => { link.onclick 
 $('settings-cancel').onclick = () => $('settings-dialog').close();
 $('settings-save').onclick = async () => {
   $('settings-save').disabled = true;
-  try { const oldPolicy = state.settings.rawRendering; syncSettings(await api.settings(readSettings())); if (oldPolicy !== state.settings.rawRendering) refreshPreviews(); $('settings-dialog').close(); }
+  try { const oldPolicy = state.settings.rawRendering; syncSettings(await api.settings(settingsPatch(settingsBase, readSettings()))); if (oldPolicy !== state.settings.rawRendering) refreshPreviews(); $('settings-dialog').close(); }
   catch (error) { $('settings-status').textContent = error.message; }
   finally { $('settings-save').disabled = false; }
 };
@@ -1074,6 +1110,7 @@ void api.settings().then(syncSettings).catch(error => toast(error.message));
 
 // Browser mode lets smoke tests open a folder without a native dialog.
 if (api.platform === 'web') window.loadTestFolder = async (folder, recursive) => loadSession(await api.openPath(folder, recursive));
+if (api.server) void window.PhotoCullServer.attach(loadSession, () => state.session);
 render();
 
 $('handoff-folder-choose').onclick = async () => { try { const folder=await api.pickFolder('Choose a local hand-off folder'); if(folder){await api.developFolderCheck(folder); $('handoff-folder').value=folder;} } catch(e){toast(e.message);} };
@@ -1194,22 +1231,22 @@ const workspaceButton = (text,run,id) => {const el=workspaceNode('button',text,{
 function shortcutLabel(command,custom=state.settings.shortcuts||{}) {return PhotoCullCommands.shortcuts(command,custom).map(k=>k.replaceAll('Mod',api.platform==='darwin'?'⌘':'Ctrl').replaceAll('Meta','⌘').replaceAll('Space','Space')).join(' / ')||'Unassigned';}
 function openHelp() {
   const host=$('help-dialog').querySelector('.shortcut-list');host.replaceChildren();
-  for(const command of commands.commands){host.append(workspaceNode('span',command.title),workspaceNode('kbd',shortcutLabel(command)));}
+  for(const command of commands.commands.filter(offered)){host.append(workspaceNode('span',command.title),workspaceNode('kbd',shortcutLabel(command)));}
   if(!$('help-dialog').open)$('help-dialog').showModal();
 }
 const helpActions=workspaceNode('div',null,{class:'copy-actions'});
-for(const [text,id] of [['About PhotoCull','about'],['Command palette','palette'],['Welcome','welcome'],['Copy diagnostics','diagnostics'],['Open log folder','logs']])helpActions.append(workspaceButton(text,()=>{$('help-dialog').close();commands.execute(id);}));
+for(const [text,id] of [['About PhotoCull','about'],['Command palette','palette'],['Welcome','welcome'],['Copy diagnostics','diagnostics'],['Open log folder','logs']].filter(([,id])=>offered({id,context:['review']})))helpActions.append(workspaceButton(text,()=>{$('help-dialog').close();commands.execute(id);}));
 $('help-dialog').prepend(helpActions);$('help-dialog').querySelector('h2').textContent='Help & shortcuts';
 const palette=workspaceNode('dialog',null,{id:'command-palette','aria-label':'Command palette'});
-palette.innerHTML='<label for="command-query">Command palette · type > to find a photo</label><input id="command-query" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="command-results" autocomplete="off" placeholder="Search commands or > photo name"><div id="command-results" role="listbox" aria-label="Commands"></div><p id="command-count" class="subtle small" role="status"></p>';
-document.body.append(palette);
+palette.innerHTML='<button type="button" id="command-close" class="close-dialog" aria-label="Close">×</button><label for="command-query">Command palette · type > to find a photo</label><input id="command-query" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="command-results" autocomplete="off" placeholder="Search commands or > photo name"><div id="command-results" role="listbox" aria-label="Commands"></div><p id="command-count" class="subtle small" role="status"></p>';
+document.body.append(palette);$('command-close').onclick=()=>palette.close();
 let paletteRows=[],paletteIndex=0,paletteFocus;
 function openPalette(query='') {if(document.querySelector('dialog[open]'))return;paletteFocus=document.activeElement;palette.showModal();$('command-query').value=query;paletteIndex=0;drawPalette();$('command-query').focus();}
 function drawPalette() {
   const query=$('command-query').value,findPhoto=query.startsWith('>');
   paletteRows=findPhoto?(state.session?.items||[]).filter(item=>!item.trashed&&PhotoCullCommands.fuzzy(query.slice(1),item.name)).slice(0,60).map(item=>({id:'photo-'+item.id,title:item.name,category:'Photo',run:()=>{state.filter='all';state.query='';state.colorFilter='';$('search').value='';$('color-filter').value='';state.selected=item.id;resetSelection();render(true);}})):
-    [...commands.search(query,recentCommands).map(command=>({...command,disabled:!command.context.includes(state.mode)||!command.enabled(),run:()=>commands.execute(command.id)})),
-     ...(state.settings.editors||[]).map(e=>({id:'edit-with-'+e.id,title:`Edit in ${e.name}…`,category:'Files',disabled:$('edit-external').disabled,run:()=>developView.openBatch(e.id)})).filter(row=>PhotoCullCommands.fuzzy(query,row.title+' '+row.category)>0)].slice(0,60);
+    [...commands.search(query,recentCommands).filter(offered).map(command=>({...command,disabled:!command.context.includes(state.mode)||!command.enabled(),run:()=>commands.execute(command.id)})),
+     ...(api.server?[]:state.settings.editors||[]).map(e=>({id:'edit-with-'+e.id,title:`Edit in ${e.name}…`,category:'Files',disabled:$('edit-external').disabled,run:()=>developView.openBatch(e.id)})).filter(row=>PhotoCullCommands.fuzzy(query,row.title+' '+row.category)>0)].slice(0,60);
   paletteIndex=Math.min(paletteIndex,Math.max(0,paletteRows.length-1));
   $('command-results').replaceChildren(...paletteRows.map((row,index)=>{
     const el=workspaceNode('div',null,{id:'command-option-'+index,role:'option','aria-selected':String(index===paletteIndex),'aria-disabled':String(!!row.disabled),class:'command-option'});
@@ -1233,7 +1270,7 @@ $('settings-status').before(keyboardPage);
 let recording=null;
 function drawKeyboard() {
   recording=null;const host=$('keyboard-commands');host.replaceChildren();let category='';
-  for(const command of [...commands.commands].sort((a,b)=>a.category.localeCompare(b.category)||a.title.localeCompare(b.title))){
+  for(const command of commands.commands.filter(offered).sort((a,b)=>a.category.localeCompare(b.category)||a.title.localeCompare(b.title))){
     if(command.category!==category){category=command.category;host.append(workspaceNode('h3',category));}
     const row=workspaceNode('div',null,{class:'keyboard-row','data-command':command.id});
     row.append(workspaceNode('span',command.title+' ('+command.context.join(', ')+')'),workspaceNode('kbd',shortcutLabel(command,settingsDraft.shortcuts||{})),
@@ -1252,9 +1289,9 @@ document.addEventListener('keydown',event=>{
 },true);
 $('settings-dialog').addEventListener('close',()=>{recording=null;});
 // The existing naming page covers copy names/folder layouts. Export presets own export naming.
-const cardSettings=workspaceNode('section');cardSettings.innerHTML='<h3>Camera cards & backup</h3><label>Camera folder layouts (one relative path per line)<textarea id="card-folders" rows="3" placeholder="DCIM&#10;PRIVATE/M4ROOT"></textarea></label><label>Folders treated as cards (one absolute path per line)<textarea id="manual-cards" rows="3"></textarea></label><label>Default backup folder template<input id="backup-template" placeholder="{date}-{card}"></label><p class="subtle small">Backup tokens: {date}, {card}, {year}, {month}, {day}. Copy naming is in File naming; finished-image naming is saved in export presets.</p>';
+const cardSettings=workspaceNode('section',null,{class:'desktop-only'});cardSettings.innerHTML='<h3>Camera cards & backup</h3><label>Camera folder layouts (one relative path per line)<textarea id="card-folders" rows="3" placeholder="DCIM&#10;PRIVATE/M4ROOT"></textarea></label><label>Folders treated as cards (one absolute path per line)<textarea id="manual-cards" rows="3"></textarea></label><label>Default backup folder template<input id="backup-template" placeholder="{date}-{card}"></label><p class="subtle small">Backup tokens: {date}, {card}, {year}, {month}, {day}. Copy naming is in File naming; finished-image naming is saved in export presets.</p>';
 $('settings-dialog').querySelector('[data-settings-page="general"]').append(cardSettings);
-const syncTab=workspaceButton('Import / export',()=>setSettingsTab('sync'));syncTab.dataset.settingsTab='sync';$('settings-dialog').querySelector('nav').append(syncTab);
+const syncTab=workspaceButton('Import / export',()=>setSettingsTab('sync'));syncTab.dataset.settingsTab='sync';syncTab.classList.add('desktop-only');$('settings-dialog').querySelector('nav').append(syncTab);
 const syncPage=workspaceNode('section',null,{'data-settings-page':'sync',hidden:''});syncPage.innerHTML='<h3>Move settings between computers</h3><p>Bundles include preferences, user recipes, metadata and export presets, external editors and shortcuts. Import replaces these settings after saving a full backup.</p><label class="toggle-row"><input id="bundle-exclude-paths" type="checkbox" checked> Exclude machine-specific paths on export</label><div class="copy-actions"><button id="bundle-export" class="button quiet">Export settings…</button><label class="button quiet">Choose settings JSON<input id="bundle-file" type="file" accept=".json,application/json"></label></div><label>Path mappings (JSON object, old prefix → new prefix)<textarea id="bundle-path-map" rows="3">{}</textarea></label><button id="bundle-preview" class="button quiet">Preview import</button><pre id="bundle-changes" role="status"></pre><button id="bundle-apply" class="button primary" disabled>Back up current settings & import</button>';
 $('settings-status').before(syncPage);
 let bundleInput=null,bundleToken=null;
@@ -1263,7 +1300,7 @@ $('bundle-file').onchange=async()=>{clearBundlePreview();try{const file=$('bundl
 $('bundle-path-map').oninput=clearBundlePreview;
 $('bundle-export').onclick=async()=>{try{const file=await api.bundleExport({excludePaths:$('bundle-exclude-paths').checked});$('bundle-changes').textContent=file?`Saved ${file}`:'Export canceled.';}catch(e){$('bundle-changes').textContent=e.message;}};
 $('bundle-preview').onclick=async()=>{clearBundlePreview();try{const result=await api.bundlePreview(bundleInput,{pathMap:JSON.parse($('bundle-path-map').value)});bundleToken=result.token;$('bundle-changes').textContent=`Preferences changed: ${result.changes.join(', ')||'none'}\nUser recipes: ${result.recipes.before} → ${result.recipes.after}\nMetadata presets: ${result.presets.before} → ${result.presets.after}\n${result.warnings.join('\n')}\n\nPreference values (before / after):\n${JSON.stringify(result.details,null,2)}\nRecipe changes: ${JSON.stringify(result.recipeChanges)}\nPreset changes: ${JSON.stringify(result.presetChanges)}`;$('bundle-apply').disabled=false;}catch(e){$('bundle-changes').textContent=e.message;}};
-$('bundle-apply').onclick=async()=>{if(!bundleToken)return;$('bundle-apply').disabled=true;try{const result=await api.bundleApply(bundleToken);syncSettings(result.settings);settingsDraft=clone(result.settings);const recipes=await api.recipes();$('default-recipe').replaceChildren(...recipes.recipes.map(r=>option(r.id,r.name)));fillSettings(settingsDraft);$('bundle-changes').textContent=`Imported. Previous settings backed up to ${result.backup}`;clearBundlePreview();}catch(e){$('bundle-changes').textContent=e.message;}};
+$('bundle-apply').onclick=async()=>{if(!bundleToken)return;$('bundle-apply').disabled=true;try{const result=await api.bundleApply(bundleToken);syncSettings(result.settings);settingsDraft=clone(result.settings);settingsBase=clone(result.settings);const recipes=await api.recipes();$('default-recipe').replaceChildren(...recipes.recipes.map(r=>option(r.id,r.name)));fillSettings(settingsDraft);$('bundle-changes').textContent=`Imported. Previous settings backed up to ${result.backup}`;clearBundlePreview();}catch(e){$('bundle-changes').textContent=e.message;}};
 function fillWorkspaceSettings(value) {drawKeyboard();$('card-folders').value=(value.cardFolders||['DCIM']).join('\n');$('manual-cards').value=(value.manualCards||[]).join('\n');$('backup-template').value=value.backupTemplate||'{date}-{card}';}
 function readWorkspaceSettings(value) {value.cardFolders=$('card-folders').value.split('\n').map(s=>s.trim()).filter(Boolean);value.manualCards=$('manual-cards').value.split('\n').map(s=>s.trim()).filter(Boolean);value.backupTemplate=$('backup-template').value.trim();}
 const welcome=workspaceNode('dialog',null,{id:'welcome-panel','aria-labelledby':'welcome-title',hidden:''});
@@ -1292,9 +1329,11 @@ async function chooseCard() {
   $('devices-panel').scrollIntoView({block:'nearest'});$('device-list').querySelector('button')?.focus();
 }
 welcome.addEventListener('cancel',e=>{e.preventDefault();void dismissWelcome(true).catch(error=>toast(error.message));});
-$('welcome-actions').append(workspaceButton('Skip',()=>dismissWelcome(true),'welcome-skip'),workspaceButton('Choose camera card',async()=>{await dismissWelcome(false);await chooseCard();},'welcome-card'),workspaceButton('Set up an external editor',async()=>{await dismissWelcome(false);await openSettings('editors');}),workspaceButton('Open folder…',async()=>{await dismissWelcome(false);await openFolder();},'welcome-open'));
+$('welcome-actions').append(workspaceButton('Skip',()=>dismissWelcome(true),'welcome-skip'),workspaceButton('Choose camera card',async()=>{await dismissWelcome(false);await chooseCard();},'welcome-card'),workspaceButton('Set up an external editor',async()=>{await dismissWelcome(false);await openSettings('editors');},'welcome-editor'),workspaceButton('Open folder…',async()=>{await dismissWelcome(false);await openFolder();},'welcome-open'));
 $('welcome-open').className='button primary';$('welcome-open').autofocus=true;
-void Promise.all([api.workspaceInfo(),api.settings()]).then(([info,settings])=>{if(info.welcome&&!settings.welcomeDismissed)showWelcome();else settleWelcome(true);}).catch(error=>{settleWelcome(true);toast(error.message);});
+$('welcome-card').classList.add('desktop-only');$('welcome-editor').classList.add('desktop-only');
+if(api.server)welcome.querySelector('p').textContent='Open a photo folder to start culling.';
+void Promise.all([api.workspaceInfo(),api.settings()]).then(([info,settings])=>{if(info.welcome&&!settings.welcomeDismissed&&!api.server)showWelcome();else settleWelcome(true);}).catch(error=>{settleWelcome(true);toast(error.message);});
 async function copyDiagnostics() {
   const color=await api.displayColor().catch(()=>({mode:'unavailable'}));let gpu='unavailable';
   try{const gl=document.createElement('canvas').getContext('webgl'),ext=gl?.getExtension('WEBGL_debug_renderer_info');if(ext)gpu=gl.getParameter(ext.UNMASKED_RENDERER_WEBGL);}catch{}
@@ -1364,7 +1403,8 @@ function bestIn(burst) {return burst && PhotoCullCulling.sharpest(burst.ids,cull
 function burstSignature(item) {const b=culling.byId.get(item.id);return b ? `${b.id}:${b.ids.length}:${culling.expanded.has(b.id)}:${bestIn(b)}` : '';}
 function addBurstBadges(node,item) {
   const b=culling.byId.get(item.id);if(!b)return;
-  const badge=document.createElement('span');badge.className='burst-badge';badge.textContent=`${culling.expanded.has(b.id)?'▾':'▸'} ${b.ids.length}`;badge.title='Burst · S to expand or collapse';
+  const badge=document.createElement('span');badge.className='burst-badge';badge.textContent=`${culling.expanded.has(b.id)?'▾':'▸'} ${b.ids.length}`;badge.title='Burst · tap or S to expand or collapse';badge.setAttribute('role','button');badge.setAttribute('aria-label',`${culling.expanded.has(b.id)?'Collapse':'Expand'} burst of ${b.ids.length}`);
+  badge.onclick=event=>{event.stopPropagation();toggleBurst(b);};
   if(bestIn(b)===item.id){const star=document.createElement('span');star.className='sharpest-badge';star.append('◆',Object.assign(document.createElement('span'),{className:'badge-label',textContent:' Sharpest'}));star.title='Highest preview sharpness in this burst';badgeRow(node,'top').append(star);}
   badgeRow(node,'top').append(badge);
 }
@@ -1374,26 +1414,27 @@ function renderCulling() {
   $('burst-stack').hidden=$('burst-keep').hidden=!available;
   $('burst-stack').textContent=available && culling.expanded.has(burst.id)?'Collapse burst':'Expand burst';
   $('burst-keep').disabled=!bestIn(burst) || state.busy || state.deleting || !!state.pendingSaves;
+  burstMenu.stack.textContent=$('burst-stack').textContent;burstMenu.keep.disabled=$('burst-keep').disabled;
   applyFocus();
 }
-function toggleBurst() {
-  const burst=culling.byId.get(state.selected);if(!burst)return toast('This photo is not part of a detected burst.');
+function toggleBurst(burst=culling.byId.get(state.selected)) {
+  if(!burst)return toast('This photo is not part of a detected burst.');
   if(culling.expanded.has(burst.id))culling.expanded.delete(burst.id);else culling.expanded.add(burst.id);
-  filmSignature='';render();
+  render();
 }
 function setPauseLabel(text) {$('analysis-pause').textContent=text;$('analysis-pause').dataset.action=text.split(' ')[0].toLowerCase();}
 function setAnalysis(text,phase) {$('analysis-status').textContent=text;$('analysis-status').dataset.phase=phase;$('analysis-status').closest('.analysis').title=text;}
 function cancelCulling() {culling.epoch++;culling.running=false;void api.cancelSharpness().catch(()=>{});}
 async function analyzeCulling() {
   cancelCulling();culling.paused=false;culling.running=true;const epoch=culling.epoch,session=state.session?.id,items=[...(state.session?.items || [])];
-  $('analysis-pause').hidden=!items.length;setPauseLabel('Pause analysis');
+  $('analysis-pause').hidden=!items.length || !!api.server;setPauseLabel('Pause analysis');
   const current=()=>epoch===culling.epoch && session===state.session?.id && !culling.paused;
   const yieldUI=()=>new Promise(resolve=>setTimeout(resolve,35));let failures=0;
   try {
     for(const [index,item] of items.entries()) {
       if(!current())return;try{await cullingMetadata(item.id,session);}catch{failures++;}
       if(!current())return;
-      if(index%8===0 || index===items.length-1){regroupBursts();filmSignature='';render();setAnalysis(`Metadata ${index+1}/${items.length}`,'running');}
+      if(index%8===0 || index===items.length-1){regroupBursts();render();setAnalysis(`Metadata ${index+1}/${items.length}`,'running');}
       await yieldUI();
     }
     if(api.canAnalyze) {
@@ -1402,7 +1443,7 @@ async function analyzeCulling() {
         if(!current())return;if(culling.scores.has(item.id))continue;
         try{const score=await api.sharpness(session,item.id);if(!current())return;if(Number.isFinite(score))culling.scores.set(item.id,score);}catch{if(current())failures++;}
         if(!current())return;
-        setAnalysis(`Focus ${culling.scores.size}/${items.length}`,'running');filmSignature='';render();await yieldUI();
+        setAnalysis(`Focus ${culling.scores.size}/${items.length}`,'running');render();await yieldUI();
       }
     }
     if(current()){setAnalysis(failures?`${failures} unavailable`:api.canAnalyze?'Focus ready':'Desktop scores',failures?'warn':'done');$('analysis-pause').hidden=!failures;setPauseLabel('Retry analysis');}

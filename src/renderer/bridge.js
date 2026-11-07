@@ -2,8 +2,11 @@
 // In the desktop app it talks to the Tauri shell, which forwards photo work to
 // the Node backend (src/backend.cjs). Opened in a plain browser from
 // `node src/backend.cjs --web`, it talks to that backend over HTTP instead.
+// Served by `--server`, it also signs in with a cookie and browses the
+// server's photo folders (server.js) instead of asking for paths.
 (() => {
   const tauri = window.__TAURI__;
+  const server = !tauri && window.__PHOTOCULL_SERVER__ || null;
   const subscribers = new Map();
   const dispatch = (name, payload) => { for (const callback of subscribers.get(name) || []) callback(payload); };
   const subscribe = (name, callback) => {
@@ -11,7 +14,7 @@
     subscribers.get(name).add(callback);
     return () => subscribers.get(name).delete(callback);
   };
-  const EVENTS = ['backup-progress','edit-shortcut', 'open-folder-shortcut', 'settings-shortcut', 'fullscreen-toggle', 'fullscreen-changed', 'devices-changed', 'copy-progress', 'sidecar-warning', 'preview-state', 'develop-progress', 'export-progress', 'lens-database-progress'];
+  const EVENTS = ['backup-progress','edit-shortcut', 'open-folder-shortcut', 'settings-shortcut', 'fullscreen-toggle', 'fullscreen-changed', 'devices-changed', 'copy-progress', 'sidecar-warning', 'preview-state', 'develop-progress', 'export-progress', 'lens-database-progress', 'prepare-progress'];
 
   let backend, imageBase, platform, host, shell;
   if (tauri) {
@@ -36,19 +39,22 @@
     const token = new URLSearchParams(location.search).get('t') || '';
     platform = 'web';
     imageBase = { prefix: `${location.origin}/image`, query: `t=${token}` };
+    if (server) imageBase.query = '';
     backend = async (method, ...params) => {
-      const response = await fetch(`/rpc?t=${token}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ method, params }) });
+      const response = await fetch(server ? '/rpc' : `/rpc?t=${token}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(server ? { 'X-PhotoCull': '1' } : {}) }, body: JSON.stringify({ method, params }) });
+      // Signed out (password changed or cookie cleared): back to the sign-in page.
+      if (server && response.status === 403) { location.reload(); throw new Error('Signed out.'); }
       const reply = await response.json();
       if (!reply.ok) throw new Error(reply.error);
       return reply.value;
     };
-    const events = new EventSource(`/events?t=${token}`);
+    const events = new EventSource(server ? '/events' : `/events?t=${token}`);
     for (const name of EVENTS) events.addEventListener(name, event => dispatch(name, JSON.parse(event.data)));
     // Browser mode stands in for native dialogs with a path prompt.
     const askPath = message => { const value = prompt(message); return value?.trim() || null; };
     host = {
       pickEditor: async () => askPath('Editor executable or .app bundle (full path)'),
-      pickFolder: async title => askPath(`${title} (full path)`),
+      pickFolder: async title => server ? window.PhotoCullServer.pickFolder(title) : askPath(`${title} (full path)`),
       pickSaveFile: async defaultName => askPath(`Save ${defaultName} to (full path)`),
       openFolder: async () => { throw new Error('Opening folders needs the desktop app.'); },
       fullscreen: async value => {
@@ -63,6 +69,30 @@
       },
     };
     document.addEventListener('fullscreenchange', () => dispatch('fullscreen-changed', { fullscreen: !!document.fullscreenElement }));
+  }
+
+  // On the server several devices share one settings file. How a device behaves (auto-advance,
+  // zoom, the focus overlay, shortcuts, the remembered delete mode) stays in that browser, so a
+  // desktop choosing "Delete permanently" does not become the phone's default. Unset values
+  // fall back to the shared ones, except the delete mode, which starts at the trash.
+  const DEVICE_SETTINGS = ['autoAdvance', 'zoomPercent', 'zoomClickCenter', 'focusOverlay', 'shortcuts', 'deleteMode'];
+  const DEVICE_KEY = 'photocull-device-settings';
+  const deviceSettings = () => { try { return JSON.parse(localStorage.getItem(DEVICE_KEY)) || {}; } catch { return {}; } };
+  function deviceSetting(key, value) {
+    if (key === 'shortcuts') return window.PhotoCullCommands.validateCustom(value);
+    const ok = key === 'zoomPercent' ? Number.isFinite(value) && value >= 5 && value <= 1600
+      : key === 'deleteMode' ? ['trash', 'permanent'].includes(value) : typeof value === 'boolean';
+    if (!ok) throw new Error(`Invalid setting: ${key}`);
+    return value;
+  }
+  async function serverSettings(patch) {
+    const local = deviceSettings(), shared = {};
+    for (const [key, value] of Object.entries(patch || {})) {
+      if (DEVICE_SETTINGS.includes(key)) local[key] = deviceSetting(key, value); else shared[key] = value;
+    }
+    const snapshot = await backend('settings', Object.keys(shared).length ? shared : undefined);
+    if (patch) try { localStorage.setItem(DEVICE_KEY, JSON.stringify(local)); } catch {}
+    return { ...snapshot, deleteMode: 'trash', ...local };
   }
 
   // develop_render replies with [u32 LE header length][JSON header][JPEG].
@@ -89,8 +119,8 @@
     backupCancel: () => backend('backup-cancel'),
     onBackupProgress: callback => subscribe('backup-progress',callback),
     canDevelop: !!tauri,
-    canAnalyze: !!tauri,
-    sharpness: (session,id) => shell('sharpness_score',{session,id}),
+    canAnalyze: !!tauri || !!server,
+    sharpness: (session,id) => server ? backend('sharpness',session,id) : shell('sharpness_score',{session,id}),
     cancelSharpness: () => tauri ? shell('sharpness_cancel',{}) : Promise.resolve(),
     keepSharpest: (session,ids) => backend('keep-sharpest',session,ids),
     // Recipes and per-photo develop state (Node backend).
@@ -134,7 +164,17 @@
     onDevelopProgress: callback => subscribe('develop-progress', callback),
     onExportProgress: callback => subscribe('export-progress', callback),
     onLensDatabaseProgress: callback => subscribe('lens-database-progress', callback),
-    canTrash: !!tauri,
+    canTrash: !!tauri || !!server?.trash,
+    trashName: server ? 'server trash' : null,
+    server: server && {
+      info: server,
+      browse: folder => backend('browse', folder),
+      prepareFolder: (folder, recursive) => backend('prepare-folder', folder, !!recursive),
+      prepareStatus: () => backend('prepare-status'),
+      prepareCancel: session => backend('prepare-cancel', session),
+      lastSession: () => backend('last-session'),
+      onPrepare: callback => subscribe('prepare-progress', callback),
+    },
     imageUrl: (session, id, kind, params = '') => `${imageBase.prefix}/${session}/${id}/${kind}?${imageBase.query}${params}`,
     onEdit: callback => subscribe('edit-shortcut', callback),
     onOpenFolder: callback => subscribe('open-folder-shortcut', callback),
@@ -150,7 +190,7 @@
       return host.fullscreen(value);
     },
     namingPreview: (session, naming, id = null, extension = null) => backend('naming-preview', session, naming, id, extension),
-    settings: patch => backend('settings', patch),
+    settings: patch => server ? serverSettings(patch) : backend('settings', patch),
     savePreset: (name, value) => backend('save-preset', name, value),
     deletePreset: id => backend('delete-preset', id),
     settingsFolder: async () => host.openFolder(await backend('settings-folder')),
@@ -162,7 +202,8 @@
     revealDestination: folder => host.openFolder(folder),
     chooseFolder: async ({ recursive = false } = {}) => {
       const folder = await host.pickFolder('Choose a photo folder');
-      return folder ? backend('scan', folder, !!recursive) : null;
+      // On the server, Include subfolders is a checkbox in the folder browser.
+      return folder ? backend('scan', folder, server ? window.PhotoCullServer.recursive : !!recursive) : null;
     },
     openPath: (folder, recursive) => backend('scan', folder, !!recursive),
     decide: (session, id, patch) => backend('decide', session, id, patch),
