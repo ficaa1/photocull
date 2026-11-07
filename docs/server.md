@@ -4,10 +4,12 @@ PhotoCull can run as a self-hosted web app on a home server, next to the photos,
 
 ## How it works
 
-1. **Open** a folder with the folder browser. It shows only the photo folders you configure.
+1. **Open** a folder with the folder browser. It shows only the photo folders you configure. **Include subfolders** there opens a folder together with everything below it.
 2. PhotoCull **prepares** it in the background: every thumbnail first, then review previews and focus scores for the whole folder. Preparation continues with the browser closed. **Prepare in background** in the folder browser queues a folder without opening it. Folders are prepared one at a time and show **Queued**, **Thumbnails n/N**, **Focus n/N** or **Ready**. A pill in the corner follows the current job.
-3. **Cull** as in the desktop app. On a phone or tablet, swipe a photo left or right to move between photos, up to pick and down to reject. Tap zooms, and a zoomed photo pans with one finger. Prepared photos open instantly. Decisions are saved on the server and written to XMP sidecars next to the photos (Settings → Metadata), so the desktop app and editors see them.
+3. **Cull** as in the desktop app. On a phone or tablet, swipe a photo left or right to move between photos, up to pick and down to reject. Tap zooms, and a zoomed photo pans with one finger. In the grid, a tap opens the photo. The burst label on a photo ("2/5 in burst") offers Expand burst and Keep sharpest, and the ▸ badge on a thumbnail expands or collapses its burst. Prepared photos open instantly. Decisions are saved on the server and written to XMP sidecars next to the photos (Settings → Metadata), so the desktop app and editors see them.
 4. **Delete** rejects, or empty PhotoCull's Trash, to move the photos to the **server trash**.
+
+Settings that decide what is written to the photos (burst gap, XMP mapping, colors, creator and copyright) are shared by every browser. How each device behaves is kept in that browser: auto-advance, click zoom, the focus overlay, keyboard shortcuts and the remembered delete mode, which always starts at the server trash. Settings only the desktop app uses are not shown.
 
 A reloaded page returns to the last opened folder. The server keeps up to eight folders open, so several browsers can use it. Each browser sees the others' decisions after reopening the folder.
 
@@ -28,7 +30,7 @@ Then open `http://<server address>:8787` from any device on the network. Setting
 | `PHOTOCULL_ROOTS` | **Required.** The folders the folder browser can open: `Name=/path`, several separated by `;`, e.g. `Photos=/library/Photos;Uploads=/library/uploads`. A bare `/path` is named after its last folder. Nothing outside these folders can be browsed, opened, copied to or deleted, including through symlinks. |
 | `PHOTOCULL_TRASH` | Where Delete moves photos. Leave empty to disable deletion. See [Server trash](#server-trash). |
 | `PHOTOCULL_TRASH_DAYS` | Days before a trashed photo is removed for good. Default 30; `0` keeps everything. |
-| `PHOTOCULL_PREVIEW_CACHE_GB` | Preview cache size: 1, 2, 5 or 10 GB. The least recently used photos are evicted first. |
+| `PHOTOCULL_PREVIEW_CACHE_GB` | Preview cache size: 1, 2, 5 or 10 GB. The least recently used photos are evicted first. Browsers cannot change it. |
 | `PHOTOCULL_PASSWORD` | Optional sign-in. Without it, anyone who can reach the port can cull and delete. Changing it signs every browser out. |
 | `PHOTOCULL_HOSTNAMES` | Host names, besides IP addresses and `localhost`, that the app is reached by, comma separated: a local DNS name or a reverse-proxy domain. Requests addressed to any other name are refused. |
 | `PHOTOCULL_PORT`, `PHOTOCULL_HOST` | Where the server listens inside the container; defaults `8080` and `0.0.0.0`. Publish a different host port in `ports:` instead of changing these. |

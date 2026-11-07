@@ -3,6 +3,8 @@
 (() => {
   const api = window.photocull, server = api.server;
   document.documentElement.classList.add('server-mode');
+  // iPhone Safari cannot make a page fullscreen.
+  if (!document.fullscreenEnabled) document.documentElement.classList.add('no-fullscreen');
   const el = (tag, props = {}, ...children) => { const node = Object.assign(document.createElement(tag), props); node.append(...children.filter(c => c !== null && c !== undefined)); return node; };
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
   const jobs = new Map();
@@ -23,8 +25,13 @@
   const cancel = el('button', { type: 'button', className: 'button quiet', textContent: 'Cancel' });
   const prepare = el('button', { type: 'button', className: 'button quiet', textContent: 'Prepare in background', title: 'Make previews and focus scores now, without opening the folder' });
   const choose = el('button', { type: 'button', className: 'button primary' });
+  // Include subfolders belongs to this browser and to the folder being opened, so it lives here.
+  const RECURSIVE_KEY = 'photocull-recursive';
+  const recursive = el('input', { type: 'checkbox', checked: localStorage.getItem(RECURSIVE_KEY) === '1',
+    onchange: () => { try { localStorage.setItem(RECURSIVE_KEY, recursive.checked ? '1' : '0'); } catch {} } });
+  const recursiveRow = el('label', { className: 'folder-recursive' }, recursive, ' Include subfolders');
   dialog.append(el('header', {}, title, el('button', { type: 'button', className: 'folder-close', ariaLabel: 'Close', textContent: '×', onclick: () => dialog.close('') })),
-    crumbs, list, el('footer', {}, summary, el('div', { className: 'folder-actions' }, cancel, prepare, choose)));
+    crumbs, list, el('footer', {}, summary, recursiveRow, el('div', { className: 'folder-actions' }, cancel, prepare, choose)));
   document.body.append(dialog);
   let current = null, mode = 'open', resolvePick = null;
   cancel.onclick = () => dialog.close('');
@@ -62,19 +69,19 @@
     if (!current?.path) return;
     prepare.disabled = true;
     try {
-      const settings = await api.settings();
-      await server.prepareFolder(current.path, settings.recursive);
+      await server.prepareFolder(current.path, recursive.checked);
       toast(`Preparing ${current.name} in the background.`);
     } catch (error) { toast(error.message); }
     prepare.disabled = false;
   };
   let lastFolder = null;
   window.PhotoCullServer = {
+    get recursive() { return recursive.checked; },
     pickFolder(heading) {
       mode = /copy/i.test(heading) ? 'copy' : 'open';
       title.textContent = mode === 'copy' ? 'Copy picks to' : 'Open a folder';
       choose.textContent = mode === 'copy' ? 'Copy here' : 'Open';
-      prepare.hidden = mode === 'copy';
+      prepare.hidden = recursiveRow.hidden = mode === 'copy';
       dialog.returnValue = '';
       resolvePick?.(null);
       const picked = new Promise(resolve => { resolvePick = resolve; });
@@ -88,10 +95,11 @@
     return !root || folder === root.path ? root?.path ?? null : folder.slice(0, folder.lastIndexOf('/'));
   };
 
-  // Prepare indicator: shows while any folder is being prepared.
+  // Prepare indicator: shows in the status bar while any folder is being prepared, where it
+  // covers nothing (a floating pill hid the Compare and thumbnail-size controls on phones).
   const pill = el('button', { type: 'button', className: 'prepare-pill', hidden: true, title: 'Background preparation · open the folder browser',
     onclick: () => document.getElementById('open-folder')?.click() });
-  document.body.append(pill);
+  document.getElementById('save-status').after(pill);
   let hideTimer;
   function renderPill(changed) {
     const active = [...jobs.values()].filter(j => j.state === 'running' || j.state === 'queued');

@@ -301,8 +301,14 @@ async function start() {
       prepare.start(session.id);
       return session;
     };
+    // The compose file owns the cache size; a browser cannot change it until the next restart.
+    const saveSettings = methods['settings'];
     Object.assign(methods, {
-      'server-info': () => ({ roots: roots.roots.map(r => ({ name: r.name, path: r.path })), trash: !!trash, trashDays: config.trashDays }),
+      'settings': patch => {
+        if (patch && config.previewCacheGB) { patch = { ...patch }; delete patch.previewCacheGB; }
+        return saveSettings(patch);
+      },
+      'server-info':() => ({ roots: roots.roots.map(r => ({ name: r.name, path: r.path })), trash: !!trash, trashDays: config.trashDays }),
       'browse': folder => roots.browse(folder || null),
       'scan': async (folder, recursive) => {
         const session = await open(folder, recursive);
@@ -348,7 +354,7 @@ async function start() {
   // files (dialogs, settings bundles, editors) or belongs to the desktop app.
   const SERVER_METHODS = new Set(['app-info', 'workspace-info', 'server-info', 'browse', 'scan', 'last-session', 'prepare-folder', 'prepare-status', 'prepare-cancel',
     'sharpness', 'analysis-source', 'keep-sharpest', 'devices', 'open-device', 'test-destination', 'copy-picks', 'naming-preview', 'cancel-copy', 'decide', 'decide-many',
-    'history', 'metadata', 'preview-status', 'settings', 'save-preset', 'delete-preset', 'preview-settings', 'preview-cache', 'clear-preview-cache', 'retry-preview',
+    'history', 'metadata', 'preview-status', 'settings', 'save-preset', 'delete-preset', 'preview-settings', 'preview-cache', 'retry-preview',
     'focus', 'visible', 'export-xmp', 'forget', 'stats', 'delete-photos', 'recipes', 'handoff-usage', 'develop-get']);
   const call = async (method, params) => {
     if (serverMode && !SERVER_METHODS.has(method)) throw new Error(`${method} is not available on the server.`);

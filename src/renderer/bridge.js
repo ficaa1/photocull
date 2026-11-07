@@ -71,6 +71,30 @@
     document.addEventListener('fullscreenchange', () => dispatch('fullscreen-changed', { fullscreen: !!document.fullscreenElement }));
   }
 
+  // On the server several devices share one settings file. How a device behaves (auto-advance,
+  // zoom, the focus overlay, shortcuts, the remembered delete mode) stays in that browser, so a
+  // desktop choosing "Delete permanently" does not become the phone's default. Unset values
+  // fall back to the shared ones, except the delete mode, which starts at the trash.
+  const DEVICE_SETTINGS = ['autoAdvance', 'zoomPercent', 'zoomClickCenter', 'focusOverlay', 'shortcuts', 'deleteMode'];
+  const DEVICE_KEY = 'photocull-device-settings';
+  const deviceSettings = () => { try { return JSON.parse(localStorage.getItem(DEVICE_KEY)) || {}; } catch { return {}; } };
+  function deviceSetting(key, value) {
+    if (key === 'shortcuts') return window.PhotoCullCommands.validateCustom(value);
+    const ok = key === 'zoomPercent' ? Number.isFinite(value) && value >= 5 && value <= 1600
+      : key === 'deleteMode' ? ['trash', 'permanent'].includes(value) : typeof value === 'boolean';
+    if (!ok) throw new Error(`Invalid setting: ${key}`);
+    return value;
+  }
+  async function serverSettings(patch) {
+    const local = deviceSettings(), shared = {};
+    for (const [key, value] of Object.entries(patch || {})) {
+      if (DEVICE_SETTINGS.includes(key)) local[key] = deviceSetting(key, value); else shared[key] = value;
+    }
+    const snapshot = await backend('settings', Object.keys(shared).length ? shared : undefined);
+    if (patch) try { localStorage.setItem(DEVICE_KEY, JSON.stringify(local)); } catch {}
+    return { ...snapshot, deleteMode: 'trash', ...local };
+  }
+
   // develop_render replies with [u32 LE header length][JSON header][JPEG].
   const unpackFrame = buffer => {
     const view = new DataView(buffer), length = view.getUint32(0, true);
@@ -166,7 +190,7 @@
       return host.fullscreen(value);
     },
     namingPreview: (session, naming, id = null, extension = null) => backend('naming-preview', session, naming, id, extension),
-    settings: patch => backend('settings', patch),
+    settings: patch => server ? serverSettings(patch) : backend('settings', patch),
     savePreset: (name, value) => backend('save-preset', name, value),
     deletePreset: id => backend('delete-preset', id),
     settingsFolder: async () => host.openFolder(await backend('settings-folder')),
@@ -178,7 +202,8 @@
     revealDestination: folder => host.openFolder(folder),
     chooseFolder: async ({ recursive = false } = {}) => {
       const folder = await host.pickFolder('Choose a photo folder');
-      return folder ? backend('scan', folder, !!recursive) : null;
+      // On the server, Include subfolders is a checkbox in the folder browser.
+      return folder ? backend('scan', folder, server ? window.PhotoCullServer.recursive : !!recursive) : null;
     },
     openPath: (folder, recursive) => backend('scan', folder, !!recursive),
     decide: (session, id, patch) => backend('decide', session, id, patch),
