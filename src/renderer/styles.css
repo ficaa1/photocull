@@ -541,7 +541,14 @@ dialog details > summary:hover { color: var(--text); }
   .main { padding-inline: var(--s1); }
   .toolbar-right { gap: 4px; }
   #color-filter { width: 80px; }
-  .view-heading { display: none; }
+  /* The title is in the sidebar. Delete rejects, Restore and Empty trash still need a place: a
+     full-width row under the search, only in the views that offer them. Burst buttons stay off
+     so the layout does not jump between burst and single photos. */
+  .view-heading { display: none; order: 3; flex-basis: 100%; }
+  .view-heading:has(#delete-rejects:not([hidden]), #trash-restore:not([hidden]), #empty-trash:not([hidden])) { display: flex; }
+  #view-title, .view-count, #original-toggle, #burst-stack, #burst-keep { display: none; }
+  .view-actions { flex: 1; margin-left: 0; }
+  .view-actions .button { flex: 1; justify-content: center; }
   .decision-bar { grid-template-columns: minmax(0, 1fr) auto auto; }
   .photo-name .small { display: none; }
   .rating button { font-size: 17px; padding-inline: 0; }
@@ -793,6 +800,7 @@ dialog details > summary:hover { color: var(--text); }
   .clear-button .icon { width: 18px; height: 18px; }
   .rating button { min-width: 34px; min-height: 44px; font-size: 22px; }
   .image-nav { width: 40px; height: 56px; top: calc(50% - 28px); }
+  .view-actions .button { height: 40px; font-size: var(--fs-l); }
 }
 /* Phones: name and stars on one row, then Pick and Reject sharing the width. */
 @media (pointer: coarse) and (max-width: 640px) {
