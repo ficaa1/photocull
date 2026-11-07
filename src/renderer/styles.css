@@ -292,7 +292,7 @@ button.chip:hover, select.chip:hover { background: #2a2d30f0; color: var(--text)
 /* Thumbnails: filmstrip and contact sheet share badge rules. */
 .filmstrip { display: flex; gap: 6px; overflow-x: auto; flex-shrink: 0; height: 88px; padding: 2px 2px var(--s2); scrollbar-width: thin; scrollbar-color: #45494d transparent; }
 .film-card { position: relative; width: 116px; height: 76px; flex-shrink: 0; border: 0; border-radius: var(--r1); padding: 4px; background: var(--panel); }
-.film-card:hover { background: var(--raised); }
+@media (hover: hover) { .film-card:hover { background: var(--raised); } }
 .film-card.selected { background: var(--accent-bg); }
 .film-card.current, .film-card.current:focus { outline: 2px solid var(--accent); outline-offset: 0; }
 .film-card img { width: 100%; height: 100%; object-fit: contain; }
@@ -317,7 +317,7 @@ button.chip:hover, select.chip:hover { background: #2a2d30f0; color: var(--text)
 .grid-content { position: relative; user-select: none; touch-action: pan-y; }
 .marquee { position: absolute; pointer-events: none; z-index: 2; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .grid-card { position: absolute; padding: 6px; border: 0; border-radius: var(--r2); background: var(--panel); display: flex; flex-direction: column; text-align: left; }
-.grid-card:hover { background: var(--raised); }
+@media (hover: hover) { .grid-card:hover { background: var(--raised); } }
 .grid-card.selected { background: var(--accent-bg); }
 .grid-card.current, .grid-card.current:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
 .grid-card .thumb-wrap { position: relative; flex: 1; min-height: 0; background: var(--canvas); border-radius: 3px; }
