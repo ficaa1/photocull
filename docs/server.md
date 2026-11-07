@@ -6,7 +6,7 @@ PhotoCull can run as a self-hosted web app on a home server, next to the photos,
 
 1. **Open** a folder with the folder browser. It shows only the photo folders you configure.
 2. PhotoCull **prepares** it in the background: every thumbnail first, then review previews and focus scores for the whole folder. Preparation continues with the browser closed. **Prepare in background** in the folder browser queues a folder without opening it. Folders are prepared one at a time and show **Queued**, **Thumbnails n/N**, **Focus n/N** or **Ready**. A pill in the corner follows the current job.
-3. **Cull** as in the desktop app. Prepared photos open instantly. Decisions are saved on the server and written to XMP sidecars next to the photos (Settings → Metadata), so the desktop app and editors see them.
+3. **Cull** as in the desktop app. On a phone or tablet, swipe a photo left or right to move between photos, up to pick and down to reject. Tap zooms, and a zoomed photo pans with one finger. Prepared photos open instantly. Decisions are saved on the server and written to XMP sidecars next to the photos (Settings → Metadata), so the desktop app and editors see them.
 4. **Delete** rejects, or empty PhotoCull's Trash, to move the photos to the **server trash**.
 
 A reloaded page returns to the last opened folder. The server keeps up to eight folders open, so several browsers can use it. Each browser sees the others' decisions after reopening the folder.
@@ -75,6 +75,6 @@ ExifTool needs Perl on Linux.
 
 ## Not yet
 
-- Touch gestures (swipe between photos, pinch to zoom). Use the Pick, Reject and arrow buttons, or a keyboard.
+- Pinch to zoom a photo. Tap zooms to the click-zoom ratio instead.
 - Live updates between browsers culling the same folder at once.
 - Restoring from the server trash inside the app.

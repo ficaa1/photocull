@@ -41,7 +41,20 @@ const loupe = PhotoCullLoupe.create({ api,
   context: () => ({ session: state.session, items: state.session ? filtered() : [], mode: state.mode, revision: state.previewRevision, original: state.showOriginal, fullscreen: state.fullscreen }),
   settings: () => state.settings,
   onLoaded: item => { void loadMetadata(item); },
-  onClickZoomChange: async percent => { try { state.settings = await api.settings({ zoomPercent: percent }); } catch (error) { toast(error.message); } } });
+  onClickZoomChange: async percent => { try { state.settings = await api.settings({ zoomPercent: percent }); } catch (error) { toast(error.message); } },
+  onSwipe: swipe => photoSwipe(swipe) });
+// Touch swipes on a photo at Fit: left and right change photos, up picks, down rejects.
+// Up and down show what releasing will do; sideways the photo itself moves.
+const SWIPES = { left: () => navigate(1), right: () => navigate(-1), up: () => decide({ flag: 'pick' }), down: () => decide({ flag: 'reject' }) };
+function photoSwipe({ direction, armed, done }) {
+  const hint = $('swipe-hint'), vertical = direction === 'up' || direction === 'down';
+  hint.hidden = done || !vertical;
+  if (!hint.hidden) {
+    hint.textContent = direction === 'up' ? '⚑ Pick' : '× Reject';
+    hint.className = `swipe-hint ${direction === 'up' ? 'pick' : 'reject'}${armed ? ' armed' : ''}`;
+  }
+  if (done && armed && state.mode === 'review' && photo()) SWIPES[direction]?.();
+}
 matchMedia('(max-width: 900px)').addEventListener('change', applyPaneLayout);
 applyPaneLayout();
 // Develop owns its controls and render queue; app hooks keep selection and badges shared.
@@ -412,6 +425,8 @@ $('grid').addEventListener('click', event => {
 }, true);
 $('grid').addEventListener('pointerdown', event => {
   if (event.button !== 0 || !event.isPrimary || state.deleting) return;
+  // A finger or pen drag scrolls the grid; only the mouse draws a selection box.
+  if (event.pointerType !== 'mouse') return;
   const bounds = $('grid').getBoundingClientRect();
   // Presses on the scrollbar scroll; they never start a selection box.
   if (event.clientX - bounds.left >= $('grid').clientWidth || event.clientY - bounds.top >= $('grid').clientHeight) return;

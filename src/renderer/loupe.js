@@ -115,8 +115,9 @@
     // imageUrl(item, kind, extraQuery); context() → { session, items, mode,
     //   revision, fullscreen }; settings() → { zoomClickCenter };
     // onLoaded(item) once the needed pixels are on screen;
-    // onClickZoomChange(percent) when the user picks a click-zoom ratio.
-    constructor({ api, elements, imageUrl, context, settings = () => ({}), onLoaded = () => {}, onClickZoomChange = () => {}, createImage = () => new Image() }) {
+    // onClickZoomChange(percent) when the user picks a click-zoom ratio;
+    // onSwipe({ direction, armed, done }) for touch swipes (see image-view.js).
+    constructor({ api, elements, imageUrl, context, settings = () => ({}), onLoaded = () => {}, onClickZoomChange = () => {}, onSwipe = null, createImage = () => new Image() }) {
       Object.assign(this, { api, el: elements, imageUrl, context, settings, onLoaded, onClickZoomChange, createImage });
       this.base = 'fit'; this.clickPercent = 100;
       this.item = null; this.shown = null; this.generation = 0; this.timer = null;
@@ -125,7 +126,7 @@
       this.space = null; this.navPointer = null;
       this.prefetcher = new Prefetcher(PREFETCH_LIMIT, (job, image) => this.prefetched(job, image), createImage);
       this.view = new View.ImageView(elements.viewport, elements.image, {
-        onClick: event => this.click(event), onChange: () => this.changed(), onHandUse: () => { if (this.space) this.space.used = true; } });
+        onClick: event => this.click(event), onChange: () => this.changed(), onHandUse: () => { if (this.space) this.space.used = true; }, onSwipe });
       this.bindControls(); this.bindNavigator();
     }
     get zoomed() { return this.view.zoomed; }

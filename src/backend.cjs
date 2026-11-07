@@ -406,7 +406,10 @@ async function start() {
         let body = await fs.readFile(path.join(rendererDir, name));
         // The page's CSP allows same-origin scripts only, so the server's settings arrive as one.
         if (serverMode && name === 'index.html') body = body.toString().replace('<script src="bridge.js"></script>',
-          '<script src="server-config.js"></script><script src="bridge.js"></script><script src="server.js"></script>');
+          '<script src="server-config.js"></script><script src="bridge.js"></script><script src="server.js"></script>')
+          // On phones the page itself never zooms: a quick double tap on a button would zoom it with no way back,
+          // because the photo fills the screen and takes every gesture. Tap zooms the photo instead.
+          .replace('content="width=device-width, initial-scale=1"', 'content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"');
         res.writeHead(200, { 'Content-Type': RENDERER_FILES.get(name) + '; charset=utf-8', 'Cache-Control': 'no-store' });
         res.end(body); return;
       }
