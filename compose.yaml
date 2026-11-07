@@ -1,0 +1,38 @@
+# PhotoCull server. Copy this file, adjust the marked lines, then: docker compose up -d --build
+# Every setting is documented in docs/server.md.
+services:
+  photocull:
+    build: .
+    image: photocull:latest
+    container_name: photocull
+    init: true
+    restart: unless-stopped
+    # The user and group that own your photos. PhotoCull writes XMP sidecars
+    # next to them and moves deleted photos into the trash.
+    user: "1000:1000"
+    ports:
+      - "8787:8080"
+    environment:
+      # What the folder browser may open: Name=/path, several separated by ";".
+      # Nothing outside these folders can be browsed, opened or deleted.
+      PHOTOCULL_ROOTS: "Photos=/library/Photos"
+      # Where Delete moves photos, as <trash>/<date>/<root name>/<path>.
+      # Keep it on the same mount as the photos so moving is instant; across
+      # mounts every file is copied, then removed. Leave empty to disable deletion.
+      PHOTOCULL_TRASH: "/library/.photocull-trash"
+      # Days a trashed photo is kept before it is removed for good (0 keeps them).
+      PHOTOCULL_TRASH_DAYS: "30"
+      # Preview cache size in GB: 1, 2, 5 or 10. RAW + JPEG pairs take about
+      # 6.5 MB per photo, so 10 GB keeps roughly the last 1,500 photos ready.
+      PHOTOCULL_PREVIEW_CACHE_GB: "10"
+      # Optional sign-in. Without it, anyone who can reach the port can cull and delete.
+      PHOTOCULL_PASSWORD: ""
+      # Host names (besides IP addresses) the app is reached by, comma separated,
+      # e.g. "photocull.lan,cull.example.com" behind a reverse proxy.
+      PHOTOCULL_HOSTNAMES: ""
+    volumes:
+      # One mount holding both the photos and the trash (see PHOTOCULL_TRASH).
+      - /srv/photos:/library
+      # Settings, decisions and the preview cache. Fast local storage is best.
+      - ./data:/data
+    mem_limit: 3g

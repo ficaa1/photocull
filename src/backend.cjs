@@ -15,6 +15,10 @@ const { testEditor, dehancerPreset } = require('./editors.cjs');
 // `node src/backend.cjs --web [--port N]` serves the renderer, RPC and events
 // over the same HTTP server instead, so the UI can run in a plain browser for
 // smoke tests and previews. Native dialogs and the trash are unavailable there.
+//
+// `node src/backend.cjs --server` is the self-hosted web app (docs/server.md):
+// browsing is limited to the configured photo folders, deletion goes to a
+// server trash folder and folders are prepared in the background.
 const http = require('node:http');
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -34,8 +38,12 @@ const { DeviceMonitor, discoverDevices } = require('./devices.cjs');
 const { renderName, needsCapture } = require('./renderer/naming.js');
 const { normalizeSettings } = require('./preferences.cjs');
 const { SettingsStore } = require('./settings.cjs');
+const { serverConfig, FolderRoots, allowedHost, createAuth, LOGIN_PAGE } = require('./server.cjs');
+const { ServerTrash } = require('./server-trash.cjs');
+const { PrepareJobs } = require('./prepare.cjs');
 
-const web = process.argv.includes('--web');
+const serverMode = process.argv.includes('--server') || process.env.PHOTOCULL_SERVER === '1';
+const web = serverMode || process.argv.includes('--web');
 const smoke = process.env.PHOTOCULL_SMOKE_TEST === '1';
 // stdout carries the protocol; keep stray library logging off it.
 console.log = console.info = console.debug = console.error;
@@ -43,7 +51,7 @@ console.log = console.info = console.debug = console.error;
 const rendererDir = path.join(__dirname, 'renderer');
 const RENDERER_FILES = new Map([['index.html', 'text/html'], ['styles.css', 'text/css'], ['app.js', 'text/javascript'],
   ['commands.js', 'text/javascript'], ['histogram.js', 'text/javascript'], ['develop.js', 'text/javascript'], ['export.js', 'text/javascript'],
-  ['naming.js', 'text/javascript'], ['image-view.js', 'text/javascript'], ['loupe.js', 'text/javascript'], ['culling.js', 'text/javascript'], ['survey.js', 'text/javascript'], ['bridge.js', 'text/javascript']]);
+  ['naming.js', 'text/javascript'], ['image-view.js', 'text/javascript'], ['loupe.js', 'text/javascript'], ['culling.js', 'text/javascript'], ['survey.js', 'text/javascript'], ['bridge.js', 'text/javascript'], ['server.js', 'text/javascript']]);
 const inside = (parent, child) => { const rel = path.relative(parent, child); return rel === '' || !!rel && !rel.startsWith('..') && !path.isAbsolute(rel); };
 
 function defaultDataDir() {
@@ -64,6 +72,12 @@ async function start() {
   console.warn=(...args)=>{logger.write('warn',...args);stderr(...args);};
   console.log=console.info=console.debug=console.error;
   logger.write('info','PhotoCull sidecar started %s %s',process.version,process.platform);
+  const config = serverMode ? serverConfig() : null;
+  const roots = serverMode ? new FolderRoots(config.roots) : null;
+  if (roots) await roots.init();
+  const trash = config?.trash ? new ServerTrash({ dir: config.trash, roots, days: config.trashDays }) : null;
+  if (trash) await trash.init();
+  const auth = serverMode ? await createAuth({ password: config.password, dataDir }) : null;
   const token = randomBytes(24).toString('hex');
   const listeners = new Set();
   const send = (event, payload) => {
@@ -72,7 +86,8 @@ async function start() {
   };
 
   const settings = new SettingsStore(dataDir); await settings.init();
-  const library = new Library(dataDir, { settings: () => settings.value, recipeSettings: id => recipes.get(id)?.settings, onWarning: warning => send('sidecar-warning', warning) });
+  if (config?.previewCacheGB && settings.value.previewCacheGB !== config.previewCacheGB) await settings.update({ previewCacheGB: config.previewCacheGB });
+  const library = new Library(dataDir, { keepSessions: serverMode ? 8 : 1, settings: () => settings.value, recipeSettings: id => recipes.get(id)?.settings, onWarning: warning => send('sidecar-warning', warning) });
   let previews;
   const transfers = new TransferService({ recipeSettings: id => recipes.get(id)?.settings, onProgress: value => send('copy-progress', value), captureDate: item => previews.metadata(item).then(data => data.captured) });
   const backups = new BackupService(dataDir, { onProgress: value => send('backup-progress', value) });
@@ -275,21 +290,53 @@ async function start() {
     'forget': (session, ids) => library.forget(session, ids),
     'stats': () => ({ ...previews.stats, ...previews.renders.stats, memoryMB: Math.round(previews.memoryBytes / 1024 ** 2), cacheDir: previews.cacheDir }),
   };
+  const prepare = new PrepareJobs({ library, previews, culling, photo: (session, id) => previewPhoto(library.item(session, id)), onProgress: value => send('prepare-progress', value) });
+  if (serverMode) {
+    // The folder a reloaded page returns to, kept across restarts and updates.
+    const lastFile = path.join(dataDir, 'server-last-session.json');
+    let lastSession = await fs.readFile(lastFile, 'utf8').then(JSON.parse).catch(() => null);
+    const copyPicks = methods['copy-picks'];
+    const open = async (folder, recursive) => {
+      const session = await library.scan(await roots.resolve(folder), !!recursive);
+      prepare.start(session.id);
+      return session;
+    };
+    Object.assign(methods, {
+      'server-info': () => ({ roots: roots.roots.map(r => ({ name: r.name, path: r.path })), trash: !!trash, trashDays: config.trashDays }),
+      'browse': folder => roots.browse(folder || null),
+      'scan': async (folder, recursive) => {
+        const session = await open(folder, recursive);
+        lastSession = { folder: session.folder, recursive: !!recursive };
+        await fs.writeFile(lastFile, JSON.stringify(lastSession)).catch(error => console.warn('Could not save the last folder: %s', error.message));
+        return session;
+      },
+      'last-session': () => lastSession,
+      'prepare-folder': async (folder, recursive) => prepare.status((await open(folder, recursive)).id),
+      'prepare-status': () => prepare.list(),
+      'prepare-cancel': session => prepare.cancel(session),
+      'sharpness': (session, id) => culling.score(session, id),
+      'devices': () => [],
+      'open-device': () => { throw new Error('Camera cards are not available on the server.'); },
+      'copy-picks': async (session, destination, options) => copyPicks(session, await roots.resolve(destination), options),
+    });
+  }
   if (web) {
-    // Browser mode has no shell to move files to the trash, so it deletes permanently.
+    // Without the desktop shell, deletion happens here: into the server trash when one is
+    // configured, otherwise permanently.
     methods['delete-photos'] = async (session, ids, mode) => {
-      if (mode !== 'permanent') throw new Error('Moving to the trash needs the desktop app.');
+      if (mode !== 'permanent' && !(mode === 'trash' && trash)) throw new Error(serverMode ? 'No server trash is configured.' : 'Moving to the trash needs the desktop app.');
+      const remove = mode === 'trash' ? file => trash.move(file) : file => fs.rm(file);
       const plan = await methods['deletion-plan'](session, ids);
       try {
         const deleted = [], failures = [...plan.skipped];
         for (const photo of plan.photos) {
-          try { await fs.rm(photo.files[0]); } catch (error) { failures.push({ name: photo.name, reason: error.message }); continue; }
+          try { await remove(photo.files[0]); } catch (error) { failures.push({ name: photo.name, reason: error.message }); continue; }
           deleted.push(photo.id);
-          for (const file of photo.files.slice(1)) await fs.rm(file).catch(error => failures.push({ name: path.basename(file), reason: error.message }));
+          for (const file of photo.files.slice(1)) await remove(file).catch(error => failures.push({ name: path.basename(file), reason: error.message }));
         }
         const gone = new Set(deleted);
         for (const sidecar of plan.sidecars) {
-          if (sidecar.owners.every(id => gone.has(id))) await fs.rm(sidecar.file).catch(error => failures.push({ name: path.basename(sidecar.file), reason: error.message }));
+          if (sidecar.owners.every(id => gone.has(id))) await remove(sidecar.file).catch(error => failures.push({ name: path.basename(sidecar.file), reason: error.message }));
         }
         let warning = null;
         if (deleted.length) await library.forget(session, deleted).catch(error => { warning = `Deleted, but PhotoCull could not save the session: ${error.message}`; });
@@ -297,7 +344,14 @@ async function start() {
       } finally { deleting = false; }
     };
   }
+  // What a browser may ask the server for. Everything else names arbitrary
+  // files (dialogs, settings bundles, editors) or belongs to the desktop app.
+  const SERVER_METHODS = new Set(['app-info', 'workspace-info', 'server-info', 'browse', 'scan', 'last-session', 'prepare-folder', 'prepare-status', 'prepare-cancel',
+    'sharpness', 'analysis-source', 'keep-sharpest', 'devices', 'open-device', 'test-destination', 'copy-picks', 'naming-preview', 'cancel-copy', 'decide', 'decide-many',
+    'history', 'metadata', 'preview-status', 'settings', 'save-preset', 'delete-preset', 'preview-settings', 'preview-cache', 'clear-preview-cache', 'retry-preview',
+    'focus', 'visible', 'export-xmp', 'forget', 'stats', 'delete-photos', 'recipes', 'handoff-usage', 'develop-get']);
   const call = async (method, params) => {
+    if (serverMode && !SERVER_METHODS.has(method)) throw new Error(`${method} is not available on the server.`);
     if(importing && ['settings','save-preset','delete-preset','save-recipe','delete-recipe','duplicate-recipe','import-recipes'].includes(method) && params?.[0] !== undefined)throw new Error('Wait for settings import to finish.');
     if (!Object.hasOwn(methods, method)) throw new Error(`Unknown request: ${method}`);
     try { return await methods[method](...(Array.isArray(params) ? params : [])); } catch(error) { logger.write('error','%s: %s',method,error.message);throw error; }
@@ -307,8 +361,18 @@ async function start() {
     const url = new URL(req.url, 'http://127.0.0.1');
     const [, route, ...rest] = url.pathname.split('/');
     // Reject other hostnames so a web page cannot reach this server through DNS rebinding.
-    if (!/^(127\.0\.0\.1|localhost):\d+$/.test(req.headers.host || '')) { res.writeHead(403).end(); return; }
-    const authorized = url.searchParams.get('t') === token || req.headers['x-photocull-token'] === token;
+    if (serverMode ? !allowedHost(req.headers.host, config.hostnames) : !/^(127\.0\.0\.1|localhost):\d+$/.test(req.headers.host || '')) { res.writeHead(403).end(); return; }
+    if (serverMode && route === 'login' && req.method === 'POST') {
+      let body = ''; for await (const chunk of req) { body += chunk; if (body.length > 4096) break; }
+      const ok = auth.required && auth.check(new URLSearchParams(body).get('password') || '');
+      res.writeHead(303, { Location: ok ? '/' : '/?login=failed', ...(ok ? { 'Set-Cookie': auth.cookie } : {}) }).end(); return;
+    }
+    // A custom header cannot be sent cross-site without CORS approval, which this server never gives.
+    const authorized = serverMode ? auth.valid(req) && (req.method !== 'POST' || req.headers['x-photocull'] === '1')
+      : url.searchParams.get('t') === token || req.headers['x-photocull-token'] === token;
+    if (serverMode && !authorized && req.method === 'GET' && (!route || route === 'index.html')) {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }).end(LOGIN_PAGE(url.searchParams.has('login'))); return;
+    }
     try {
       if (route === 'image' && authorized) {
         const [session, id, kind] = rest;
@@ -333,28 +397,42 @@ async function start() {
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' }); res.write(': ready\n\n');
         listeners.add(res); req.on('close', () => listeners.delete(res)); return;
       }
+      if (serverMode && authorized && route === 'server-config.js') {
+        res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.end(`window.__PHOTOCULL_SERVER__=${JSON.stringify(methods['server-info']())};`); return;
+      }
       const name = web && req.method === 'GET' && rest.length === 0 ? route || 'index.html' : null;
-      if (name && RENDERER_FILES.has(name)) {
+      if (name && RENDERER_FILES.has(name) && (authorized || !serverMode) && (name !== 'server.js' || serverMode)) {
+        let body = await fs.readFile(path.join(rendererDir, name));
+        // The page's CSP allows same-origin scripts only, so the server's settings arrive as one.
+        if (serverMode && name === 'index.html') body = body.toString().replace('<script src="bridge.js"></script>',
+          '<script src="server-config.js"></script><script src="bridge.js"></script><script src="server.js"></script>');
         res.writeHead(200, { 'Content-Type': RENDERER_FILES.get(name) + '; charset=utf-8', 'Cache-Control': 'no-store' });
-        res.end(await fs.readFile(path.join(rendererDir, name))); return;
+        res.end(body); return;
       }
       res.writeHead(authorized || !route ? 404 : 403).end();
     } catch (error) { if (!res.headersSent) res.writeHead(422, { 'Content-Type': 'text/plain' }); res.end(error.message); }
   });
-  const requestedPort = web ? Number(process.argv[process.argv.indexOf('--port') + 1]) || 0 : 0;
-  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(requestedPort, '127.0.0.1', resolve); });
+  const requestedPort = serverMode ? config.port : web ? Number(process.argv[process.argv.indexOf('--port') + 1]) || 0 : 0;
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(requestedPort, serverMode ? config.host : '127.0.0.1', resolve); });
   const { port } = server.address();
 
   let closing = null;
   const shutdown = () => closing ??= (async () => {
-    server.close();
+    server.close(); prepare.close();
     await Promise.allSettled([library.close(), settings.writes, previews.close(), transfers.close(), backups.close(), devices.close()]);
     process.exit(0);
   })();
   methods.shutdown = () => { void shutdown(); };
   process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
 
-  if (web) {
+  if (serverMode) {
+    console.error(`PhotoCull server listening on ${config.host}:${port}; photos: ${roots.roots.map(r => `${r.name}=${r.path}`).join(', ')}; trash: ${trash ? `${trash.dir} (${config.trashDays ? `${config.trashDays} days` : 'kept'})` : 'off'}; password: ${auth.required ? 'on' : 'off'}`);
+    if (trash) {
+      const purge = () => trash.purge().then(days => { if (days.length) console.error(`Emptied server trash days: ${days.join(', ')}`); }, error => console.error(`Server trash purge failed: ${error.message}`));
+      void purge(); setInterval(purge, 6 * 3600 * 1000).unref();
+    }
+  } else if (web) {
     console.error(`PhotoCull web UI: http://127.0.0.1:${port}/?t=${token}`);
     if (process.env.PHOTOCULL_URL_FILE) await fs.writeFile(process.env.PHOTOCULL_URL_FILE, `http://127.0.0.1:${port}/?t=${token}`);
   } else {
@@ -371,7 +449,7 @@ async function start() {
     // The shell closing stdin means it has gone away; finish pending writes and exit.
     input.on('close', () => { void shutdown(); });
   }
-  devices.start();
+  if (!serverMode) devices.start();
 }
 
 start().catch(error => { console.error(error); process.exit(1); });

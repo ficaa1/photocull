@@ -749,7 +749,7 @@ document.addEventListener('keydown', event => {
 // Deletion. Camera cards have no trash, so photos there are always deleted
 // permanently; elsewhere the user's last choice is remembered in settings.
 // PhotoCull's own Trash view is "Trash"; the operating system's is named here.
-const systemTrash = api.platform === 'win32' ? 'Recycle Bin' : 'system Trash';
+const systemTrash = api.trashName || (api.platform === 'win32' ? 'Recycle Bin' : 'system Trash');
 function trashAvailable() { return api.canTrash && !state.session?.removable; }
 function deleteMode() { return trashAvailable() ? state.settings.deleteMode || 'trash' : 'permanent'; }
 function plural(count, word) { return `${count} ${word}${count === 1 ? '' : 's'}`; }
@@ -1074,6 +1074,7 @@ void api.settings().then(syncSettings).catch(error => toast(error.message));
 
 // Browser mode lets smoke tests open a folder without a native dialog.
 if (api.platform === 'web') window.loadTestFolder = async (folder, recursive) => loadSession(await api.openPath(folder, recursive));
+if (api.server) void window.PhotoCullServer.attach(loadSession, () => state.session);
 render();
 
 $('handoff-folder-choose').onclick = async () => { try { const folder=await api.pickFolder('Choose a local hand-off folder'); if(folder){await api.developFolderCheck(folder); $('handoff-folder').value=folder;} } catch(e){toast(e.message);} };

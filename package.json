@@ -7,6 +7,7 @@
   "scripts": {
     "start": "tauri dev",
     "web": "node src/backend.cjs --web --port 5173",
+    "server": "node src/backend.cjs --server",
     "test": "node --test test/*.test.cjs",
     "test:ui": "node scripts/ui-smoke.cjs",
     "benchmark": "node scripts/benchmark.cjs",

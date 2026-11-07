@@ -50,7 +50,10 @@ function groupFiles(files) {
 const developSummary = develop => ({ developed: !!develop?.tiff && !develop?.missing, externalEdit: !!develop?.editedBy && !develop?.missing, editedBy: develop?.editedBy ?? null, tiff: develop?.tiff ?? null, handoffMissing: !!develop?.missing, developRevision: develop?.revision ?? 0, recipe: develop?.recipe ?? null, adjusted: !!develop?.settings });
 
 class Library {
-  constructor(dataDir, { settings = () => DEFAULTS, recipeSettings = () => null, onWarning = () => {} } = {}) {
+  constructor(dataDir, { settings = () => DEFAULTS, recipeSettings = () => null, onWarning = () => {}, keepSessions = 1 } = {}) {
+    // The desktop app has one open folder. The server keeps several, one per
+    // folder, with a stable id so every browser shares it.
+    this.keepSessions = keepSessions;
     this.settings = settings; this.recipeSettings = recipeSettings; this.onWarning = onWarning;
     this.dataDir = dataDir;
     this.sessions = new Map();
@@ -62,17 +65,18 @@ class Library {
 
   async scan(folder, recursive = false, { removable = false } = {}) {
     const generation = ++this.scanGeneration;
+    const superseded = () => this.keepSessions === 1 && generation !== this.scanGeneration;
     await this.flushSidecars();
     folder = await fs.realpath(folder);
     if (!(await fs.stat(folder)).isDirectory()) throw new Error('Choose a folder of images.');
     const files = [], warnings = [];
     const visit = async dir => {
-      if (generation !== this.scanGeneration) throw new Error('Folder scan was superseded.');
+      if (superseded()) throw new Error('Folder scan was superseded.');
       const entries = await fs.readdir(dir, { withFileTypes: true });
       for (const entry of entries) {
         if (entry.isDirectory() && recursive && !entry.name.startsWith('.')) {
           try { await visit(path.join(dir, entry.name)); } catch (e) {
-            if (generation !== this.scanGeneration) throw e;
+            if (superseded()) throw e;
             warnings.push(`${entry.name}: ${e.message}`);
           }
         } else if (entry.isFile() && SUPPORTED.has(path.extname(entry.name).toLowerCase())) {
@@ -88,6 +92,8 @@ class Library {
     const items = groupFiles(stats.filter(Boolean));
     let imported = false; const unsynced = [];
     const store = path.join(this.dataDir, 'sessions', hash(folder + ':' + recursive) + '.json');
+    const previous = this.keepSessions > 1 ? [...this.sessions.values()].find(s => s.store === store) : null;
+    if (previous) await this.writes.catch(() => {});
     let saved = {};
     try { saved = JSON.parse(await fs.readFile(store, 'utf8')).decisions ?? {}; }
     catch (e) { if (e.code !== 'ENOENT') warnings.push('Saved session could not be read; existing XMP will be used.'); }
@@ -131,11 +137,12 @@ class Library {
       if (valid && item.modified > (sidecars[0]?.modified || 0) && (item.edited || item.develop)) unsynced.push(item);
       if (item.develop?.tiff) item.develop.missing = !await fs.stat(item.develop.tiff).then(s => s.isFile(), () => false);
     });
-    if (generation !== this.scanGeneration) throw new Error('Folder scan was superseded.');
+    if (superseded()) throw new Error('Folder scan was superseded.');
     const root = await fs.stat(folder);
-    const session = { id: randomUUID(), folder, folderId: `${root.dev}:${root.ino}`, items, byId: new Map(items.map(item => [item.id,item])), store, warnings, recursive, removable: !!removable, undo: [], redo: [] };
+    const session = { id: previous?.id ?? randomUUID(), folder, folderId: `${root.dev}:${root.ino}`, items, byId: new Map(items.map(item => [item.id,item])), store, warnings, recursive, removable: !!removable, undo: [], redo: [] };
     // Image jobs already in flight retain their own file references.
-    this.sessions.clear();
+    this.sessions.delete(previous?.id);
+    while (this.sessions.size >= this.keepSessions) this.sessions.delete(this.sessions.keys().next().value);
     this.sessions.set(session.id, session);
     if (imported) await this.save(session);
     if (unsynced.length) this.queueSidecars(session, unsynced);
