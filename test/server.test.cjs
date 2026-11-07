@@ -19,7 +19,7 @@ async function tempDir(t, name) {
 }
 
 test('photo roots come from PHOTOCULL_ROOTS as named or bare absolute paths', () => {
-  assert.deepEqual(parseRoots('Photos=/srv/photos; /mnt/uploads'), [{ name: 'Photos', path: '/srv/photos' }, { name: 'uploads', path: '/mnt/uploads' }]);
+  assert.deepEqual(parseRoots('Photos=/srv/photos; /mnt/uploads'), [{ name: 'Photos', path: path.resolve('/srv/photos') }, { name: 'uploads', path: path.resolve('/mnt/uploads') }]);
   assert.throws(() => parseRoots(''), /PHOTOCULL_ROOTS/);
   assert.throws(() => parseRoots('Photos=relative/path'), /absolute/);
   assert.throws(() => parseRoots('A=/a;a=/b'), /used twice/);
