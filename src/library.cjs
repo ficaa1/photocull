@@ -47,14 +47,14 @@ function groupFiles(files) {
   return records.sort((a, b) => filenameOrder.compare(a.name, b.name) || a.path.localeCompare(b.path));
 }
 
-const developSummary = develop => ({ developed: !!develop?.tiff && !develop?.missing, externalEdit: !!develop?.editedBy && !develop?.missing, editedBy: develop?.editedBy ?? null, tiff: develop?.tiff ?? null, handoffMissing: !!develop?.missing, developRevision: develop?.revision ?? 0, recipe: develop?.recipe ?? null, adjusted: !!develop?.settings });
+const developSummary = develop => ({ developed: !!develop?.tiff && !develop?.missing, externalEdit: !!develop?.editedBy && !develop?.missing, editedBy: develop?.editedBy ?? null, tiff: develop?.tiff ?? null, handoffLinked: !!develop?.handoffs.some(r => r.path === develop.tiff && r.linked), handoffMissing: !!develop?.missing, developRevision: develop?.revision ?? 0, recipe: develop?.recipe ?? null, adjusted: !!develop?.settings });
 
 class Library {
-  constructor(dataDir, { settings = () => DEFAULTS, recipeSettings = () => null, onWarning = () => {}, keepSessions = 1 } = {}) {
+  constructor(dataDir, { settings = () => DEFAULTS, recipeSettings = () => null, onWarning = () => {}, keepSessions = 1, linkedHandoffs = () => new Set() } = {}) {
     // The desktop app has one open folder. The server keeps several, one per
     // folder, with a stable id so every browser shares it.
     this.keepSessions = keepSessions;
-    this.settings = settings; this.recipeSettings = recipeSettings; this.onWarning = onWarning;
+    this.settings = settings; this.recipeSettings = recipeSettings; this.onWarning = onWarning; this.linkedHandoffs = linkedHandoffs;
     this.dataDir = dataDir;
     this.sessions = new Map();
     this.writes = Promise.resolve();
@@ -139,7 +139,7 @@ class Library {
     });
     if (superseded()) throw new Error('Folder scan was superseded.');
     const root = await fs.stat(folder);
-    const session = { id: previous?.id ?? randomUUID(), folder, folderId: `${root.dev}:${root.ino}`, items, byId: new Map(items.map(item => [item.id,item])), store, warnings, recursive, removable: !!removable, undo: [], redo: [] };
+    const session = { id: previous?.id ?? randomUUID(), folder, folderId: `${root.dev}:${root.ino}`, items, byId: new Map(items.map(item => [item.id,item])), store, warnings, recursive, removable: !!removable, undo: [], redo: [], linkedPaths: this.linkedHandoffs() };
     // Image jobs already in flight retain their own file references.
     this.sessions.delete(previous?.id);
     while (this.sessions.size >= this.keepSessions) this.sessions.delete(this.sessions.keys().next().value);
@@ -174,7 +174,7 @@ class Library {
     const write = this.writes.catch(() => {}).then(async () => {
       this.pendingSaves.delete(s.id);
       const data = JSON.stringify({ version: 1, folder: s.folder, decisions: Object.fromEntries(s.items.map(i =>
-        [i.id, { ...decision(i), fingerprint: i.fingerprint, modified: i.modified, edited: i.edited, ...(i.develop ? { develop: portableDevelop(i.develop, i.path, s.folder) } : {}) }])) });
+        [i.id, { ...decision(i), path: path.relative(s.folder, i.path), fingerprint: i.fingerprint, modified: i.modified, edited: i.edited, ...(i.develop ? { develop: portableDevelop(i.develop, i.path, s.folder) } : {}) }])) });
       await fs.mkdir(path.dirname(s.store), { recursive: true });
       await atomicWrite(s.store, data); this.stats.sessionWrites++;
     });
@@ -233,7 +233,8 @@ class Library {
   // Develop state (see develop.cjs). Not part of undo: it is edited in the develop view, not by culling keys.
   developGet(sessionId, imageId) {
     const item = this.item(sessionId, imageId);
-    return { id: item.id, name: item.name, raw: item.raw, ...(item.develop || { recipe: null, settings: null, tiff: null, editedBy: null }), edited: !!item.develop?.editedBy, missing: !!item.develop?.missing };
+    const linked = item.develop?.handoffs.some(r => r.path === item.develop.tiff && r.linked) || !!item.develop?.tiff && this.linkedHandoffs().has(path.resolve(item.develop.tiff).toLowerCase());
+    return { id: item.id, name: item.name, raw: item.raw, ...(item.develop || { recipe: null, settings: null, tiff: null, editedBy: null }), linked: !!linked, edited: !!item.develop?.editedBy, missing: !!item.develop?.missing };
   }
 
   async developSet(sessionId, ids, { recipe = null, settings = null } = {}) {
@@ -269,7 +270,7 @@ class Library {
       const stamp = stat ? {bytes:stat.size,mtime:stat.mtimeMs} : null;
       const exportedStamp = next.exported ? (confirmedStamp || stamp || previous?.exportedStamp || null) : null;
       const writtenStamp = typeof tiff === 'string' ? stamp : previous?.writtenStamp || null;
-      const record = { path: next.tiff, realPath, editedBy: next.editedBy || null, exported: !!next.exported, exportedStamp, writtenStamp };
+      const record = { path: next.tiff, realPath, editedBy: next.editedBy || null, exported: !!next.exported, exportedStamp, writtenStamp, ...(previous?.linked ? { linked: true } : {}) };
       next.handoffs = [...next.handoffs.filter(r => r.path !== next.tiff), record];
     }
     item.develop = developState(next);

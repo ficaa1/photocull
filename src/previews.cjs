@@ -297,7 +297,7 @@ class PreviewService {
       this.stats.memoryHits++; this.memory.delete(key); this.memory.set(key, cached);
       this.setInfo(item, kind, cached.info); return cached.data;
     }
-    return this.queue.add(`${kind}:${item.id}:${key}`, priority, async () => {
+    return this.queue.add(`${kind}:${item.schedulingId || item.id}:${key}`, priority, async () => {
       const file = path.join(this.cacheDir, key + '.jpg'), infoFile = file + '.json';
       try {
         const [data, info] = await Promise.all([fs.readFile(file), fs.readFile(infoFile, 'utf8').then(JSON.parse)]);

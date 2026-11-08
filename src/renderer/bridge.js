@@ -139,6 +139,8 @@
     },
     developGet: (session, id) => backend('develop-get', session, id),
     developSet: (session, ids, value) => backend('develop-set', session, ids, value),
+    externalEditProposals: session => server ? Promise.resolve({ proposals: [], warnings: [] }) : backend('external-edit-proposals', session),
+    externalEditDecide: (session, ids, accept) => backend('external-edit-decide', session, ids, accept),
     developFolder: session => backend('develop-folder', session),
     developFolderCheck: folder => backend('develop-folder-check', folder),
     revealDevelop: (session, id) => shell('reveal_develop', { session, id }),

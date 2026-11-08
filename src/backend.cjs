@@ -41,6 +41,7 @@ const { SettingsStore } = require('./settings.cjs');
 const { serverConfig, FolderRoots, allowedHost, createAuth, LOGIN_PAGE } = require('./server.cjs');
 const { ServerTrash } = require('./server-trash.cjs');
 const { PrepareJobs } = require('./prepare.cjs');
+const { ExternalEdits } = require('./external-edits.cjs');
 
 const serverMode = process.argv.includes('--server') || process.env.PHOTOCULL_SERVER === '1';
 const web = serverMode || process.argv.includes('--web');
@@ -87,7 +88,8 @@ async function start() {
 
   const settings = new SettingsStore(dataDir); await settings.init();
   if (config?.previewCacheGB && settings.value.previewCacheGB !== config.previewCacheGB) await settings.update({ previewCacheGB: config.previewCacheGB });
-  const library = new Library(dataDir, { keepSessions: serverMode ? 8 : 1, settings: () => settings.value, recipeSettings: id => recipes.get(id)?.settings, onWarning: warning => send('sidecar-warning', warning) });
+  let externalEdits;
+  const library = new Library(dataDir, { keepSessions: serverMode ? 8 : 1, linkedHandoffs: () => externalEdits?.linkedPaths || new Set(), settings: () => settings.value, recipeSettings: id => recipes.get(id)?.settings, onWarning: warning => send('sidecar-warning', warning) });
   let previews;
   const transfers = new TransferService({ recipeSettings: id => recipes.get(id)?.settings, onProgress: value => send('copy-progress', value), captureDate: item => previews.metadata(item).then(data => data.captured) });
   const backups = new BackupService(dataDir, { onProgress: value => send('backup-progress', value) });
@@ -95,6 +97,7 @@ async function start() {
     ...(smoke ? { discover: async () => process.env.PHOTOCULL_TEST_DEVICES ? JSON.parse(await fs.readFile(process.env.PHOTOCULL_TEST_DEVICES, 'utf8')) : [] } : {}) });
   const GB = 1024 ** 3;
   previews = new PreviewService(path.join(dataDir, 'previews'), { rendering: settings.value.rawRendering, maxDiskBytes: settings.value.previewCacheGB * GB, onState: status => send('preview-state', status) });
+  externalEdits = new ExternalEdits(library, previews.exif, () => settings.value); await externalEdits.init();
 
   const culling = new CullingService(library,previews,() => settings.value);
   const onCard = async folder => {
@@ -144,6 +147,13 @@ async function start() {
       return { ...state, recipe: recipe.id, recipeSettings: recipe.settings, settings: state.settings ?? recipe.settings };
     },
     'develop-set': (session, ids, value) => library.developSet(session, ids, value || {}),
+    'external-edit-proposals': session => externalEdits.discover(session),
+    'external-edit-decide': async (session, ids, accept) => {
+      requireIdle();
+      const result = await externalEdits.decide(session, ids, accept);
+      for (const item of result.items) previews.invalidatePhoto(library.item(session, item.id));
+      return result;
+    },
     'develop-folder': async session => {
       const s = library.get(session);
       const folder = settings.value.handoffFolder;
@@ -153,7 +163,7 @@ async function start() {
     'develop-folder-check': async folder => { if (!await writableFolder(folder)) throw new Error('Choose an existing writable TIFF folder.'); return folder; },
     'develop-plan': async (session, ids, folder, extension = 'tif') => {
       if (!Array.isArray(ids) || !ids.length || ids.length > 100_000) throw new Error('Choose RAW photos to send.');
-      return planTiffs([...new Set(ids)].map(id => library.item(session, id)), folder, library.get(session).items, extension);
+      return planTiffs([...new Set(ids)].map(id => library.item(session, id)), folder, library.get(session).items, extension, externalEdits.linkedPaths);
     },
     'make-folder': async folder => {
       if (typeof folder !== 'string' || !path.isAbsolute(folder)) throw new Error('Invalid folder.');
@@ -181,7 +191,7 @@ async function start() {
     'develop-context': async (session, id) => {
       const item = library.item(session, id);
       const stat=item.develop?.tiff ? await fs.stat(item.develop.tiff).catch(()=>null) : null;
-      return { file: item.path, name: item.name, raw: item.raw, tiff: item.develop?.tiff ?? null, editedBy: item.develop?.editedBy ?? null, handoffStamp: stat ? {bytes:stat.size,mtime:stat.mtimeMs} : null };
+      return { file: item.path, name: item.name, raw: item.raw, tiff: item.develop?.tiff ?? null, editedBy: item.develop?.editedBy ?? null, linked: library.developGet(session, id).linked, handoffStamp: stat ? {bytes:stat.size,mtime:stat.mtimeMs} : null };
     },
     'editor-context': id => { const editor = settings.value.editors.find(e => e.id === id); if (!editor) throw new Error('Choose a saved editor.'); return editor; },
     'editor-preset': () => dehancerPreset(),
@@ -270,7 +280,8 @@ async function start() {
     },
     'visible': (session, ids) => {
       if (!Array.isArray(ids) || ids.length > 128) throw new Error('Invalid visible image selection.');
-      previews.visible(ids.map(id => previewPhoto(library.item(session, id))));
+      const proposed = serverMode ? [] : externalEdits.list(session).map(p => p.itemId);
+      previews.visible([...new Set([...ids, ...proposed])].map(id => previewPhoto(library.item(session, id))));
     },
     'export-xmp': (session, profile) => library.exportXmp(session, profile ? normalizeSettings(profile) : settings.value),
     // Only the shell calls this, with a path from a native save dialog.
@@ -382,7 +393,9 @@ async function start() {
     try {
       if (route === 'image' && authorized) {
         const [session, id, kind] = rest;
-        const photo = library.item(session, id), item = url.searchParams.get('original') === '1' ? { ...photo, develop: null } : previewPhoto(photo);
+        const photo = library.item(session, id), proposal = url.searchParams.get('proposal');
+        if (proposal && serverMode) throw new Error('External edits need the desktop app.');
+        const item = proposal ? await externalEdits.preview(session, proposal) : url.searchParams.get('original') === '1' ? { ...photo, develop: null } : previewPhoto(photo);
         // cached=1 only returns already generated images (404 otherwise);
         // prefetch=N ranks look-ahead work below anything on screen.
         const rank = Number(url.searchParams.get('prefetch')) || 0;
@@ -429,6 +442,7 @@ async function start() {
   let closing = null;
   const shutdown = () => closing ??= (async () => {
     server.close(); prepare.close();
+    await Promise.allSettled([externalEdits.decisions, externalEdits.writes]);
     await Promise.allSettled([library.close(), settings.writes, previews.close(), transfers.close(), backups.close(), devices.close()]);
     process.exit(0);
   })();

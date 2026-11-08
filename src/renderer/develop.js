@@ -145,7 +145,7 @@
     userRecipeButtons() { const user=this.recipes.find(r=>r.id===this.recipe && !r.builtin); this.updateRecipe.disabled=this.deleteRecipe.disabled=!user; }
     sync(context) {
       this.context=context;
-      const name=this.host.editorName(context.photo?.editedBy);this.editAgain.textContent=`Edit in ${name} again`;this.editWarning.textContent=`Re-developing replaces your ${name} edit. RAW adjustments are saved separately until you replace the hand-off file.`; this.active=context.mode==='develop'; this.root.hidden=!this.active || !context.photo;
+      const name=this.host.editorName(context.photo?.editedBy);this.editAgain.textContent=`Edit in ${name} again`;this.editWarning.textContent=context.photo?.handoffLinked ? 'Your linked edit is kept intact. Editing again or re-developing creates a separate hand-off file.' : `Re-developing replaces your ${name} edit. RAW adjustments are saved separately until you replace the hand-off file.`; this.active=context.mode==='develop'; this.root.hidden=!this.active || !context.photo;
       document.body.classList.toggle('develop-active',this.active);
       const key=this.active && context.photo ? `${context.session.id}:${context.photo.id}:${!!context.photo.externalEdit}` : '';
       if (key === this.key) return;

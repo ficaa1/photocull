@@ -315,6 +315,17 @@ button.chip:hover, select.chip:hover { background: #2a2d30f0; color: var(--text)
 .film-card .badge-label { display: none; }
 .grid-viewport { position: relative; flex: 1; min-height: 0; overflow: auto; scrollbar-width: thin; scrollbar-color: #45494d transparent; }
 .grid-content { position: relative; user-select: none; touch-action: pan-y; }
+.external-proposals { border-top: 1px solid var(--line); margin: var(--s4) 10px 0 0; padding-top: var(--s4); }
+.proposal-heading, .proposal-actions { display: flex; align-items: center; gap: var(--s2); }
+.proposal-heading { justify-content: space-between; flex-wrap: wrap; }
+.proposal-heading h2 { margin: 0; font-size: var(--fs-m); }
+.proposal-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: var(--s3); padding-bottom: var(--s4); }
+.proposal-card { min-width: 0; padding: var(--s2); background: var(--panel); border-radius: var(--r2); }
+.proposal-images { display: flex; gap: var(--s2); margin-bottom: var(--s2); }
+.proposal-images figure { flex: 1; min-width: 0; margin: 0; }
+.proposal-images img { display: block; width: 100%; height: 140px; object-fit: contain; background: var(--canvas); }
+.proposal-images figcaption { margin-top: 4px; color: var(--muted); font-size: var(--fs-xs); }
+.proposal-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .marquee { position: absolute; pointer-events: none; z-index: 2; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .grid-card { position: absolute; padding: 6px; border: 0; border-radius: var(--r2); background: var(--panel); display: flex; flex-direction: column; text-align: left; }
 @media (hover: hover) { .grid-card:hover { background: var(--raised); } }

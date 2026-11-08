@@ -21,6 +21,7 @@ async function inspect(record, { sources, identities }) {
 async function inventory(session) {
   const guard = await sourceGuard(session), entries = [], seen = new Set(), failures = [];
   for (const item of session.items) for (const record of item.develop?.handoffs || []) {
+    if (record.linked || session.linkedPaths?.has(key(record.path)) || session.linkedPaths?.has(key(record.realPath || record.path))) continue;
     if (seen.has(key(record.path))) continue;
     seen.add(key(record.path));
     try { entries.push(await inspect(record, guard)); }
