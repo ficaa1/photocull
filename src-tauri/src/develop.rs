@@ -72,6 +72,8 @@ struct Context {
     raw: bool,
     tiff: Option<String>,
     edited_by: Option<String>,
+    #[serde(default)]
+    linked: bool,
     handoff_stamp: Option<Value>,
 }
 
@@ -675,17 +677,48 @@ pub async fn edit_external(
     if ids.is_empty() || ids.len() > 100_000 {
         return Err("Choose photos to edit.".into());
     }
-    let mut files = Vec::new();
-    for id in &ids {
-        files.push(known_handoff(
-            Engine::context(&backend, &session, id)
-                .await?
-                .tiff
-                .as_deref(),
-        )?);
-    }
     let engine = engine.inner().clone();
     let _busy = Busy::take(&engine.busy)?;
+    let mut files = Vec::new();
+    for id in &ids {
+        let ctx = Engine::context(&backend, &session, id).await?;
+        let file = known_handoff(ctx.tiff.as_deref())?;
+        if ctx.linked {
+            let folder = file.parent().ok_or("The linked edit has no folder.")?;
+            let extension = match file
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase()
+                .as_str()
+            {
+                "png" => "png",
+                "jpg" | "jpeg" => "jpg",
+                _ => "tif",
+            };
+            let plan = backend
+                .call(
+                    "develop-plan",
+                    json!([session, [id], folder.to_string_lossy(), extension]),
+                )
+                .await?;
+            if let Some(error) = plan[0]["error"].as_str() {
+                return Err(error.into());
+            }
+            let target = PathBuf::from(
+                plan[0]["tiff"]
+                    .as_str()
+                    .ok_or("Missing edit copy destination.")?,
+            );
+            let source = file.clone();
+            let destination = target.clone();
+            blocking(move || copy_linked_edit(&source, &destination)).await?;
+            backend.call("develop-mark", json!([session, id, {"tiff": target.to_string_lossy(), "editedBy": ctx.edited_by}])).await?;
+            files.push(target);
+        } else {
+            files.push(file);
+        }
+    }
     engine.cancel.store(false, Ordering::SeqCst);
     let cancel = engine.cancel.clone();
     backend
@@ -722,6 +755,31 @@ pub async fn edit_external(
         return Err(e);
     }
     Ok(json!({ "edited": !edited.is_empty(), "ids": edited }))
+}
+
+fn copy_linked_edit(source: &Path, destination: &Path) -> Result<(), String> {
+    let before = stamp(source)?;
+    let mut input = std::fs::File::open(source).map_err(|e| e.to_string())?;
+    let mut output = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)
+        .map_err(|e| e.to_string())?;
+    let copied = std::io::copy(&mut input, &mut output)
+        .and_then(|_| output.sync_all())
+        .map_err(|e| e.to_string());
+    drop(output);
+    let result = copied.and_then(|_| {
+        if stamp(source)? == before {
+            Ok(())
+        } else {
+            Err("The linked edit changed while copying; try again.".into())
+        }
+    });
+    if result.is_err() {
+        let _ = std::fs::remove_file(destination);
+    }
+    result
 }
 
 #[derive(Deserialize)]
@@ -1394,6 +1452,27 @@ pub async fn download_lens_database(
 mod result_tests {
     use super::*;
     use lightcraft_engine::export::encode_with_metadata;
+
+    #[test]
+    fn linked_edits_are_copied_without_overwriting_existing_files() {
+        let unique = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("photocull-linked-{}-{unique}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("original.tif");
+        let destination = dir.join("copy.tif");
+        std::fs::write(&source, b"saved external edit").unwrap();
+        copy_linked_edit(&source, &destination).unwrap();
+        assert_eq!(std::fs::read(&destination).unwrap(), b"saved external edit");
+        std::fs::write(&destination, b"another edit").unwrap();
+        assert!(copy_linked_edit(&source, &destination).is_err());
+        assert_eq!(std::fs::read(&destination).unwrap(), b"another edit");
+        assert_eq!(std::fs::read(&source).unwrap(), b"saved external edit");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn preview_profile_is_srgb_without_changing_encoded_pixels() {

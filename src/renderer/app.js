@@ -1,7 +1,7 @@
 const api = window.photocull;
 const $ = id => document.getElementById(id);
 const state = { deleting: false, session: null, selected: null, marked: new Set(), anchor: null, filter: 'all', query: '', mode: 'review', fullscreen: false,
-  generation: 0, previewRevision: 0, showOriginal: false, pendingSaves: 0, saveError: false, busy: false, settings: { autoAdvance: true, recursive: false, autoOpenCards: true, colors: [], naming: { template: '{filename}', text: '', start: 1 } }, settingsReady: false, colorFilter: '', devices: [], deviceError: '', autoOpened: new Set(), copy: { running: false, destination: null, copiedTo: null } };
+  generation: 0, previewRevision: 0, showOriginal: false, proposals: [], proposalsLoading: false, proposalsBusy: false, proposalWarning: '', pendingSaves: 0, saveError: false, busy: false, settings: { autoAdvance: true, recursive: false, autoOpenCards: true, colors: [], naming: { template: '{filename}', text: '', start: 1 } }, settingsReady: false, colorFilter: '', devices: [], deviceError: '', autoOpened: new Set(), copy: { running: false, destination: null, copiedTo: null } };
 let toastTimer, metadataTimer, framePending = false, handoffUsageKey = '', handoffUsageGeneration = 0;
 const gridNodes = new Map(), filmNodes = new Map();
 const culling = { metadata:new Map(), jobs:new Map(), scores:new Map(), bursts:[], byId:new Map(), expanded:new Set(), epoch:0, paused:false, running:false };
@@ -118,6 +118,7 @@ function loadSession(session) {
   if(state.mode==='compare')state.mode='review';
   cancelCulling();culling.metadata.clear();culling.jobs.clear();culling.scores.clear();culling.expanded.clear();culling.bursts=[];culling.byId.clear();
   state.session = session; state.selected = session.items[0]?.id ?? null;
+  state.proposals = []; state.proposalsBusy = false; state.proposalsLoading = !api.server; state.proposalWarning = ''; proposalSignature = '';
   resetSelection();
   state.showOriginal = false; state.filter = 'all'; state.colorFilter = ''; $('color-filter').value = ''; state.query = ''; state.saveError = false; loupe.reset();
   $('search').value = ''; $('grid').scrollTop = 0;
@@ -134,6 +135,11 @@ function loadSession(session) {
   const missingHandoffs = session.items.filter(i => i.handoffMissing).length;
   if (missingHandoffs) toast(`${missingHandoffs} external edit(s) missing. Showing original photos; copy the hand-off folder alongside the photos.`);
   if (!session.items.length) toast('No supported images found. Try including subfolders.');
+  void api.externalEditProposals(session.id).then(result => {
+    if (state.session?.id !== session.id) return;
+    state.proposals = result.proposals; state.proposalWarning = result.warnings.join(' ');
+  }).catch(error => { if (state.session?.id === session.id) state.proposalWarning = error.message; })
+    .finally(() => { if (state.session?.id === session.id) { state.proposalsLoading = false; render(); } });
 }
 
 function renderDevices() {
@@ -182,7 +188,9 @@ function renderCounts() {
   $('count-all').textContent = items.length;
   $('count-unreviewed').textContent = items.length - count;
   for (const flag of ['pick', 'reject']) $(`count-${flag}`).textContent = items.filter(i => i.flag === flag).length;
-  $('count-external').textContent = items.filter(i => i.externalEdit).length;
+  const proposed = pendingProposals().length;
+  $('count-external').textContent = `${items.filter(i => i.externalEdit).length}${proposed ? ` (${proposed})` : ''}`;
+  $('count-external').title = proposed ? `${proposed} proposed matches awaiting review` : '';
   $('count-rated').textContent = items.filter(i => i.rating > 0).length;
   $('progress-text').textContent = `${count} of ${items.length}`;
   $('progress-fill').style.width = `${items.length ? count / items.length * 100 : 0}%`;
@@ -207,9 +215,10 @@ function render(reset = false) {
   $('compare-mode').setAttribute('aria-pressed',String(state.mode==='compare'));
   const loaded = !!state.session?.items.length;
   $('empty').hidden = loaded;
-  $('no-matches').hidden = !loaded || !!items.length;
+  const hasProposals = state.filter === 'external' && (pendingProposals(true).length || state.proposalsLoading || state.proposalWarning);
+  $('no-matches').hidden = !loaded || !!items.length || !!hasProposals;
   $('review').hidden = !loaded || !items.length || state.mode !== 'review';
-  $('grid').hidden = !loaded || !items.length || state.mode !== 'grid';
+  $('grid').hidden = !loaded || !items.length && !hasProposals || state.mode !== 'grid';
   $('grid-size-control').hidden = !loaded || state.mode !== 'grid';
   $('review-mode').setAttribute('aria-pressed', String(state.mode === 'review')); $('grid-mode').setAttribute('aria-pressed', String(state.mode === 'grid'));
   $('review-mode').classList.toggle('active', state.mode === 'review');
@@ -228,8 +237,62 @@ function render(reset = false) {
   if (deletePrompt && (state.session?.id !== deletePrompt.session || viewKey() !== deletePrompt.view || !sameIds(deletePrompt.ids))) hideDeletePrompt();
   renderSelection();
   renderCulling();
+  renderProposals();
   if (state.mode === 'grid') requestGrid();
 }
+
+function pendingProposals(scoped = false) {
+  return state.proposals.filter(p => {
+    const item = state.session?.items.find(i => i.id === p.itemId);
+    return item && !item.trashed && !item.tiff && (!scoped || (!state.colorFilter || colorOf(item) === state.colorFilter) && item.name.toLowerCase().includes(state.query));
+  });
+}
+let proposalSignature = '';
+function renderProposals() {
+  const section = $('external-proposals'), proposals = pendingProposals(true);
+  section.hidden = state.filter !== 'external' || !proposals.length && !state.proposalsLoading && !state.proposalWarning;
+  if (section.hidden) return;
+  $('proposal-count').textContent = proposals.length ? `(${proposals.length})` : '';
+  $('proposal-status').textContent = state.proposalsLoading ? 'Checking saved edits and hand-off folders…' : state.proposalWarning || 'Review these edits before linking them to your originals.';
+  const locked = state.proposalsBusy || state.busy || state.copy.running || state.deleting;
+  const conflict = new Set(proposals.map(p => p.itemId)).size !== proposals.length;
+  $('proposal-accept-all').disabled = locked || !proposals.length || conflict;
+  $('proposal-accept-all').title = conflict ? 'Choose one edit for each photo before accepting the remaining matches.' : '';
+  $('proposal-reject-all').disabled = locked || !proposals.length;
+  const signature = JSON.stringify([state.session?.id, proposals, locked]);
+  if (signature === proposalSignature) return;
+  proposalSignature = signature;
+  $('proposal-list').replaceChildren(...proposals.map(p => {
+    const card = document.createElement('article'); card.className = 'proposal-card'; card.dataset.proposal = p.id; card.setAttribute('aria-label', `Proposed edit for ${p.name}`);
+    const images = document.createElement('div'); images.className = 'proposal-images';
+    for (const [label, extra] of [['Original', '&original=1'], ['External edit', `&proposal=${p.id}`]]) {
+      const figure = document.createElement('figure'), image = document.createElement('img'), caption = document.createElement('figcaption');
+      image.alt = `${label}: ${p.name}`; image.loading = 'lazy'; image.src = api.imageUrl(state.session.id, p.itemId, 'thumb', extra); caption.textContent = label; figure.append(image, caption); images.append(figure);
+    }
+    const name = document.createElement('strong'); name.textContent = p.name;
+    const file = document.createElement('p'); file.className = 'subtle small proposal-path'; file.textContent = p.file; file.title = p.file;
+    const actions = document.createElement('div'); actions.className = 'proposal-actions';
+    for (const [label, accept] of [['Accept', true], ['Reject', false]]) {
+      const button = document.createElement('button'); button.className = 'button quiet'; button.textContent = label; button.disabled = locked; button.onclick = () => decideProposals([p.id], accept); actions.append(button);
+    }
+    card.append(images, name, file, actions); return card;
+  }));
+}
+async function decideProposals(ids, accept) {
+  if (!ids.length || state.proposalsBusy || state.busy || state.copy.running || state.deleting) return;
+  const session = state.session.id; state.proposalsBusy = true; render();
+  try {
+    const result = await api.externalEditDecide(session, ids, accept);
+    if (state.session?.id !== session) return;
+    state.proposals = result.proposals;
+    for (const patch of result.items) Object.assign(state.session.items.find(i => i.id === patch.id), patch);
+    if (accept) { state.previewRevision++; handoffUsageKey = ''; }
+  } catch (error) { toast(error.message); }
+  finally { if (state.session?.id === session) { state.proposalsBusy = false; render(); } }
+}
+$('external-proposals').addEventListener('pointerdown', event => event.stopPropagation());
+$('proposal-accept-all').onclick = () => decideProposals(pendingProposals(true).map(p => p.id), true);
+$('proposal-reject-all').onclick = () => decideProposals(pendingProposals(true).map(p => p.id), false);
 
 function renderSelection() {
   const item = photo();
@@ -579,7 +642,7 @@ $('open-folder').onclick = openFolder; $('empty-open').onclick = openFolder;
 $('review-mode').onclick = () => setMode('review'); $('grid-mode').onclick = () => setMode('grid'); $('develop-mode').onclick = () => setMode('develop');
 $('search').oninput = event => { state.query = event.target.value.toLowerCase(); $('grid').scrollTop = 0; render(true); };
 document.querySelectorAll('.filter').forEach(button => { button.onclick = () => {
-  state.filter = button.dataset.filter; $('grid').scrollTop = 0; render(true);
+  state.filter = button.dataset.filter; if (state.filter === 'external') setMode('grid'); $('grid').scrollTop = 0; render(true);
 }; });
 $('reset-filter').onclick = () => { state.colorFilter = ''; $('color-filter').value = ''; state.filter = 'all'; state.query = ''; $('search').value = ''; render(true); };
 $('previous').onclick = () => navigate(-1); $('next').onclick = () => navigate(1);

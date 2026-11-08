@@ -70,6 +70,8 @@ const RENDERER_METHODS: &[&str] = &[
     "export-recipes",
     "develop-get",
     "develop-set",
+    "external-edit-proposals",
+    "external-edit-decide",
     "develop-folder",
     "develop-folder-check",
     "editor-preset",

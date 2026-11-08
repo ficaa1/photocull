@@ -2,7 +2,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const key = file => path.resolve(file).toLowerCase();
-async function planTiffs(items, folder, protectedItems = items, extension = 'tif') {
+async function planTiffs(items, folder, protectedItems = items, extension = 'tif', linkedPaths = new Set()) {
   if (typeof folder !== 'string' || !path.isAbsolute(folder)) throw new Error('Choose a hand-off folder.');
   if (!['tif', 'png', 'jpg'].includes(extension)) throw new Error('Invalid hand-off extension.');
   const reserved = new Set(), rows = [];
@@ -13,7 +13,7 @@ async function planTiffs(items, folder, protectedItems = items, extension = 'tif
     const row = { id: item.id, name: item.name };
     if (!item.raw) { rows.push({ ...row, error: 'Only RAW photos can be developed.' }); continue; }
     const own = item.develop?.tiff;
-    const reuse = own && path.extname(own).toLowerCase() === `.${extension}` && key(path.dirname(own)) === key(folder) && !protectedItems.some(i => i.id !== item.id && (i.develop?.handoffs || [{path:i.develop?.tiff}]).some(r => r.path && key(r.path) === key(own)));
+    const reuse = own && !linkedPaths.has(key(own)) && !item.develop.handoffs?.some(r => r.path === own && r.linked) && path.extname(own).toLowerCase() === `.${extension}` && key(path.dirname(own)) === key(folder) && !protectedItems.some(i => i.id !== item.id && (i.develop?.handoffs || [{path:i.develop?.tiff}]).some(r => r.path && key(r.path) === key(own)));
     let n = 1;
     try {
       for (;;) {
@@ -22,7 +22,7 @@ async function planTiffs(items, folder, protectedItems = items, extension = 'tif
         const stat = await fs.lstat(tiff).catch(e => { if (e.code !== 'ENOENT') throw e; return null; });
         if (reuse) {
           if (reserved.has(k) || protectedPaths.has(k) || stat && (!stat.isFile() || stat.isSymbolicLink())) throw new Error('The destination is not a regular, unshared hand-off file.');
-        } else if (handoffs.has(k) || stat || diskNames.has(path.basename(tiff).toLowerCase()) || reserved.has(k) || protectedPaths.has(k)) { n++; continue; }
+        } else if (handoffs.has(k) || linkedPaths.has(k) || stat || diskNames.has(path.basename(tiff).toLowerCase()) || reserved.has(k) || protectedPaths.has(k)) { n++; continue; }
         reserved.add(k);
         rows.push({ ...row, tiff, exists: !!stat, edited: !!stat && !!(item.develop?.editedBy || item.develop?.edited), own: !!reuse });
         break;
