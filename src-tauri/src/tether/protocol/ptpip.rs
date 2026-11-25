@@ -44,6 +44,9 @@ const EVENT_QUEUE: usize = 256;
 const EVENT_FRAME_BUDGET: Duration = Duration::from_secs(10);
 /// A blocking connect cannot be interrupted, so it is retried in slices this long.
 const DIAL_SLICE: Duration = Duration::from_secs(1);
+/// Socket reads and writes poll cancellation and stream retirement at this cadence because
+/// cross-thread `shutdown()` does not reliably wake blocked calls on macOS and Windows.
+const IO_SLICE: Duration = Duration::from_millis(50);
 
 #[derive(Debug, Clone)]
 pub struct PtpIpConfig {
@@ -245,40 +248,47 @@ impl PtpIpTransport {
 
     fn establish(&mut self, deadline: Instant) -> Result<(), TransportError> {
         let mut command = dial(self.config.endpoint, deadline, &self.shared)?;
-        write_full(
-            &mut command,
-            &init_command_request(&self.config.initiator_guid, &self.config.friendly_name),
-            deadline,
-        )?;
-        let ack = read_init_ack(&mut command, deadline)?;
-        self.responder_guid = Some(ack.guid);
-        self.responder_name = Some(ack.name);
-
-        let mut events = dial(self.config.endpoint, deadline, &self.shared)?;
-        write_full(
-            &mut events,
-            &frame(packet::INIT_EVENT_REQUEST, &ack.connection.to_le_bytes()),
-            deadline,
-        )?;
-        read_init_event_ack(&mut events, deadline)?;
-
-        let generation = self.generation;
         {
-            let mut link = self.shared.link.lock().unwrap();
-            if link.cancelled {
-                return Err(cancelled());
+            let mut io = Io::connecting(&mut command, &self.shared);
+            write_full(
+                &mut io,
+                &init_command_request(&self.config.initiator_guid, &self.config.friendly_name),
+                deadline,
+            )?;
+            let ack = read_init_ack(&mut io, deadline)?;
+            self.responder_guid = Some(ack.guid);
+            self.responder_name = Some(ack.name);
+
+            let mut events = dial(self.config.endpoint, deadline, &self.shared)?;
+            {
+                let mut ev_io = Io::connecting(&mut events, &self.shared);
+                write_full(
+                    &mut ev_io,
+                    &frame(packet::INIT_EVENT_REQUEST, &ack.connection.to_le_bytes()),
+                    deadline,
+                )?;
+                read_init_event_ack(&mut ev_io, deadline)?;
             }
-            link.sockets = std::mem::take(&mut link.pending);
-            link.live = Some(generation);
+
+            let generation = self.generation;
+            {
+                let mut link = self.shared.link.lock().unwrap();
+                if link.cancelled {
+                    return Err(cancelled());
+                }
+                link.sockets = std::mem::take(&mut link.pending);
+                link.live = Some(generation);
+            }
+            drop(io);
+            self.command = Some(command);
+            let shared = self.shared.clone();
+            self.reader = Some(
+                std::thread::Builder::new()
+                    .name("photocull-ptpip-events".into())
+                    .spawn(move || read_events(events, shared, generation))
+                    .map_err(io_error)?,
+            );
         }
-        self.command = Some(command);
-        let shared = self.shared.clone();
-        self.reader = Some(
-            std::thread::Builder::new()
-                .name("photocull-ptpip-events".into())
-                .spawn(move || read_events(events, shared, generation))
-                .map_err(io_error)?,
-        );
 
         let reply = self.exchange(
             Operation {
@@ -315,11 +325,17 @@ impl PtpIpTransport {
     ) -> Result<Reply, TransportError> {
         let generation = self.generation;
         let result = match self.command.as_mut() {
-            Some(command) => run(command, &mut self.scratch, request, phase, deadline, tid),
+            Some(command) => {
+                let mut io = Io::live(command, &self.shared, generation);
+                run(&mut io, &mut self.scratch, request, phase, deadline, tid)
+            }
             None => Err(lost()),
         };
         if result.is_err() {
             self.shared.retire(generation);
+            if let Some(command) = self.command.take() {
+                let _ = command.shutdown(Shutdown::Both);
+            }
             self.session_open = false;
         }
         result
@@ -487,20 +503,58 @@ fn dial(
     }
 }
 
-/// One read of at least one byte. The timeout is reset from the absolute deadline before every
-/// partial read, so a trickling peer cannot extend it.
-fn read_some(
-    stream: &mut TcpStream,
-    buf: &mut [u8],
-    deadline: Instant,
-) -> Result<usize, TransportError> {
+struct Io<'a> {
+    stream: &'a mut TcpStream,
+    shared: &'a Shared,
+    generation: Option<u64>,
+}
+
+impl<'a> Io<'a> {
+    fn connecting(stream: &'a mut TcpStream, shared: &'a Shared) -> Self {
+        Io {
+            stream,
+            shared,
+            generation: None,
+        }
+    }
+
+    fn live(stream: &'a mut TcpStream, shared: &'a Shared, generation: u64) -> Self {
+        Io {
+            stream,
+            shared,
+            generation: Some(generation),
+        }
+    }
+
+    fn check_alive(&self) -> Result<(), TransportError> {
+        if self.shared.cancelled() {
+            return Err(cancelled());
+        }
+        if let Some(generation) = self.generation {
+            if !self.shared.is_live(generation) {
+                return Err(closed());
+            }
+        }
+        Ok(())
+    }
+}
+
+/// One read of at least one byte. The timeout is reset from the absolute deadline in short slices
+/// so cross-thread stream retirement and cancellation wake promptly on every platform.
+fn read_some(io: &mut Io<'_>, buf: &mut [u8], deadline: Instant) -> Result<usize, TransportError> {
     loop {
-        stream
-            .set_read_timeout(Some(budget(deadline)?))
+        io.check_alive()?;
+        let left = budget(deadline)?;
+        io.stream
+            .set_read_timeout(Some(left.min(IO_SLICE)))
             .map_err(io_error)?;
-        match stream.read(buf) {
+        match io.stream.read(buf) {
             Ok(n) => return Ok(n),
             Err(e) if e.kind() == ErrorKind::Interrupted => {}
+            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+                io.check_alive()?;
+                budget(deadline)?;
+            }
             Err(e) => return Err(io_error(e)),
         }
     }
@@ -509,14 +563,14 @@ fn read_some(
 /// Fills `buf`. EOF before the first byte of a packet is a closed connection; anywhere else it
 /// truncates a packet.
 fn read_full(
-    stream: &mut TcpStream,
+    io: &mut Io<'_>,
     buf: &mut [u8],
     deadline: Instant,
     at_boundary: bool,
 ) -> Result<(), TransportError> {
     let mut done = 0;
     while done < buf.len() {
-        match read_some(stream, &mut buf[done..], deadline)? {
+        match read_some(io, &mut buf[done..], deadline)? {
             0 if at_boundary && done == 0 => return Err(closed()),
             0 => return Err(framing("the camera closed the connection inside a packet")),
             n => done += n,
@@ -525,19 +579,21 @@ fn read_full(
     Ok(())
 }
 
-fn write_full(
-    stream: &mut TcpStream,
-    mut buf: &[u8],
-    deadline: Instant,
-) -> Result<(), TransportError> {
+fn write_full(io: &mut Io<'_>, mut buf: &[u8], deadline: Instant) -> Result<(), TransportError> {
     while !buf.is_empty() {
-        stream
-            .set_write_timeout(Some(budget(deadline)?))
+        io.check_alive()?;
+        let left = budget(deadline)?;
+        io.stream
+            .set_write_timeout(Some(left.min(IO_SLICE)))
             .map_err(io_error)?;
-        match stream.write(buf) {
+        match io.stream.write(buf) {
             Ok(0) => return Err(closed()),
             Ok(n) => buf = &buf[n..],
             Err(e) if e.kind() == ErrorKind::Interrupted => {}
+            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+                io.check_alive()?;
+                budget(deadline)?;
+            }
             Err(e) => return Err(io_error(e)),
         }
     }
@@ -633,9 +689,9 @@ fn init_fail(reason: u32) -> TransportError {
 }
 
 /// A header with a defined 1.0 type and a length that includes itself.
-fn read_header(stream: &mut TcpStream, deadline: Instant) -> Result<(u32, u32), TransportError> {
+fn read_header(io: &mut Io<'_>, deadline: Instant) -> Result<(u32, u32), TransportError> {
     let mut h = [0u8; HEADER];
-    read_full(stream, &mut h, deadline, true)?;
+    read_full(io, &mut h, deadline, true)?;
     let len = le32(&h, 0).unwrap_or(0);
     let kind = le32(&h, 4).unwrap_or(0);
     if !(packet::INIT_COMMAND_REQUEST..=packet::PROBE_RESPONSE).contains(&kind) {
@@ -651,7 +707,7 @@ fn read_header(stream: &mut TcpStream, deadline: Instant) -> Result<(u32, u32), 
 
 /// The body of a control packet whose total length must lie in `min..=max`.
 fn read_control<'a>(
-    stream: &mut TcpStream,
+    io: &mut Io<'_>,
     buf: &'a mut [u8],
     len: u32,
     min: usize,
@@ -665,17 +721,17 @@ fn read_control<'a>(
         )));
     }
     let body = &mut buf[..len - HEADER];
-    read_full(stream, body, deadline, false)?;
+    read_full(io, body, deadline, false)?;
     Ok(body)
 }
 
 fn read_init_fail(
-    stream: &mut TcpStream,
+    io: &mut Io<'_>,
     len: u32,
     deadline: Instant,
 ) -> Result<TransportError, TransportError> {
     let mut buf = [0u8; 4];
-    let body = read_control(stream, &mut buf, len, 12, 12, deadline)?;
+    let body = read_control(io, &mut buf, len, 12, 12, deadline)?;
     Ok(init_fail(le32(body, 0).unwrap_or(0)))
 }
 
@@ -685,11 +741,11 @@ struct InitAck {
     name: String,
 }
 
-fn read_init_ack(stream: &mut TcpStream, deadline: Instant) -> Result<InitAck, TransportError> {
-    let (len, kind) = read_header(stream, deadline)?;
+fn read_init_ack(io: &mut Io<'_>, deadline: Instant) -> Result<InitAck, TransportError> {
+    let (len, kind) = read_header(io, deadline)?;
     match kind {
         packet::INIT_COMMAND_ACK => {}
-        packet::INIT_FAIL => return Err(read_init_fail(stream, len, deadline)?),
+        packet::INIT_FAIL => return Err(read_init_fail(io, len, deadline)?),
         other => {
             return Err(framing(format!(
                 "expected Init Command Ack, got 0x{other:02X}"
@@ -697,7 +753,7 @@ fn read_init_ack(stream: &mut TcpStream, deadline: Instant) -> Result<InitAck, T
         }
     }
     let mut buf = [0u8; 24 + 2 * MAX_NAME_UNITS];
-    let body = read_control(stream, &mut buf, len, 34, 32 + 2 * MAX_NAME_UNITS, deadline)?;
+    let body = read_control(io, &mut buf, len, 34, 32 + 2 * MAX_NAME_UNITS, deadline)?;
     let connection = le32(body, 0).unwrap_or(0);
     let mut guid = [0u8; 16];
     guid.copy_from_slice(&body[4..20]);
@@ -717,12 +773,12 @@ fn read_init_ack(stream: &mut TcpStream, deadline: Instant) -> Result<InitAck, T
     })
 }
 
-fn read_init_event_ack(stream: &mut TcpStream, deadline: Instant) -> Result<(), TransportError> {
-    let (len, kind) = read_header(stream, deadline)?;
+fn read_init_event_ack(io: &mut Io<'_>, deadline: Instant) -> Result<(), TransportError> {
+    let (len, kind) = read_header(io, deadline)?;
     match kind {
         packet::INIT_EVENT_ACK if len as usize == HEADER => Ok(()),
         packet::INIT_EVENT_ACK => Err(framing(format!("Init Event Ack length {len}"))),
-        packet::INIT_FAIL => Err(read_init_fail(stream, len, deadline)?),
+        packet::INIT_FAIL => Err(read_init_fail(io, len, deadline)?),
         other => Err(framing(format!(
             "expected Init Event Ack, got 0x{other:02X}"
         ))),
@@ -731,13 +787,13 @@ fn read_init_event_ack(stream: &mut TcpStream, deadline: Instant) -> Result<(), 
 
 /// Response code and parameters, after checking the transaction ID.
 fn read_response(
-    stream: &mut TcpStream,
+    io: &mut Io<'_>,
     len: u32,
     tid: u32,
     deadline: Instant,
 ) -> Result<(u16, Vec<u32>), TransportError> {
     let mut buf = [0u8; 6 + 4 * MAX_PARAMS];
-    let body = read_control(stream, &mut buf, len, 14, 14 + 4 * MAX_PARAMS, deadline)?;
+    let body = read_control(io, &mut buf, len, 14, 14 + 4 * MAX_PARAMS, deadline)?;
     if (body.len() - 6) % 4 != 0 {
         return Err(framing(
             "operation response parameters are not whole u32 values",
@@ -764,16 +820,16 @@ fn unexpected(kind: u32, wanted: &str) -> TransportError {
 }
 
 fn expect_response(
-    stream: &mut TcpStream,
+    io: &mut Io<'_>,
     tid: u32,
     deadline: Instant,
     bytes_in: u64,
 ) -> Result<Reply, TransportError> {
-    let (len, kind) = read_header(stream, deadline)?;
+    let (len, kind) = read_header(io, deadline)?;
     if kind != packet::OPERATION_RESPONSE {
         return Err(unexpected(kind, "the operation response"));
     }
-    let (code, params) = read_response(stream, len, tid, deadline)?;
+    let (code, params) = read_response(io, len, tid, deadline)?;
     Ok(Reply {
         code,
         params,
@@ -782,7 +838,7 @@ fn expect_response(
 }
 
 fn run(
-    stream: &mut TcpStream,
+    io: &mut Io<'_>,
     scratch: &mut [u8],
     request: Operation<'_>,
     phase: DataPhase<'_>,
@@ -794,37 +850,37 @@ fn run(
         _ => PHASE_NONE_OR_IN,
     };
     write_full(
-        stream,
+        io,
         &operation_request(info, request.opcode, tid, request.params),
         deadline,
     )?;
     match phase {
-        DataPhase::None => expect_response(stream, tid, deadline, 0),
+        DataPhase::None => expect_response(io, tid, deadline, 0),
         DataPhase::Out(bytes) => {
-            send_data(stream, tid, bytes, deadline)?;
-            expect_response(stream, tid, deadline, 0)
+            send_data(io, tid, bytes, deadline)?;
+            expect_response(io, tid, deadline, 0)
         }
-        DataPhase::In { sink, limit } => receive(stream, scratch, tid, sink, limit, deadline),
+        DataPhase::In { sink, limit } => receive(io, scratch, tid, sink, limit, deadline),
     }
 }
 
 /// Start, Data for all but the last chunk, then the last chunk (possibly empty) in End.
 fn send_data(
-    stream: &mut TcpStream,
+    io: &mut Io<'_>,
     tid: u32,
     bytes: &[u8],
     deadline: Instant,
 ) -> Result<(), TransportError> {
     let mut start = tid.to_le_bytes().to_vec();
     start.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
-    write_full(stream, &frame(packet::START_DATA, &start), deadline)?;
+    write_full(io, &frame(packet::START_DATA, &start), deadline)?;
     let mut rest = bytes;
     loop {
         let n = rest.len().min(CHUNK);
         let last = n == rest.len();
         let kind = if last { packet::END_DATA } else { packet::DATA };
-        write_full(stream, &data_header(kind, tid, n), deadline)?;
-        write_full(stream, &rest[..n], deadline)?;
+        write_full(io, &data_header(kind, tid, n), deadline)?;
+        write_full(io, &rest[..n], deadline)?;
         rest = &rest[n..];
         if last {
             return Ok(());
@@ -834,18 +890,18 @@ fn send_data(
 
 /// Streams a data-in phase straight into `sink` through the fixed scratch buffer.
 fn receive(
-    stream: &mut TcpStream,
+    io: &mut Io<'_>,
     scratch: &mut [u8],
     tid: u32,
     sink: &mut (dyn Write + Send),
     limit: u64,
     deadline: Instant,
 ) -> Result<Reply, TransportError> {
-    let (len, kind) = read_header(stream, deadline)?;
+    let (len, kind) = read_header(io, deadline)?;
     match kind {
         // An immediate response: an early camera error, or an operation with no data.
         packet::OPERATION_RESPONSE => {
-            let (code, params) = read_response(stream, len, tid, deadline)?;
+            let (code, params) = read_response(io, len, tid, deadline)?;
             return Ok(Reply {
                 code,
                 params,
@@ -856,7 +912,7 @@ fn receive(
         other => return Err(unexpected(other, "Start Data")),
     }
     let mut buf = [0u8; 12];
-    let body = read_control(stream, &mut buf, len, 20, 20, deadline)?;
+    let body = read_control(io, &mut buf, len, 20, 20, deadline)?;
     let got = le32(body, 0).unwrap_or(0);
     if got != tid {
         return Err(framing(format!(
@@ -870,11 +926,11 @@ fn receive(
     }
     let mut received: u64 = 0;
     loop {
-        let (len, kind) = read_header(stream, deadline)?;
+        let (len, kind) = read_header(io, deadline)?;
         match kind {
             packet::DATA | packet::END_DATA => {}
             packet::OPERATION_RESPONSE => {
-                let (code, params) = read_response(stream, len, tid, deadline)?;
+                let (code, params) = read_response(io, len, tid, deadline)?;
                 if code == resp::OK {
                     return Err(framing(
                         "the camera reported success inside an unfinished data phase",
@@ -893,7 +949,7 @@ fn receive(
             return Err(framing(format!("data packet length {len}")));
         }
         let mut t = [0u8; 4];
-        read_full(stream, &mut t, deadline, false)?;
+        read_full(io, &mut t, deadline, false)?;
         let got = u32::from_le_bytes(t);
         if got != tid {
             return Err(framing(format!(
@@ -912,7 +968,7 @@ fn receive(
         let mut left = payload;
         while left > 0 {
             let want = left.min(scratch.len() as u64) as usize;
-            let n = read_some(stream, &mut scratch[..want], deadline)?;
+            let n = read_some(io, &mut scratch[..want], deadline)?;
             if n == 0 {
                 return Err(framing("the camera closed the connection inside a packet"));
             }
@@ -931,7 +987,7 @@ fn receive(
             "the data phase ended after {received} of {total} bytes"
         )));
     }
-    expect_response(stream, tid, deadline, received)
+    expect_response(io, tid, deadline, received)
 }
 
 enum EventPacket {
@@ -941,26 +997,31 @@ enum EventPacket {
 }
 
 /// Waits without a deadline for the next frame (an idle event stream is normal), then bounds its
-/// completion.
-fn next_event_packet(stream: &mut TcpStream) -> Result<EventPacket, TransportError> {
+/// completion. Polls `IO_SLICE` while idle so retiring the generation exits promptly on macOS and
+/// Windows, dropping the socket and closing the peer stream.
+fn next_event_packet(io: &mut Io<'_>) -> Result<EventPacket, TransportError> {
     let mut h = [0u8; HEADER];
-    stream.set_read_timeout(None).map_err(io_error)?;
+    io.stream
+        .set_read_timeout(Some(IO_SLICE))
+        .map_err(io_error)?;
     let first = loop {
-        match stream.read(&mut h) {
+        io.check_alive()?;
+        match io.stream.read(&mut h) {
             Ok(0) => return Err(closed()),
             Ok(n) => break n,
             Err(e) if e.kind() == ErrorKind::Interrupted => {}
+            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
             Err(e) => return Err(io_error(e)),
         }
     };
     let deadline = Instant::now() + EVENT_FRAME_BUDGET;
-    read_full(stream, &mut h[first..], deadline, false)?;
+    read_full(io, &mut h[first..], deadline, false)?;
     let len = le32(&h, 0).unwrap_or(0);
     let kind = le32(&h, 4).unwrap_or(0);
     match kind {
         packet::EVENT => {
             let mut buf = [0u8; 6 + 4 * 3];
-            let body = read_control(stream, &mut buf, len, 14, 14 + 4 * 3, deadline)?;
+            let body = read_control(io, &mut buf, len, 14, 14 + 4 * 3, deadline)?;
             if (body.len() - 6) % 4 != 0 {
                 return Err(framing("event parameters are not whole u32 values"));
             }
@@ -981,8 +1042,9 @@ fn next_event_packet(stream: &mut TcpStream) -> Result<EventPacket, TransportErr
 }
 
 fn read_events(mut stream: TcpStream, shared: Arc<Shared>, generation: u64) {
+    let mut io = Io::live(&mut stream, &shared, generation);
     loop {
-        match next_event_packet(&mut stream) {
+        match next_event_packet(&mut io) {
             Ok(EventPacket::Event(code, params)) => {
                 if !shared.push_event(generation, code, params) {
                     break;
@@ -990,7 +1052,7 @@ fn read_events(mut stream: TcpStream, shared: Arc<Shared>, generation: u64) {
             }
             Ok(EventPacket::Probe) => {
                 let deadline = Instant::now() + EVENT_FRAME_BUDGET;
-                if write_full(&mut stream, &frame(packet::PROBE_RESPONSE, &[]), deadline).is_err() {
+                if write_full(&mut io, &frame(packet::PROBE_RESPONSE, &[]), deadline).is_err() {
                     break;
                 }
             }
