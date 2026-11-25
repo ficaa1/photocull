@@ -121,7 +121,7 @@
       Object.assign(this, { api, el: elements, imageUrl, context, settings, onLoaded, onClickZoomChange, createImage });
       this.base = 'fit'; this.clickPercent = 100;
       this.item = null; this.shown = null; this.generation = 0; this.timer = null;
-      this.reps = new Map(); this.dims = new Map(); this.dimRequests = new Set(); this.inflight = new Set();
+      this.reps = new Map(); this.dims = new Map(); this.dimRequests = new Set(); this.inflight = new Set(); this.retired = new Set();
       this.direction = 1; this.lastId = null; this.lastChange = -Infinity; this.rapid = false; this.ahead = [];
       this.space = null; this.navPointer = null;
       this.prefetcher = new Prefetcher(PREFETCH_LIMIT, (job, image) => this.prefetched(job, image), createImage);
@@ -217,7 +217,41 @@
       const reps = this.reps.get(id);
       if (!reps.has(rep.kind) && rep.width) reps.set(rep.kind, rep);
     }
+    // Developed frames are object URLs the loupe owns; one still on screen is released once other pixels replace it.
+    release(rep) {
+      if (!rep?.owned) return;
+      if (this.el.image.getAttribute('src') === rep.url) this.retired.add(rep.url); else URL.revokeObjectURL(rep.url);
+    }
+    drop(id, kind = null) {
+      const reps = this.reps.get(id); if (!reps) return;
+      for (const [k, rep] of reps) if (!kind || k === kind) { this.release(rep); reps.delete(k); }
+      if (!reps.size) this.reps.delete(id);
+    }
+    dropAll() { for (const id of [...this.reps.keys()]) this.drop(id); }
+    // Nothing else may follow a reset, so released frames leave the screen with it.
+    flushRetired() {
+      for (const url of this.retired) { if (this.el.image.getAttribute('src') === url) this.el.image.removeAttribute('src'); URL.revokeObjectURL(url); }
+      this.retired.clear();
+    }
+    // A developed frame replaces the camera preview as this photo's preview-size rendition.
+    develop(item, { url, width, height, wb, stamp }) {
+      if (this.item?.id !== item.id) return false;
+      this.drop(item.id, 'preview');
+      this.store(item.id, { kind: 'preview', url, width, height, wb, owned: true, info: { type: 'developed', stamp } });
+      this.display(item, this.reps.get(item.id).get('preview'));
+      return true;
+    }
+    // Forgets a developed frame; returns true when the photo on screen needs showing again.
+    undevelop(id) {
+      if (this.reps.get(id)?.get('preview')?.info?.type !== 'developed') return false;
+      this.drop(id, 'preview');
+      if (this.item?.id !== id) return false;
+      this.shown = null; this.el.image.dataset.stamp = ''; this.el.previewSource.textContent = 'Finding RAW preview…'; this.badge(null);
+      return true;
+    }
+    developedStamp(id) { const rep = this.reps.get(id)?.get('preview'); return rep?.info?.type === 'developed' ? rep.info.stamp : null; }
     has(id, kind) { return !!this.reps.get(id)?.has(kind); }
+    showsDeveloped(id) { return this.item?.id === id && this.shown?.info?.type === 'developed'; }
     hasAtLeast(id, kind) { return this.repList(id).some(rep => KIND_RANK[rep.kind] >= KIND_RANK[kind]); }
     repList(id) { return [...(this.reps.get(id)?.values() ?? [])]; }
     offer(item) {
@@ -230,8 +264,10 @@
     display(item, rep) {
       this.shown = rep;
       if (this.el.image.getAttribute('src') !== rep.url) this.el.image.src = rep.url;
+      for (const url of this.retired) if (url !== rep.url) { URL.revokeObjectURL(url); this.retired.delete(url); }
       this.el.image.dataset.kind = rep.kind;
       this.updateSource(); this.view.setVisible(true);
+      if (rep.info?.type === 'developed') this.el.previewSource.textContent = 'Developed RAW';
       if (rep.info) this.badge(rep.info, item);
       else if (item.raw && rep.kind !== 'thumb' && !rep.asked) { rep.asked = true; void this.status(item, rep.kind, false, false); }
       this.renderNavigator();
@@ -263,9 +299,11 @@
           return;
         }
         const info = status.info; if (!info) return;
-        const rep = this.reps.get(item.id)?.get(kind);
-        if (rep) rep.info = info;
-        if (rep && rep === this.shown) this.badge(info, item);
+        const rep = this.reps.get(item.id)?.get(kind), shown = this.shown;
+        if (rep && rep.info?.type !== 'developed') rep.info = info;
+        // Only a description of the rendition on screen may change the stage chip and badge.
+        if (shown && (shown.info?.type === 'developed' || shown.info?.type === 'test' || rep && rep !== shown)) return;
+        if (rep && rep === shown) this.badge(info, item);
         if (!describe) return;
         this.el.previewSource.textContent = `${info.source}${info.cached ? ' · cached' : ''}`;
         if (info.limited) this.el.previewStatus.textContent = 'Limited resolution';
@@ -322,7 +360,7 @@
       this.prefetcher.set(jobs.filter(job => !this.hasAtLeast(job.item.id, job.kind))
         .map((job, rank) => ({ ...job, key: `${job.item.id}:${job.kind}`, url: this.imageUrl(job.item, job.kind, `&prefetch=${rank + 1}`) })));
       const keep = new Set([item.id, ...order.map(i => i.id)]);
-      for (const id of this.reps.keys()) if (!keep.has(id)) this.reps.delete(id);
+      for (const id of [...this.reps.keys()]) if (!keep.has(id)) this.drop(id);
     }
     prefetched(job, image) {
       this.store(job.item.id, { kind: job.kind, url: job.url, width: image.naturalWidth, height: image.naturalHeight });
@@ -462,13 +500,13 @@
     // A new folder: back to Fit and forget everything loaded.
     reset() {
       this.prefetcher.set([]); this.abandon(null); clearTimeout(this.timer);
-      this.reps.clear(); this.dims.clear(); this.item = null; this.shown = null; this.lastId = null; this.lastChange = -Infinity; this.direction = 1;
+      this.dropAll(); this.flushRetired(); this.dims.clear(); this.item = null; this.shown = null; this.lastId = null; this.lastChange = -Infinity; this.direction = 1;
       this.base = 'fit'; this.cancelHand(); this.el.image.dataset.stamp = ''; delete this.el.image.dataset.itemId;
       this.view.reset();
     }
     // Previews were regenerated (retry, RAW rendering change): reload, keeping
     // the current pixels on screen until replacements arrive.
-    invalidate() { this.abandon(null); this.generation++; clearTimeout(this.timer); this.prefetcher.set([]); this.dims.clear(); this.dimRequests.clear(); this.reps.clear(); this.shown = null; this.el.image.dataset.stamp = ''; }
+    invalidate() { this.abandon(null); this.generation++; clearTimeout(this.timer); this.prefetcher.set([]); this.dims.clear(); this.dimRequests.clear(); this.dropAll(); this.shown = null; this.el.image.dataset.stamp = ''; }
     clear() { this.generation++; this.el.image.dataset.stamp = ''; this.renderNavigator(); }
   }
 
