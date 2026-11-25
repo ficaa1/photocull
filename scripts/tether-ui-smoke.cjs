@@ -18,6 +18,7 @@ function simulateCamera() {
   const jpeg = color => new Promise(resolve => { const canvas = document.createElement('canvas'); canvas.width = 640; canvas.height = 427; const ctx = canvas.getContext('2d'); ctx.fillStyle = color; ctx.fillRect(0, 0, 640, 427); canvas.toBlob(resolve, 'image/jpeg'); });
   T.emit = (name, payload) => { for (const callback of T.handlers[name] || []) callback(payload); };
   T.finishRender = () => (T.renderWaiters || []).splice(0).forEach(resolve => resolve());
+  T.finishReview = () => (T.reviewWaiters || []).splice(0).forEach(resolve => resolve());
   T.finishStatus = () => (T.statusWaiters || []).splice(0).forEach(resolve => resolve());
   const shutters = ['1/160', '1/200', '1/250', '1/400'].map(id => ({ id, label: id }));
   T.snapshot = () => ({ epoch: T.epoch, state: 'ready', device: { deviceId: 'usb-1', model: 'ILCE-7M3', transport: 'usb-icc' }, actions: { trigger: true, liveView: true, halfPress: true }, capabilities: { fel: { supported: true, enabled: true } }, propRev: T.propRev,
@@ -64,11 +65,12 @@ function simulateCamera() {
     },
     tetherReviewFrame: async ({ session, id }) => {
       log('review-frame', id);
-      if (id === T.holdReview) await new Promise(resolve => { T.finishReview = resolve; });
+      if (id === T.holdReview) await new Promise(resolve => (T.reviewWaiters ||= []).push(resolve));
       return { blob: T.reviewColor ? await jpeg(T.reviewColor) : await (await fetch(real.imageUrl(session, id, 'preview', ''))).blob() };
     },
     tetherCompositionFrame: async (shootId, testSeq, previewRev) => { log('composition-frame', testSeq, previewRev); return { width: 640, height: 427, blob: await jpeg(T.testColor || (previewRev > 1 ? '#8090a0' : testSeq % 2 ? '#2f6f4f' : '#4f2f6f')) }; },
     tetherRecover: async ({ op, exposureId }) => { log('recover', op, exposureId); return {}; },
+    tetherLibrary: async () => { log('library'); return structuredClone(T.library); },
     tetherLive: async (shootId, epoch, enabled) => { log('live', enabled); return enabled ? { streamId: T.frames['stream-a'] ? 'stream-c' : 'stream-a', state: 'streaming' } : { state: 'off' }; },
     // Once held, the first stream's next poll hangs until the test rejects it, as a retired stream's request would.
     tetherLiveFrame: async (shootId, epoch, streamId, afterSeq) => {
@@ -733,7 +735,7 @@ async function main() {
 
     await page.evaluate(id => { __camera.holdReview = id; __camera.reviewColor = '#000000'; }, ids[2]);
     await clearCalls(); await arrive(2, 8);
-    await page.waitForFunction(() => !!__camera.finishReview);
+    await page.waitForFunction(() => __camera.reviewWaiters?.length > 0);
     await arrive(3, 9);
     await page.evaluate(() => {
       const s = __camera.shoot;
@@ -846,6 +848,24 @@ async function main() {
     await page.waitForFunction(() => !/waiting/.test(document.querySelector('#tether-adjust-source').textContent));
     check('RAW+JPEG: a RAW-first pair publishes Primary at once; Finish as single ends the wait for a RAW');
 
+    // A missed delta resyncs the library; its open pairs decide which JPEGs still wait for a RAW.
+    const resync = async pendingPairs => {
+      const target = rev + 10;
+      await page.evaluate(([pendingPairs, target]) => { __camera.library = { shootId: 'shoot-1', session: state.session.id, rev: target, library: JSON.parse(JSON.stringify(state.session)), latestOrdinal: 16, pendingPairs }; }, [pendingPairs, target]);
+      await clearCalls();
+      await page.evaluate(gap => __camera.emit('tether-library-delta', { shootId: 'shoot-1', session: state.session.id, rev: gap, firstArrival: false, upserts: [] }), rev + 2);
+      await untilCall(c => c[0] === 'library', 'library resync');
+      rev = target;
+    };
+    await resync([{ exposureId: 'E16', ordinal: 16, itemId: ids[2] }]);
+    await page.waitForFunction(() => /waiting for its RAW/.test(document.querySelector('#tether-adjust-source').textContent));
+    await page.waitForTimeout(400);
+    assert.deepEqual((await calls()).filter(c => c[0] === 'primary'), [], 'a JPEG first seen waiting in the snapshot keeps the current Primary');
+    await resync([]);
+    await page.waitForFunction(() => !/waiting/.test(document.querySelector('#tether-adjust-source').textContent));
+    await untilCall(c => c[0] === 'primary' && c[2] === null, 'a pair completed during the gap releases the JPEG to publish');
+    check('library resync rebuilds which JPEGs wait for their RAW from the snapshot');
+
     // Quick follow starts a render on arrival; a later request for the same RAW must win.
     await page.evaluate(() => { tether.update({ follow: { mode: 'quick' } }); __camera.holdRender = true; __camera.rendered = []; });
     await clearCalls();
@@ -884,7 +904,10 @@ async function main() {
     await untilCall(c => c[0] === 'develop-render' && c[1] === ids[1], 'entering Tether with the same RAW selected');
     await page.waitForFunction(() => state.mode === 'tether' && document.querySelector('#preview-source').textContent === 'Developed RAW');
     assert.equal(await developedShown(), true);
-    check('developed preview follows the workspace, the preference and Show originals, releasing frames it drops');
+    await clearCalls(); await page.evaluate(() => refreshPreviews());
+    await untilCall(c => c[0] === 'develop-render' && c[1] === ids[1], 'regenerated previews render the developed frame again');
+    await page.waitForFunction(() => document.querySelector('#preview-source').textContent === 'Developed RAW' && document.querySelector('#review-image').getAttribute('src').startsWith('blob:'));
+    check('developed preview follows the workspace, the preference, Show originals and regenerated previews, releasing frames it drops');
 
     await page.evaluate(id => { __camera.embedded = id; __camera.holdStatus = true; __camera.holdRender = true; }, ids[1]);
     await clearCalls(); await page.evaluate(() => loupe.zoomToRatio(400));
@@ -916,26 +939,48 @@ async function main() {
     await untilCall(c => c[0] === 'presented' && c[1] === 'E18', 'the RAW is presented after its JPEG failed');
     await page.waitForFunction(id => loupe.item?.id === id && document.querySelector('#preview-source').textContent === 'Developed RAW', ids[3]);
     await page.evaluate(() => { __camera.brokenPreview = null; });
-    check('When Ready: a JPEG that fails to decode while its RAW lands hands the stage to the developed RAW');
+    await emitDelta({ firstArrival: false, upserts: [jpegAgain] });
+    await page.waitForFunction(id => state.session.items.some(i => i.id === id), ids[2]);
+    await page.evaluate(id => select(id), ids[0]); await page.waitForFunction(id => loupe.item?.id === id, ids[0]);
+    await page.evaluate(id => { __camera.brokenPreview = id; }, ids[2]);
+    await clearCalls();
+    await emitDelta({ firstArrival: true, ordinal: 19, exposureId: 'E19', itemId: ids[2], pairState: 'waiting', upserts: [{ ...jpegAgain, raw: false, exposureId: 'E19', ordinal: 19 }] });
+    await page.waitForFunction(() => !document.querySelector('#tether-arrival-pill').hidden);
+    await emitDelta({ firstArrival: false, ordinal: 19, exposureId: 'E19', itemId: ids[3], pairState: 'paired', remap: [{ from: ids[2], to: ids[3] }], upserts: [{ ...await itemOf(ids[3]), raw: true, exposureId: 'E19', ordinal: 19 }] });
+    await untilCall(c => c[0] === 'presented' && c[1] === 'E19', 'a RAW landing after its JPEG failed is presented');
+    await page.waitForFunction(id => loupe.item?.id === id && document.querySelector('#preview-source').textContent === 'Developed RAW', ids[3]);
+    await page.evaluate(() => { __camera.brokenPreview = null; });
+    check('When Ready: a JPEG that fails to decode hands the stage to its developed RAW, whether the RAW lands during or after the failure');
+
+    // Show developed preview turned off and on while a When Ready capture renders: the capture still develops.
+    await page.evaluate(() => { __camera.holdRender = true; });
+    await clearCalls(); await arrive(0, 20, { raw: true });
+    await untilCall(c => c[0] === 'develop-render' && c[1] === ids[0], 'the incoming render');
+    await page.locator('#tether-developed').uncheck(); await page.locator('#tether-developed').check();
+    await page.waitForTimeout(300);
+    await page.evaluate(() => { __camera.holdRender = false; __camera.finishRender(); });
+    await untilCall(c => c[0] === 'presented' && c[1] === 'E20', 'presented E20');
+    await page.waitForFunction(id => loupe.item?.id === id && document.querySelector('#preview-source').textContent === 'Developed RAW', ids[0]);
+    check('When Ready: a capture whose render was retired by a preference toggle develops once shown');
 
     // Keep replies before the dark test shot is measured; the measurement still flags the kept photo.
     await page.locator('#tether-follow-pause').click();
     await clearCalls(); await page.locator('#tether-composition-toggle').click();
     await untilCall(c => c[0] === 'control' && c[1] === 'composition-on', 'composition-on');
     await page.evaluate(id => { __camera.holdReview = id; __camera.reviewColor = '#9b8269'; __camera.testColor = '#000000'; }, ids[0]);
-    await arrive(0, 19);
-    await page.waitForFunction(() => !!__camera.finishReview);
+    await arrive(0, 21);
+    await page.waitForFunction(() => __camera.reviewWaiters?.length > 0);
     await testShot(5); await showing(5);
     await page.locator('#tether-composition-keep').click();
     await page.waitForFunction(() => !state.testShot);
-    await page.evaluate(() => { __camera.holdReview = null; __camera.finishReview(); });
-    await page.evaluate(() => tether.misfire.chain);
-    await arrive(1, 20, { exposureId: 'kept-5' });
-    await page.waitForFunction(id => !!filmNodes.get(id)?.querySelector('.mini-misfire'), ids[1]);
-    await page.evaluate(() => { __camera.testColor = null; __camera.reviewColor = null; });
     await page.locator('#tether-composition-toggle').click();
     await untilCall(c => c[0] === 'control' && c[1] === 'composition-off', 'composition-off');
-    check('misfire: a dark test shot kept before it was measured flags the saved photo');
+    await page.evaluate(() => { __camera.holdReview = null; __camera.finishReview(); });
+    await page.evaluate(() => tether.misfire.chain);
+    await arrive(1, 22, { exposureId: 'kept-5' });
+    await page.waitForFunction(id => !!filmNodes.get(id)?.querySelector('.mini-misfire'), ids[1]);
+    await page.evaluate(() => { __camera.testColor = null; __camera.reviewColor = null; });
+    check('misfire: a dark test shot kept, then Test Shot Mode left before it was measured, flags the saved photo');
 
     // launch.cjs dismisses every native prompt; this confirmation must be accepted.
     let asked = '';
@@ -961,6 +1006,16 @@ async function main() {
     assert.match(await page.locator('#toast').textContent(), /Temporary test files could not be removed/);
     assert.equal(await page.evaluate(() => state.session.id), session, 'the folder stays open as an ordinary session');
     check('Stop session: button, palette and Open folder stop the shoot and keep the folder');
+
+    await page.locator('#tether-developed').check();
+    await page.evaluate(id => select(id), ids[0]);
+    await page.waitForFunction(id => loupe.item?.id === id && document.querySelector('#preview-source').textContent === 'Developed RAW', ids[0]);
+    const lastFrame = await stageSrc();
+    const empty = path.join(root, 'empty'); await fs.mkdir(empty);
+    await page.evaluate(folder => window.loadTestFolder(folder), empty);
+    await page.waitForFunction(() => document.querySelector('#count-all').textContent === '0');
+    assert.ok(await page.evaluate(url => __revoked.includes(url) && document.querySelector('#review-image').getAttribute('src') !== url, lastFrame), 'an empty folder releases the developed frame it replaced');
+    check('opening an empty folder releases the developed frame on screen');
 
     assert.equal(errors.length, 0, errors.join('\n'));
     console.log(JSON.stringify({ passed: true, checks, errors }, null, 2));

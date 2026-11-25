@@ -228,6 +228,11 @@
       if (!reps.size) this.reps.delete(id);
     }
     dropAll() { for (const id of [...this.reps.keys()]) this.drop(id); }
+    // Nothing else may follow a reset, so released frames leave the screen with it.
+    flushRetired() {
+      for (const url of this.retired) { if (this.el.image.getAttribute('src') === url) this.el.image.removeAttribute('src'); URL.revokeObjectURL(url); }
+      this.retired.clear();
+    }
     // A developed frame replaces the camera preview as this photo's preview-size rendition.
     develop(item, { url, width, height, wb, stamp }) {
       if (this.item?.id !== item.id) return false;
@@ -495,7 +500,7 @@
     // A new folder: back to Fit and forget everything loaded.
     reset() {
       this.prefetcher.set([]); this.abandon(null); clearTimeout(this.timer);
-      this.dropAll(); this.dims.clear(); this.item = null; this.shown = null; this.lastId = null; this.lastChange = -Infinity; this.direction = 1;
+      this.dropAll(); this.flushRetired(); this.dims.clear(); this.item = null; this.shown = null; this.lastId = null; this.lastChange = -Infinity; this.direction = 1;
       this.base = 'fit'; this.cancelHand(); this.el.image.dataset.stamp = ''; delete this.el.image.dataset.itemId;
       this.view.reset();
     }
