@@ -923,10 +923,13 @@ pub fn initiator_guid(data_dir: &Path) -> io::Result<[u8; 16]> {
     let mut guid = random_bytes()?;
     guid[6] = (guid[6] & 0x0F) | 0x40;
     guid[8] = (guid[8] & 0x3F) | 0x80;
+    static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp = dir.join(format!(
-        "initiator-guid.{}.{}.tmp",
+        "initiator-guid.{}.{}.{}.tmp",
         std::process::id(),
-        nanos()
+        nanos(),
+        seq
     ));
     {
         let mut f = OpenOptions::new().write(true).create_new(true).open(&tmp)?;
@@ -954,9 +957,10 @@ pub fn initiator_guid(data_dir: &Path) -> io::Result<[u8; 16]> {
         // An unreadable file left by a crash is replaced.
         Err(_) => {
             let replace = dir.join(format!(
-                "initiator-guid.{}.{}.new",
+                "initiator-guid.{}.{}.{}.new",
                 std::process::id(),
-                nanos()
+                nanos(),
+                seq
             ));
             fs::write(&replace, format!("{}\n", format_uuid(&guid)))?;
             fs::rename(&replace, &path)?;
