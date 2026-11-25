@@ -1868,12 +1868,9 @@ tether=PhotoCullTether.create({api,toast,
     if(old && loupe.item?.id===old.item.id)$('review-image').dataset.stamp='';
     loupe.cancelHand();render();},
   displayedReview:()=>loupe.item?.id===photo()?.id && loupe.shown ? { image:loupe.el.image, rep:loupe.shown } : null,
-  // A developed frame replaces the camera preview as this photo's preview-size rendition.
-  showDeveloped:(id,{url,width,height,wb})=>{
-    const item=photo();if(!photoStage() || item?.id!==id || loupe.item?.id!==id)return false;
-    loupe.reps.get(id)?.delete('preview');loupe.store(id,{kind:'preview',url,width,height,wb,info:{type:'developed'}});
-    loupe.display(item,loupe.reps.get(id).get('preview'));return true;},
-  developedUrl:id=>{const rep=loupe.reps.get(id)?.get('preview');return rep?.info?.type==='developed'?rep.url:null;}});
+  showDeveloped:(id,frame)=>{const item=photo();return photoStage() && item?.id===id && loupe.develop(item,frame);},
+  undevelop:id=>{if(loupe.undevelop(id) && photoStage() && photo()?.id===id)loupe.show(photo());},
+  developedStamp:id=>loupe.developedStamp(id)});
 Object.assign(survey.host,{
   unpinned:message=>{toast(message);queueMicrotask(()=>{if(state.mode==='compare' && !survey.pinned()){state.mode=stageMode();render();}tether.render();});},
   unpin:()=>{survey.unpin();if(state.mode==='compare'){state.mode=stageMode();render();}tether.render();},

@@ -42,6 +42,8 @@
   const FOLLOW_LABEL = { whenReady: 'When Ready', immediately: 'Immediately', off: 'Off' };
   const LINK_LABEL = { ready: 'Connected', paused: 'Connected', busy: 'Busy', lost: 'Lost', reconnecting: 'Reconnecting…', connecting: 'Connecting…' };
   // Stage bar label steps, widest first: aid labels go, then Configure aids, then the Follow label and telemetry.
+  // A developed frame matches the photo's pixels and Develop settings at the time it was requested.
+  const developStamp = item => `${item.contentRev || 0}:${item.developRevision || 0}`;
   const DENSITIES = ['full', 'compact', 'tight', 'narrow'];
   const bytesText = n => n >= GiB ? `${Math.round(n / GiB).toLocaleString()} GiB` : `${Math.round(n / 1024 ** 2).toLocaleString()} MiB`;
   function normalizeActions(actions) {
@@ -108,7 +110,7 @@
       this.live = { enabled: false, wanted: false, streamId: null, retired: new Set(), seq: 0, open: false, docked: false, loupe: false, center: { x: .5, y: .5 }, bitmap: null, fps: 0, frames: [], poll: 0, size: null };
       this.follow = { paused: false, autoPaused: false, pending: 0, latestOrdinal: 0, shownOrdinal: 0, latestId: null, epoch: 0 };
       this.telemetry = { queued: 0, receiving: 0, mbps: null, latency: null };
-      this.issues = new Map(); this.checklist = 'a7m3'; this.primarySeq = 0; this.primaryTimer = 0; this.primaryAck = 0; this.primaryPending = null; this.primaryRequest = null; this.developedUrls = new Map();
+      this.issues = new Map(); this.checklist = 'a7m3'; this.primarySeq = 0; this.primaryTimer = 0; this.primaryAck = 0; this.primaryPending = null; this.primaryRequest = null;
       this.wifi = { busy: false, pending: null }; this.histogramKey = ''; this.liveHistogramAt = 0;
       this.saveTimer = 0; this.savePatch = {}; this.unsaved = []; this.edits = 0; this.saves = Promise.resolve(); this.asset = null; this.assetName = '';
       this.reviewFrame = null; this.namingTimer = 0; this.namingGeneration = 0; this.hold = null; this.focusRepeat = null;
@@ -116,9 +118,12 @@
       this.test = { active: false, hasShot: false, awaitingShot: false, busy: false, frame: null, want: null, testSeq: null, pairComplete: true, restoreLiveExpanded: false };
       this.recycleUntil = 0; this.recycleTimer = 0; this.wbArmed = false; this.wbBusy = false;
       // flags: exposure ID (or test:<seq>) → { detail, dismissed }, so a burst flags only its dark frames.
-      this.misfire = { history: new FlashHistory(), flags: new Map(), chain: Promise.resolve() };
+      // promoted: a kept test shot's test:<seq> → its library exposure, so a late measurement flags both.
+      this.misfire = { history: new FlashHistory(), flags: new Map(), chain: Promise.resolve(), promoted: new Map() };
       // awaitingRaw: provisional JPEG rows whose RAW companion is still in transit.
-      this.awaitingRaw = new Set(); this.developSeq = 0; this.developTimer = 0;
+      this.awaitingRaw = new Set();
+      // One developed render runs at a time; pending holds the latest request and gen retires every earlier one.
+      this.develop = { gen: 0, active: null, pending: null, timer: 0, key: '' };
       this.build();
       this.layer = new O.OverlayLayer(host.reviewViewport, {
         geometry: () => { const v = host.reviewView, d = v.drawn; return d && v.visible ? { rect: { x: d.left, y: d.top, width: d.width, height: d.height } } : null; },
@@ -208,8 +213,7 @@
       this.composeChanged(); this.render();
     }
     sessionLoaded(session) {
-      for (const url of this.developedUrls.values()) URL.revokeObjectURL(url);
-      this.developedUrls.clear(); this.reviewFrame = null; if (!this.shoot || this.shoot.session !== session?.id) { this.setShoot(null); } void this.refreshState(session?.id); }
+      this.cancelDeveloped(); this.develop.key = ''; this.reviewFrame = null; if (!this.shoot || this.shoot.session !== session?.id) { this.setShoot(null); } void this.refreshState(session?.id); }
 
     // Shoot config goes to the ledger; without a shoot the panel edits the defaults for the next shoot.
     update(patch, { delay = 0 } = {}) {
@@ -313,7 +317,9 @@
       const remap = new Map((delta.remap || []).map(r => [r.from, r.to]));
       if (remap.has(this.follow.latestId)) this.follow.latestId = remap.get(this.follow.latestId);
       for (const from of remap.keys()) this.awaitingRaw.delete(from);
-      if (delta.itemId) { if (delta.pairState === 'waiting') this.awaitingRaw.add(delta.itemId); else this.awaitingRaw.delete(delta.itemId); }
+      // A RAW that lands first is already usable; only a provisional JPEG waits for its companion.
+      const target = (delta.upserts || []).find(i => i.id === delta.itemId);
+      if (delta.itemId) { if (delta.pairState === 'waiting' && target && !target.raw) this.awaitingRaw.add(delta.itemId); else this.awaitingRaw.delete(delta.itemId); }
       this.host.applyDelta(delta);
       if (delta.firstArrival) {
         const exposureId = delta.exposureId || this.host.item(delta.itemId)?.exposureId;
@@ -330,13 +336,18 @@
       if (!this.shoot) return;
       try {
         const value = await this.api.tetherLibrary(this.shoot.shootId, this.shoot.session);
-        this.shoot.libraryRev = value.rev; this.host.replaceLibrary(value.library);
+        this.shoot.libraryRev = value.rev; this.host.replaceLibrary(value.library); this.settleAwaiting();
         if (value.latestOrdinal > this.follow.latestOrdinal) {
           const latest = value.library.items.filter(i => i.ordinal === value.latestOrdinal)[0];
           this.follow.latestOrdinal = value.latestOrdinal; this.follow.latestId = latest?.id || this.follow.latestId;
         }
         this.renderPill();
       } catch (error) { this.host.toast(error.message); }
+    }
+    // Drops JPEGs that were replaced by their RAW or finished as single; their selection may publish Primary again.
+    settleAwaiting(exposureId = null) {
+      for (const id of [...this.awaitingRaw]) { const item = this.host.item(id); if (!item || item.raw || exposureId && item.exposureId === exposureId) this.awaitingRaw.delete(id); }
+      this.renderAdjustments(); this.schedulePrimary();
     }
     async refreshCounters() { try { const value = await this.api.tetherState(this.shoot.session); if (value?.shootId === this.shoot?.shootId) { Object.assign(this.shoot, { counters: value.counters, space: value.space, queue: value.queue, configRev: Math.max(this.shoot.configRev, value.configRev) }); this.render(); } } catch {} }
 
@@ -356,22 +367,31 @@
     // Decoding and deferred retries can outlast a pause, Off or a new inspection, so eligibility is checked again at the moment of display.
     async present(id, ordinal, mode, epoch = this.follow.epoch) {
       const item = this.host.item(id); if (!item) return;
-      const developed = this.developedWanted(item) ? this.developedFrame(item) : null;
+      clearTimeout(this.develop.timer);
+      const developed = this.developedWanted(item) ? this.renderDeveloped(item) : null, gen = this.develop.gen;
       let handedOff = false;
       try { handedOff = await this.commit(item, ordinal, mode, epoch, developed); }
-      finally { if (developed && !handedOff) void developed.then(frame => frame && URL.revokeObjectURL(frame.url)); }
+      finally {
+        if (developed && !handedOff) void developed.then(frame => frame && URL.revokeObjectURL(frame.url));
+        // A capture that did not take the stage hands development back to the photo still shown.
+        if (!handedOff && gen === this.develop.gen && this.host.photo()?.id !== id) { this.develop.key = ''; this.syncDeveloped(); }
+      }
     }
     // True when the developed frame was handed to the display, which then owns its object URL.
     async commit(item, ordinal, mode, epoch, developed) {
       const id = item.id;
+      // The RAW took over this JPEG's row while it decoded, or made its decode fail; the RAW is presented instead.
+      const moved = () => !this.host.item(id) && item.exposureId && this.host.session()?.items.find(i => i.exposureId === item.exposureId);
       if (mode === 'whenReady' && !(developed && await developed)) {
         const image = new Image(); image.src = this.host.imageUrl(item, 'preview');
-        try { await image.decode(); } catch { this.follow.pending++; this.renderPill(); return false; }
+        try { await image.decode(); } catch {
+          const next = moved(); if (next) { void this.present(next.id, ordinal, mode, epoch); return false; }
+          this.follow.pending++; this.renderPill(); return false;
+        }
       }
       const stale = () => epoch !== this.follow.epoch || ordinal < this.follow.shownOrdinal || ordinal < this.follow.latestOrdinal && this.follow.latestId !== id;
       if (stale()) return false;
-      // The RAW took over this JPEG's row while it decoded; present the RAW instead.
-      if (!this.host.item(id)) { const moved = item.exposureId && this.host.session()?.items.find(i => i.exposureId === item.exposureId); if (moved) void this.present(moved.id, ordinal, mode, epoch); return false; }
+      if (!this.host.item(id)) { const next = moved(); if (next) void this.present(next.id, ordinal, mode, epoch); return false; }
       if (!this.followable()) { this.follow.pending++; this.renderPill(); this.render(); return false; }
       if (this.host.blocked()) { setTimeout(() => { if (epoch === this.follow.epoch) void this.present(this.follow.latestId, this.follow.latestOrdinal, mode, epoch); }, 600); return false; }
       const survey = this.host.survey(), pinned = survey.pinned();
@@ -382,40 +402,61 @@
       this.renderPill();
       if (this.shoot && item.exposureId) void this.api.tetherPresented(this.shoot.shootId, item.exposureId, ordinal, mode === 'whenReady' ? 'settled' : 'quick').catch(() => {});
       if (!developed || pinned) return false;
-      void developed.then(frame => this.showDeveloped(id, frame));
+      void developed.then(frame => this.showDeveloped(frame));
       return true;
     }
-    developedWanted(item) { return !!this.config().follow?.developedReview && !!item.raw && !item.trashed && !!this.api.canDevelop; }
-    // Browsing honors Show developed preview too: held arrow keys settle first, and a newer photo retires an older render.
-    requestDeveloped() {
-      clearTimeout(this.developTimer); const seq = ++this.developSeq;
-      const item = this.host.photo();
-      if (this.presenting || !this.studio() || this.testShown() || !item || !this.developedWanted(item) || this.host.developedUrl(item.id)) return;
-      this.developTimer = setTimeout(async () => {
-        const frame = await this.developedFrame(item);
-        if (seq !== this.developSeq) { if (frame) URL.revokeObjectURL(frame.url); return; }
-        this.showDeveloped(item.id, frame);
-      }, 150);
+    // Show originals and a saved external edit both take precedence over the developed treatment.
+    developable(item) { return !!item?.raw && !item.trashed && !item.externalEdit && !this.host.original() && !!this.api.canDevelop; }
+    developedWanted(item) { return !!this.config().follow?.developedReview && this.developable(item); }
+    // Re-evaluated on every selection, workspace or preference change: renders once arrow keys settle, or restores the ordinary rendition.
+    syncDeveloped() {
+      const item = this.host.photo(), mode = this.host.mode(), test = this.testShown();
+      const key = item ? [this.host.session()?.id, item.id, item.contentRev || 0, !!item.externalEdit, this.host.original(), mode, test, this.developedWanted(item)].join(':') : '';
+      if (key === this.develop.key) return;
+      this.develop.key = key;
+      if (this.presenting) { clearTimeout(this.develop.timer); return; }
+      this.cancelDeveloped();
+      if (!item || mode === 'compare' || test) return;
+      if (mode !== 'tether' || !this.developedWanted(item)) { this.host.undevelop(item.id); return; }
+      if (this.host.developedStamp(item.id) === developStamp(item)) return;
+      this.develop.timer = setTimeout(() => void this.renderDeveloped(item).then(frame => this.showDeveloped(frame)), 150);
     }
-    // Resolves to a decoded developed frame, or null so the camera preview stays.
-    async developedFrame(item) {
-      const session = this.host.session()?.id; let url = null;
+    // Resolves to a decoded frame, or null when it fails or a newer request retires it.
+    renderDeveloped(item, force = false) {
+      const q = this.develop; q.pending?.resolve(null);
+      const ticket = { gen: ++q.gen, session: this.host.session()?.id, id: item.id, stamp: developStamp(item), force };
+      const done = new Promise(resolve => { ticket.resolve = resolve; });
+      q.pending = ticket; this.pumpDeveloped();
+      return done;
+    }
+    pumpDeveloped() {
+      const q = this.develop; if (q.active || !q.pending) return;
+      const ticket = q.active = q.pending; q.pending = null;
+      void this.developedFrame(ticket).then(frame => {
+        q.active = null;
+        if (frame && ticket.gen !== q.gen) { URL.revokeObjectURL(frame.url); frame = null; }
+        ticket.resolve(frame); this.pumpDeveloped();
+      });
+    }
+    cancelDeveloped() { const q = this.develop; clearTimeout(q.timer); q.gen++; q.pending?.resolve(null); q.pending = null; }
+    async developedFrame(ticket) {
+      const { session, id } = ticket; let url = null;
       try {
-        const saved = await this.api.developGet(session, item.id);
-        const frame = await this.api.developRender(session, item.id, saved.settings, true);
+        const saved = await this.api.developGet(session, id);
+        const frame = await this.api.developRender(session, id, saved.settings, true);
         url = URL.createObjectURL(frame.blob);
         const probe = new Image(); probe.src = url; await probe.decode();
         if (this.host.session()?.id !== session) throw new Error('Session changed.');
-        return { url, width: probe.naturalWidth, height: probe.naturalHeight, wb: saved.settings?.wb || {} };
+        return { url, width: probe.naturalWidth, height: probe.naturalHeight, wb: saved.settings?.wb || {}, ticket };
       } catch { if (url) URL.revokeObjectURL(url); return null; }
     }
-    showDeveloped(id, frame) {
+    // The display owns an installed frame's object URL; a frame that no longer matches the stage is released here.
+    showDeveloped(frame) {
       if (!frame) return;
-      if (this.host.photo()?.id !== id || !this.host.showDeveloped(id, frame)) { URL.revokeObjectURL(frame.url); return; }
-      const old = this.developedUrls.get(id); this.developedUrls.set(id, frame.url);
-      if (old) URL.revokeObjectURL(old);
-      // The loupe drops renditions of photos it no longer keeps nearby; their frames are released with them.
-      for (const [other, url] of this.developedUrls) if (this.host.developedUrl(other) !== url) { URL.revokeObjectURL(url); this.developedUrls.delete(other); }
+      const t = frame.ticket, item = this.host.photo();
+      const current = t.gen === this.develop.gen && this.host.session()?.id === t.session && item?.id === t.id && developStamp(item) === t.stamp
+        && this.host.mode() === 'tether' && !this.testShown() && (t.force ? this.developable(item) : this.developedWanted(item));
+      if (!current || !this.host.showDeveloped(t.id, { url: frame.url, width: frame.width, height: frame.height, wb: frame.wb, stamp: t.stamp })) URL.revokeObjectURL(frame.url);
     }
     navigated() { if (!this.presenting) this.follow.epoch++; }
     settingsChanged() { if (!this.shoot) this.composeChanged(); this.render(); }
@@ -508,7 +549,7 @@
       $('tether-adjust-mode').onchange = () => { const mode = $('tether-adjust-mode').value; this.update({ adjustments: { mode, ...(mode === 'recipe' && !this.config().adjustments?.recipeId ? { recipeId: $('tether-recipe').value || null } : {}) } }); if (mode === 'recipe') void this.loadRecipes(); this.schedulePrimary(); };
       $('tether-recipe').onchange = () => this.update({ adjustments: { recipeId: $('tether-recipe').value || null } });
       $('tether-entire').onchange = () => this.update({ adjustments: { entireRecipe: $('tether-entire').checked } });
-      $('tether-developed').onchange = () => { this.update({ follow: { developedReview: $('tether-developed').checked } }); this.requestDeveloped(); };
+      $('tether-developed').onchange = () => { this.update({ follow: { developedReview: $('tether-developed').checked } }); this.syncDeveloped(); };
       $('tether-metadata').onchange = () => this.update({ metadataPresetId: $('tether-metadata').value || null });
       $('tether-initial-pick').onchange = () => this.update({ initial: { pick: $('tether-initial-pick').value === '' ? null : $('tether-initial-pick').value === 'true' } });
       $('tether-initial-rating').onchange = () => this.update({ initial: { rating: $('tether-initial-rating').value === '' ? null : Number($('tether-initial-rating').value) } });
@@ -607,13 +648,15 @@
       if (open) { this.placeDrawer(); drawer.focus({ preventScroll: true }); }
       else if (focused) button.focus({ preventScroll: true });
     }
-    // Hangs below the stage bar, under its toggle where the column allows, and ends above the filmstrip; its body scrolls.
+    // Hangs under its toggle where the column allows and ends above the filmstrip and the window edge; its body scrolls.
+    // When the room below is tight and there is more above, it opens upward instead.
     placeDrawer() {
       const drawer = $('tether-aids-drawer'), button = $('tether-aids-popover-btn'), main = drawer.offsetParent; if (!main) return;
       const b = button.getBoundingClientRect(), m = main.getBoundingClientRect(), width = drawer.offsetWidth, dock = $('review-dock');
-      const top = Math.round(b.bottom - m.top + 4), floor = (dock.offsetParent ? dock.getBoundingClientRect().top : m.bottom) - m.top - 8;
-      drawer.style.top = `${top}px`;
-      drawer.style.maxHeight = `${Math.max(120, Math.floor(floor - top))}px`;
+      const floor = Math.min(dock.offsetParent ? dock.getBoundingClientRect().top : m.bottom, window.innerHeight) - 8, ceiling = Math.max(m.top, 0) + 8;
+      const below = floor - b.bottom - 4, above = b.top - 4 - ceiling, up = below < 160 && above > below;
+      drawer.style.maxHeight = `${Math.max(0, Math.floor(up ? above : below))}px`;
+      drawer.style.top = `${Math.round((up ? b.top - 4 - drawer.offsetHeight : b.bottom + 4) - m.top)}px`;
       drawer.style.left = `${Math.round(Math.max(8, Math.min(m.width - width - 8, b.left - m.left)))}px`;
     }
     // Takes the widest label step whose groups fit side by side; below the last, Follow wraps to its own row instead of overlapping.
@@ -628,7 +671,7 @@
     }
 
     render() {
-      this.renderStatus(); this.renderCamera(); this.renderWifi(); this.renderLocation(); this.renderNaming(); this.renderAdjustments(); this.renderComposition(); this.renderFollow(); this.renderTelemetry(); this.renderIssues(); this.renderLive(); this.renderPill(); this.renderTest(); this.renderWhiteBalancePick();
+      this.syncDeveloped(); this.renderStatus(); this.renderCamera(); this.renderWifi(); this.renderLocation(); this.renderNaming(); this.renderAdjustments(); this.renderComposition(); this.renderFollow(); this.renderTelemetry(); this.renderIssues(); this.renderLive(); this.renderPill(); this.renderTest(); this.renderWhiteBalancePick();
     }
     renderStatus() {
       const state = !this.api.canTether ? 'unavailable' : !this.shoot ? 'idle' : this.camera.state === 'offline' ? 'armed' : this.camera.paused ? 'paused' : this.camera.state;
@@ -698,7 +741,7 @@
           button.type = 'button'; button.dataset.deviceId = d.deviceId; button.setAttribute('aria-pressed', String(current));
           // Discovery's availability goes stale once this shoot owns the camera; the live link state speaks for it.
           const mine = !!this.shoot && d.deviceId === this.camera.deviceId;
-          const state = mine ? LINK_LABEL[this.camera.state] || '' : d.availability && d.availability !== 'available' ? d.availability : '';
+          const state = mine ? LINK_LABEL[this.camera.state] || 'Disconnected' : d.availability && d.availability !== 'available' ? d.availability : '';
           button.append(el('span', `tether-transport ${kind}`, TRANSPORT_LABEL[kind]), el('span', 'tether-device-name', d.model || d.name || 'Camera'));
           if (state) { const badge = el('span', 'tether-device-state', state); if (mine) badge.dataset.state = this.camera.state; button.append(badge); }
           button.disabled = !this.api.canTether || !this.shoot || current || busy;
@@ -1032,7 +1075,7 @@
             let name;
             if (op === 'repairName') { name = prompt('New file name (without folder)'); if (!name) return; }
             b.disabled = true;
-            try { const result = await this.api.tetherRecover({ shootId: this.shoot.shootId, exposureId: issue.exposureId, memberId: issue.memberId, op, ...(name ? { name } : {}) }); if (result?.issue) this.issues.set(key, result.issue); else this.issues.delete(key); }
+            try { const result = await this.api.tetherRecover({ shootId: this.shoot.shootId, exposureId: issue.exposureId, memberId: issue.memberId, op, ...(name ? { name } : {}) }); if (result?.issue) this.issues.set(key, result.issue); else this.issues.delete(key); if (op === 'finishSingle') this.settleAwaiting(issue.exposureId); }
             catch (error) { this.host.toast(error.message); }
             this.renderIssues();
           };
@@ -1432,7 +1475,8 @@
     // ---- Review aids ----
     selectionChanged() {
       const item = this.host.photo(), key = this.testShown() ? `test:${this.test.frame.key}` : item ? `${item.id}:${item.contentRev || 0}:${this.host.original()}` : '';
-      if (key !== this.reviewKey) { this.reviewKey = key; this.layer.imageChanged(); this.toggleWhiteBalancePick(false); this.requestDeveloped(); }
+      if (key !== this.reviewKey) { this.reviewKey = key; this.layer.imageChanged(); this.toggleWhiteBalancePick(false); }
+      this.syncDeveloped();
       this.renderWhiteBalancePick(); this.renderMisfire();
       this.layer.setEnabled(['review', 'tether'].includes(this.host.mode()));
       this.schedulePrimary();
@@ -1607,7 +1651,7 @@
     resetMisfire(newShoot = false) {
       const history = new FlashHistory(newShoot ? undefined : this.misfire.history.exposures);
       for (const key of [...this.misfire.flags.keys()]) if (newShoot || key.startsWith('test:')) this.misfire.flags.delete(key);
-      Object.assign(this.misfire, { history, chain: Promise.resolve() });
+      Object.assign(this.misfire, { history, chain: Promise.resolve(), promoted: new Map() });
       this.renderMisfire();
     }
     clearMisfire() { const flag = this.viewedMisfire(); if (flag) flag.dismissed = true; this.renderMisfire(); }
@@ -1622,10 +1666,11 @@
         if (!frame || history !== m.history) return;
         const result = history.measure(exposureId, O.computeHistogram(frame.data, frame.width, frame.height));
         if (!result?.misfire) return;
-        m.flags.set(exposureId, { detail: result.detail, dismissed: false });
+        const flag = { detail: result.detail, dismissed: false }, kept = m.promoted.get(exposureId);
+        m.flags.set(exposureId, flag); if (kept) m.flags.set(kept, flag);
         if (this.flash().misfireChime) this.alarm();
         this.renderMisfire();
-        if (!exposureId.startsWith('test:')) this.host.thumbnailsChanged();
+        if (kept || !exposureId.startsWith('test:')) this.host.thumbnailsChanged();
       }).catch(() => {});
     }
     // Read by exposure: a RAW arriving after its JPEG takes over the row under a new item ID.
@@ -1730,7 +1775,7 @@
         const reply = await request;
         if (shootId !== this.shoot?.shootId) return;
         if (op === 'keep' && reply.exposureId) {
-          this.misfire.history.kept(reply.exposureId);
+          this.misfire.history.kept(reply.exposureId); this.misfire.promoted.set(`test:${seq}`, reply.exposureId);
           const flag = this.misfire.flags.get(`test:${seq}`);
           if (flag) { this.misfire.flags.set(reply.exposureId, flag); this.host.thumbnailsChanged(); }
         }
@@ -1827,7 +1872,7 @@
         this.schedulePrimary({ session, id: item.id, recipe, settings });
         const a = this.config().adjustments || {}, copied = ['last', 'primary'].includes(a.mode || 'last') && (a.groups || []).includes('wb');
         this.host.toast(`WB set to ${wb.temp} K · Tint ${signed(wb.tint)}${copied ? ' (copied to next captures)' : ' — enable Copy from Last (WB) to lock for next shots'}`);
-        this.showDeveloped(item.id, await this.developedFrame(this.host.item(item.id) || item));
+        this.showDeveloped(await this.renderDeveloped(this.host.item(item.id) || item, true));
       } catch (error) { this.host.toast(error.message); }
       finally { this.wbBusy = false; this.renderWhiteBalancePick(); }
     }
