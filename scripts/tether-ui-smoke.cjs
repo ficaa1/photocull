@@ -379,13 +379,15 @@ async function main() {
     await backfill({ pass: 2, state: 'scanning', auto: true, scanned: 2, listed: 9 });
     await page.waitForFunction(() => /Checking the camera card/.test(document.querySelector('#tether-backfill-text').textContent));
     await backfill({ pass: 2, state: 'done', auto: true, current: 0, total: 0, shots: 0, deferred: 1, held: 2, truncated: true });
-    await page.waitForFunction(() => /^Nothing missed/.test(document.querySelector('#tether-backfill-note').textContent));
-    assert.equal(await page.locator('#tether-backfill-note').textContent(), 'Nothing missed: every shot on the card is already here. 1 file still on its way from the live connection; the next pull checks again. 2 frames taken around a Test Shot stay on the card. The card holds more files than one pass compares; only the newest were checked.');
+    await page.waitForFunction(() => /^Pulled 0/.test(document.querySelector('#tether-backfill-note').textContent));
+    assert.equal(await page.locator('#tether-backfill-note').textContent(), 'Pulled 0 missed shots from the card. 1 file still on its way from the live connection; the next pull checks again. 2 frames taken around a Test Shot stay on the card. Only the newest files fit in this pass.');
     await backfill({ pass: 3, state: 'empty', listed: 0, message: 'The card shows no photos over this connection. It may be empty, or the camera may keep its files hidden in PC Remote mode.' });
     await page.waitForFunction(() => /^The card shows no photos/.test(document.querySelector('#tether-backfill-note').textContent));
     await backfill({ pass: 4, state: 'unavailable', storageAvailable: false, auto: true, message: 'This connection does not show the camera’s memory card. Sony cameras in PC Remote mode often keep the card hidden; nothing was changed.' });
     await page.waitForFunction(() => /PC Remote mode often keep the card hidden/.test(document.querySelector('#tether-backfill-note').textContent));
     assert.equal(await page.locator('#tether-backfill-banner').isHidden(), true);
+    await backfill({ pass: 5, state: 'done', total: 0, shots: 0, already: 2 });
+    assert.equal(await page.locator('#tether-backfill-note').textContent(), 'Nothing missed: every shot on the card is already here.');
     check('missed shots: pull, progress banner, pause/resume/cancel, stale passes ignored, nothing missed, empty and hidden-card notes, auto-pull toggle');
 
     await clearCalls();

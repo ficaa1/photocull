@@ -1069,7 +1069,7 @@ fn read_events(mut stream: TcpStream, shared: Arc<Shared>, generation: u64) {
 
 #[cfg(test)]
 mod tests {
-    use super::super::card::{whole_read_timeout, CardRead, CardScan, ReadStep, ScanStep};
+    use super::super::card::{CardRead, CardScan, ReadStep, ScanStep};
     use super::super::codec::{self, Grammar};
     use super::super::fixtures::*;
     use super::super::ptp::{format, handle, DeviceInfo, FileKind};
@@ -1505,7 +1505,7 @@ mod tests {
         let mut sink = Vec::new();
         let mut read = CardRead::new(&s, &object, 512 << 20).unwrap();
         let size = raw.len() as u64;
-        let step = read.step(&mut s, &mut sink, whole_read_timeout(size, true));
+        let step = read.step(&mut s, &mut sink);
         assert_eq!(
             step.unwrap(),
             ReadStep::Done {

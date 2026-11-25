@@ -1610,10 +1610,10 @@
         event.failed ? `${count(event.failed, 'file')} could not be read and stay${event.failed === 1 ? 's' : ''} on the card.` : '',
         event.deferred ? `${count(event.deferred, 'file')} still on ${event.deferred === 1 ? 'its' : 'their'} way from the live connection; the next pull checks again.` : '',
         event.held ? `${count(event.held, 'frame')} taken around a Test Shot stay${event.held === 1 ? 's' : ''} on the card.` : '',
-        event.truncated ? 'The card holds more files than one pass compares; only the newest were checked.' : '',
+        event.truncated ? 'Only the newest files fit in this pass.' : event.incomplete ? 'Some files on the card could not be checked.' : '',
       ].filter(Boolean).map(text => ` ${text}`).join('');
       const note = {
-        done: (event.total ? `Pulled ${shots(event.shots ?? 0)} from the card.` : 'Nothing missed: every shot on the card is already here.') + extra,
+        done: (event.total || extra ? `Pulled ${shots(event.shots ?? 0)} from the card.` : 'Nothing missed: every shot on the card is already here.') + extra,
         empty: event.message || 'The card shows no photos over this connection.',
         cancelled: `Stopped. Pulled ${shots(event.shots ?? 0)}; the rest stay on the card.`,
         interrupted: 'The camera disconnected; missed shots stay on the card for the next pull.',

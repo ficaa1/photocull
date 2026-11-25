@@ -222,7 +222,51 @@ pub enum DrainStep<W> {
     },
 }
 
-/// Responses with which a body declines a storage request without failing the session.
+/// What a read-only card operation got from the camera.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Stored<T> {
+    Read(T),
+    /// DeviceBusy: nothing was read; the same operation can be tried again later.
+    Busy,
+    /// Refused, gone, or not offered over this connection.
+    Refused,
+}
+
+impl<T> Stored<T> {
+    fn try_map<U>(
+        self,
+        parse: impl FnOnce(T) -> std::result::Result<U, ptp::ProtocolError>,
+    ) -> Result<Stored<U>> {
+        Ok(match self {
+            Stored::Read(value) => Stored::Read(parse(value)?),
+            Stored::Busy => Stored::Busy,
+            Stored::Refused => Stored::Refused,
+        })
+    }
+
+    pub fn limit_busy(self, retries: &mut u32, limit: u32) -> Self {
+        if matches!(self, Stored::Busy) {
+            if *retries < limit {
+                *retries += 1;
+                return Stored::Busy;
+            }
+            *retries = 0;
+            return Stored::Refused;
+        }
+        *retries = 0;
+        self
+    }
+}
+
+fn stored<T>(opcode: u16, code: u16, value: T) -> Result<Stored<T>> {
+    match code {
+        resp::OK => Ok(Stored::Read(value)),
+        resp::DEVICE_BUSY => Ok(Stored::Busy),
+        code if refused(code) => Ok(Stored::Refused),
+        code => Err(SessionError::Response { opcode, code }),
+    }
+}
+
 fn refused(code: u16) -> bool {
     matches!(
         code,
@@ -1454,83 +1498,63 @@ impl<T: PtpTransport> SonySession<T> {
         Ok(DrainStep::Empty)
     }
 
-    /// A read-only data-in operation the body may refuse. A refusal, or an operation DeviceInfo
-    /// does not offer, is `None` and sends nothing that could disturb the session.
+    /// One read-only data-in operation the body may refuse, sent once: DeviceBusy is handed back
+    /// so the caller serves live captures before trying again. An operation DeviceInfo does not
+    /// offer is refused without sending anything.
     fn read_optional(
         &mut self,
         opcode: u16,
         params: &[u32],
         limit: u64,
-    ) -> Result<Option<Vec<u8>>> {
+    ) -> Result<Stored<Vec<u8>>> {
         self.require_ready()?;
         if !self.device.as_ref().is_some_and(|d| d.supports(opcode)) {
-            return Ok(None);
+            return Ok(Stored::Refused);
         }
-        let until = self.deadline(self.config.busy_deadline);
-        let mut attempt = 0;
-        loop {
-            let mut data = Vec::new();
-            let reply = self.raw(
-                opcode,
-                params,
-                DataPhase::In {
-                    sink: &mut data,
-                    limit,
-                },
-                self.config.command_timeout,
-            )?;
-            match reply.code {
-                resp::OK => return Ok(Some(data)),
-                resp::DEVICE_BUSY if self.transport.now() < until => {
-                    self.transport.sleep(backoff(attempt));
-                    attempt += 1;
-                }
-                code if refused(code) => return Ok(None),
-                code => return Err(SessionError::Response { opcode, code }),
-            }
-        }
+        let mut data = Vec::new();
+        let reply = self.raw(
+            opcode,
+            params,
+            DataPhase::In {
+                sink: &mut data,
+                limit,
+            },
+            self.config.command_timeout,
+        )?;
+        stored(opcode, reply.code, data)
     }
 
-    /// Storage IDs as listed, or `None` when this connection does not list storage.
-    pub fn storage_ids(&mut self) -> Result<Option<Vec<u32>>> {
-        let Some(data) = self.read_optional(op::GET_STORAGE_IDS, &[], 1 << 16)? else {
-            return Ok(None);
-        };
-        Ok(Some(ptp::Cursor::new(&data).u32_array()?))
+    /// Storage IDs as listed.
+    pub fn storage_ids(&mut self) -> Result<Stored<Vec<u32>>> {
+        self.read_optional(op::GET_STORAGE_IDS, &[], 1 << 16)?
+            .try_map(|data| ptp::Cursor::new(&data).u32_array())
     }
 
-    /// Every object on one storage at all folder levels, or `None` when the body refuses.
-    pub fn object_handles(&mut self, storage_id: u32) -> Result<Option<Vec<u32>>> {
-        let Some(data) =
-            self.read_optional(op::GET_OBJECT_HANDLES, &[storage_id, 0, 0], 4 << 20)?
-        else {
-            return Ok(None);
-        };
-        Ok(Some(ptp::Cursor::new(&data).u32_array()?))
+    /// Every object on one storage at all folder levels.
+    pub fn object_handles(&mut self, storage_id: u32) -> Result<Stored<Vec<u32>>> {
+        self.read_optional(op::GET_OBJECT_HANDLES, &[storage_id, 0, 0], 4 << 20)?
+            .try_map(|data| ptp::Cursor::new(&data).u32_array())
     }
 
-    /// ObjectInfo of a stored object, or `None` when it is gone or refused.
-    pub fn object_info(&mut self, object: u32) -> Result<Option<ObjectInfo>> {
+    /// ObjectInfo of a stored object; a gone object is refused.
+    pub fn object_info(&mut self, object: u32) -> Result<Stored<ObjectInfo>> {
         if is_pseudo_handle(object) {
             return Err(SessionError::InvalidValue(
                 "Card reads take stored objects only.".into(),
             ));
         }
-        let Some(data) = self.read_optional(op::GET_OBJECT_INFO, &[object], 1 << 16)? else {
-            return Ok(None);
-        };
-        Ok(Some(ObjectInfo::parse(&data)?))
+        self.read_optional(op::GET_OBJECT_INFO, &[object], 1 << 16)?
+            .try_map(|data| ObjectInfo::parse(&data))
     }
 
-    /// Streams a whole stored object into `sink`; the camera keeps it. The byte count, or `None`
-    /// when it is gone or refused. The capture queue is never read here: its objects leave the
-    /// camera once sent.
+    /// Streams a whole stored object into `sink`; the camera keeps it. The capture queue is never
+    /// read here: its objects leave the camera once sent.
     pub fn read_object<W: Write + Send>(
         &mut self,
         object: u32,
         sink: &mut W,
         timeout: Duration,
-    ) -> Result<Option<u64>> {
+    ) -> Result<Stored<u64>> {
         self.read_stored(
             op::GET_OBJECT,
             &[object],
@@ -1547,7 +1571,7 @@ impl<T: PtpTransport> SonySession<T> {
         offset: u32,
         len: u32,
         sink: &mut W,
-    ) -> Result<Option<u64>> {
+    ) -> Result<Stored<u64>> {
         let timeout = self.config.command_timeout;
         self.read_stored(
             op::GET_PARTIAL_OBJECT,
@@ -1565,7 +1589,7 @@ impl<T: PtpTransport> SonySession<T> {
         limit: u64,
         sink: &mut W,
         timeout: Duration,
-    ) -> Result<Option<u64>> {
+    ) -> Result<Stored<u64>> {
         self.require_ready()?;
         if is_pseudo_handle(params[0]) {
             return Err(SessionError::InvalidValue(
@@ -1573,11 +1597,14 @@ impl<T: PtpTransport> SonySession<T> {
             ));
         }
         let reply = self.raw(opcode, params, DataPhase::In { sink, limit }, timeout)?;
-        match reply.code {
-            resp::OK => Ok(Some(reply.bytes_in)),
-            code if refused(code) => Ok(None),
-            code => Err(SessionError::Response { opcode, code }),
+        if reply.code != resp::OK && reply.bytes_in > 0 {
+            // A retry would append another copy of the rejected data to the same sink.
+            return Err(SessionError::Response {
+                opcode,
+                code: reply.code,
+            });
         }
+        stored(opcode, reply.code, reply.bytes_in)
     }
 
     pub fn live_view_supported(&self) -> std::result::Result<(), String> {
@@ -2700,8 +2727,7 @@ mod tests {
         }
     }
 
-    /// Runs a scan to its end, checking that no step sends more than one operation; only a
-    /// DeviceBusy retry repeats it.
+    /// Runs a scan to its end, checking that no step sends more than one operation.
     fn scan_to_end(
         s: &mut SonySession<ScriptedTransport>,
         scan: &mut card::CardScan,
@@ -2709,13 +2735,11 @@ mod tests {
         loop {
             let before = s.transport().sent.len();
             let step = scan.step(s).unwrap();
-            let mut ops: Vec<_> = s.transport().sent[before..]
-                .iter()
-                .map(|x| (x.opcode, x.params.clone()))
-                .collect();
-            ops.dedup();
-            assert!(ops.len() <= 1, "one operation per step: {ops:04X?}");
-            if step != card::ScanStep::Working {
+            assert!(
+                s.transport().sent.len() - before <= 1,
+                "one operation per step"
+            );
+            if !matches!(step, card::ScanStep::Working | card::ScanStep::Busy) {
                 return step;
             }
         }
@@ -2861,18 +2885,84 @@ mod tests {
     }
 
     #[test]
+    fn a_busy_camera_is_asked_again_later_and_an_unlisted_slot_leaves_the_scan_blind() {
+        let mut s = m3_listing_storage();
+        let t = s.transport_mut();
+        expect_in(
+            t,
+            op::GET_STORAGE_IDS,
+            &[],
+            handle_list(&[0x0001_0001, 0x0002_0001]),
+        );
+        refuse(
+            t,
+            op::GET_OBJECT_HANDLES,
+            &[0x0001_0001, 0, 0],
+            resp::DEVICE_BUSY,
+        );
+        expect_in(
+            t,
+            op::GET_OBJECT_HANDLES,
+            &[0x0001_0001, 0, 0],
+            handle_list(&[5]),
+        );
+        refuse(
+            t,
+            op::GET_OBJECT_HANDLES,
+            &[0x0002_0001, 0, 0],
+            resp::ACCESS_DENIED,
+        );
+        refuse(t, op::GET_OBJECT_INFO, &[5], resp::DEVICE_BUSY);
+        expect_in(
+            t,
+            op::GET_OBJECT_INFO,
+            &[5],
+            card_info(0xB101, "DSC00044.ARW", 9000, "20261125T143020"),
+        );
+        let mut scan = card::CardScan::new(Some("20261125T140000".into()));
+        let steps: Vec<_> = (0..6).map(|_| scan.step(&mut s).unwrap()).collect();
+        use card::ScanStep::{Busy, Done, Working};
+        assert_eq!(steps, [Working, Busy, Working, Working, Busy, Done]);
+        assert_eq!(
+            s.transport().sent.len(),
+            6,
+            "a busy answer is not retried in the same step"
+        );
+        assert_eq!(scan.found.iter().map(|o| o.handle).collect::<Vec<_>>(), [5]);
+        assert_eq!((scan.unlisted, scan.inspected), (1, 1));
+        assert!(
+            scan.blind(),
+            "the refused slot may hold photos the scan never saw"
+        );
+        assert_read_only(&s);
+        s.transport().finish();
+    }
+
+    #[test]
     fn a_new_photo_at_a_low_handle_is_found_behind_older_ones_up_to_the_inventory_cap() {
         let mut s = m3_listing_storage();
         let t = s.transport_mut();
-        expect_in(t, op::GET_STORAGE_IDS, &[], handle_list(&[0x0001_0001]));
-        // A new folder can take handles below every photo already on the card.
+        expect_in(
+            t,
+            op::GET_STORAGE_IDS,
+            &[],
+            handle_list(&[0x0001_0001, 0x0002_0001]),
+        );
+        // A new folder can take handles below every photo already on the card; the second slot
+        // lists one of them again.
         let total = card::MAX_INVENTORY as u32 + 2;
-        let handles: Vec<u32> = (1..=total).collect();
+        let handles: Vec<u32> = (1..total).collect();
         expect_in(
             t,
             op::GET_OBJECT_HANDLES,
             &[0x0001_0001, 0, 0],
             handle_list(&handles),
+        );
+        expect_in(
+            t,
+            op::GET_OBJECT_HANDLES,
+            &[0x0002_0001, 0, 0],
+            handle_list(&[1, 3, total]),
         );
         for handle in (3..=total).rev() {
             let info = if handle == 3 {
@@ -2883,11 +2973,14 @@ mod tests {
             expect_in(t, op::GET_OBJECT_INFO, &[handle], info);
         }
         let mut scan = card::CardScan::new(Some("20261125T140000".into()));
+        assert_eq!(scan.step(&mut s).unwrap(), card::ScanStep::Working);
+        assert_eq!(scan.step(&mut s).unwrap(), card::ScanStep::Working);
+        assert_eq!((scan.listed, scan.truncated), (card::MAX_INVENTORY, true));
         assert_eq!(scan_to_end(&mut s, &mut scan), card::ScanStep::Done);
         assert_eq!(scan.found.iter().map(|o| o.handle).collect::<Vec<_>>(), [3]);
         assert_eq!(
             (scan.listed, scan.inspected, scan.truncated),
-            (total as usize, card::MAX_INVENTORY, true)
+            (card::MAX_INVENTORY, card::MAX_INVENTORY, true)
         );
         assert!(scan.blind(), "the two oldest handles were never read");
         s.transport().finish();
@@ -2955,20 +3048,13 @@ mod tests {
 
         let mut read = card::CardRead::new(&s, &object, 512 << 20).unwrap();
         let mut sink = Vec::new();
-        let timeout = card::whole_read_timeout(size as u64, false);
-        assert_eq!(
-            read.step(&mut s, &mut sink, timeout).unwrap(),
-            card::ReadStep::More
-        );
+        assert_eq!(read.step(&mut s, &mut sink).unwrap(), card::ReadStep::More);
         preempt(&mut s, 1, &mut |s| {
-            read.step(s, &mut sink, timeout).unwrap() == card::ReadStep::Yield
+            read.step(s, &mut sink).unwrap() == card::ReadStep::Yield
         });
+        assert_eq!(read.step(&mut s, &mut sink).unwrap(), card::ReadStep::More);
         assert_eq!(
-            read.step(&mut s, &mut sink, timeout).unwrap(),
-            card::ReadStep::More
-        );
-        assert_eq!(
-            read.step(&mut s, &mut sink, timeout).unwrap(),
+            read.step(&mut s, &mut sink).unwrap(),
             card::ReadStep::Done {
                 bytes: size as u64,
                 declared: size as u64
@@ -3012,23 +3098,24 @@ mod tests {
             5,
             card_info(0xB101, "DSC00044.ARW", 9000, "20261125T143020"),
         );
-        assert_eq!(s.object_info(5).unwrap().unwrap(), stored.info);
+        assert_eq!(s.object_info(5).unwrap(), Stored::Read(stored.info.clone()));
         let mut sink = Vec::new();
         let mut read = card::CardRead::new(&s, &stored, 512 << 20).unwrap();
         assert_eq!(
-            read.step(&mut s, &mut sink, timeout).unwrap(),
+            read.step(&mut s, &mut sink).unwrap(),
             card::ReadStep::Done {
                 bytes: 9000,
                 declared: 9000
             }
         );
         assert_eq!(sink, raw);
+        assert!(s.transport().sent.last().unwrap().timeout <= Duration::from_secs(5));
 
         let short = object(4, card_info(0x3801, "DSC00044.JPG", 3000, ""));
         let mut sink = Vec::new();
         let mut read = card::CardRead::new(&s, &short, 512 << 20).unwrap();
         assert_eq!(
-            read.step(&mut s, &mut sink, timeout).unwrap(),
+            read.step(&mut s, &mut sink).unwrap(),
             card::ReadStep::Done {
                 bytes: 1200,
                 declared: 3000
@@ -3038,11 +3125,11 @@ mod tests {
         let gone = object(9, card_info(0x3801, "DSC00046.JPG", 3000, ""));
         let mut read = card::CardRead::new(&s, &gone, 512 << 20).unwrap();
         assert_eq!(
-            read.step(&mut s, &mut Vec::new(), timeout).unwrap(),
+            read.step(&mut s, &mut Vec::new()).unwrap(),
             card::ReadStep::Gone
         );
-        assert!(s.object_info(9).unwrap().is_none());
-        // Files over the limit or of unknown size are refused before anything is read.
+        assert_eq!(s.object_info(9).unwrap(), Stored::Refused);
+        // Unknown and oversized objects never reach GetObject.
         for size in [9001, u32::MAX, 0] {
             let big = object(6, card_info(0xB101, "DSC00047.ARW", size, ""));
             assert!(card::CardRead::new(&s, &big, 9000).is_err());
@@ -3062,12 +3149,14 @@ mod tests {
         let mut s = m3_listing_storage_with(&[op::GET_PARTIAL_OBJECT]);
         let raw = arw_file(9000);
         let t = s.transport_mut();
+        refuse(t, op::GET_PARTIAL_OBJECT, &[5, 0, 9000], resp::DEVICE_BUSY);
         refuse(
             t,
             op::GET_PARTIAL_OBJECT,
             &[5, 0, 9000],
             resp::OPERATION_NOT_SUPPORTED,
         );
+        refuse(t, op::GET_OBJECT, &[5], resp::DEVICE_BUSY);
         expect_in(t, op::GET_OBJECT, &[5], raw.clone());
         let object = card::CardObject {
             storage_id: 0x0001_0001,
@@ -3078,13 +3167,15 @@ mod tests {
         };
         let mut read = card::CardRead::new(&s, &object, 512 << 20).unwrap();
         let mut sink = Vec::new();
-        let timeout = Duration::from_secs(10);
+        // A busy camera hands control back to the actor instead of being retried in place.
+        let steps: Vec<_> = (0..3)
+            .map(|_| read.step(&mut s, &mut sink).unwrap())
+            .collect();
+        use card::ReadStep::{Busy, More};
+        assert_eq!(steps, [Busy, More, Busy]);
+        assert_eq!(s.transport().sent.len(), 3);
         assert_eq!(
-            read.step(&mut s, &mut sink, timeout).unwrap(),
-            card::ReadStep::More
-        );
-        assert_eq!(
-            read.step(&mut s, &mut sink, timeout).unwrap(),
+            read.step(&mut s, &mut sink).unwrap(),
             card::ReadStep::Done {
                 bytes: 9000,
                 declared: 9000

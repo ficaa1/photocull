@@ -301,6 +301,18 @@ struct DeviceDesc {
     route: Option<AttachedWifiRoute>,
 }
 
+impl DeviceDesc {
+    fn body_id(&self) -> String {
+        if !self.serial.is_empty() {
+            return self.serial.clone();
+        }
+        if let Some(guid) = self.route.as_ref().and_then(|r| r.responder_guid) {
+            return format!("guid:{}", wifi::format_uuid(&guid));
+        }
+        self.device_id.clone()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LinkState {
     Offline,
@@ -1398,7 +1410,7 @@ fn camera_snapshot(
     if let Some(v) = text(&device.model) {
         out.insert("model".into(), v);
     }
-    if let Some(v) = text(&device.serial) {
+    if let Some(v) = text(&device.body_id()) {
         out.insert("bodyId".into(), v);
     }
     if let Some(v) = text(&device.firmware) {
@@ -1526,8 +1538,13 @@ struct DrainCtx {
 }
 
 impl DrainCtx {
-    fn open(&self, info: &ObjectInfo, kind: FileKind) -> io::Result<MemberSink> {
-        match self.try_open(info, kind) {
+    fn open(
+        &self,
+        info: &ObjectInfo,
+        kind: FileKind,
+        backfill: Option<&mut backfill::Backfill>,
+    ) -> io::Result<MemberSink> {
+        match self.try_open(info, kind, backfill) {
             Ok(sink) => Ok(sink),
             Err(e) => {
                 let message = e.message.clone();
@@ -1537,7 +1554,12 @@ impl DrainCtx {
         }
     }
 
-    fn try_open(&self, info: &ObjectInfo, kind: FileKind) -> TResult<MemberSink> {
+    fn try_open(
+        &self,
+        info: &ObjectInfo,
+        kind: FileKind,
+        backfill: Option<&mut backfill::Backfill>,
+    ) -> TResult<MemberSink> {
         let declared = (info.compressed_size != u32::MAX).then_some(info.compressed_size as u64);
         let free = transfer::free_space(&self.binding.root).ok();
         if let Some(free) = free {
@@ -1549,12 +1571,13 @@ impl DrainCtx {
             }
         }
         let name = object_name(info, kind);
-        let body = if self.device.serial.is_empty() {
-            self.device.model.clone()
-        } else {
-            self.device.serial.clone()
-        };
-        let (shot_key, object_key) = provider_keys(&body, &self.cohort, self.epoch, info, &name);
+        let (shot_key, object_key) = provider_keys(
+            &self.device.body_id(),
+            &self.cohort,
+            self.epoch,
+            info,
+            &name,
+        );
         let role = match kind {
             FileKind::Raw => Some(HostRole::Raw),
             FileKind::Jpeg => Some(HostRole::Jpeg),
@@ -1574,7 +1597,7 @@ impl DrainCtx {
                 shoot,
                 self.epoch,
                 request,
-                { "key": shot_key },
+                { "key": shot_key, "originalName": name },
                 roles,
                 camera_snapshot(&self.device, &self.snapshot, Some(info)),
             ]),
@@ -1603,21 +1626,22 @@ impl DrainCtx {
             name,
             declared,
         };
-        let fresh = matches!(plan.status.as_str(), "announced" | "receiving" | "held");
-        let sink = if fresh {
-            let path = transfer::stage_path(&self.binding.root, &plan.stage_rel)
-                .map_err(TetherError::from_transfer)?;
-            let limit = declared.unwrap_or(0).max(MAX_CAPTURE_BYTES);
-            let mut writer =
-                StageWriter::create(path, limit).map_err(TetherError::from_transfer)?;
-            // The camera may not send a photo twice; whatever arrived stays for recovery.
-            writer.keep_partial();
-            MemberSink::Stage(writer)
-        } else {
-            MemberSink::Discard
-        };
+        if let Some(job) = backfill {
+            job.claim_live_member(&plan.member_id);
+        }
+        let fresh = matches!(plan.status.as_str(), "announced" | "receiving" | "held")
+            && member["hasFile"] != true;
+        if !fresh {
+            return Ok(MemberSink::Discard);
+        }
+        let path = transfer::stage_path(&self.binding.root, &plan.stage_rel)
+            .map_err(TetherError::from_transfer)?;
+        let limit = declared.unwrap_or(0).max(MAX_CAPTURE_BYTES);
+        let mut writer = StageWriter::create(path, limit).map_err(TetherError::from_transfer)?;
+        // The camera may not send a photo twice; whatever arrived stays for recovery.
+        writer.keep_partial();
         *self.plan.borrow_mut() = Some(plan);
-        Ok(sink)
+        Ok(MemberSink::Stage(writer))
     }
 }
 
@@ -1655,7 +1679,7 @@ struct Actor {
     /// the card.
     test_shots: HashSet<(String, String, String)>,
     /// Test Shot releases, recorded before the shutter, whose photo may never have arrived.
-    test_releases: VecDeque<backfill::TestRelease>,
+    test_releases: Vec<backfill::TestRelease>,
     backfill: Option<backfill::Backfill>,
     backfill_due: Option<Instant>,
     backfill_pass: u64,
@@ -1706,7 +1730,7 @@ impl Actor {
             late_retry_at: now,
             cohorts: CaptureCohorts::default(),
             test_shots: HashSet::new(),
-            test_releases: VecDeque::new(),
+            test_releases: Vec::new(),
             backfill: None,
             backfill_due: None,
             backfill_pass: 0,
@@ -2855,7 +2879,7 @@ impl Actor {
                         ctx.request = None;
                     }
                     regular = Some(cohort);
-                    return ctx.open(info, kind);
+                    return ctx.open(info, kind, self.backfill.as_mut());
                 };
                 let TestDisposition { new_shot, discard } = disposition;
                 test_shot = capture_time(info).map(|t| (t, cohort.stem.clone()));
@@ -2880,9 +2904,11 @@ impl Actor {
             let orphan = session.transport_mut().take_orphan();
             if let Some((time, stem)) = test_shot {
                 self.test_shots.insert((body.clone(), time, stem));
-            }
-            if test.as_ref().is_some_and(|(_, d)| d.new_shot) {
-                backfill::resolve_test_release(&mut self.test_releases, &body);
+                if self.cohorts.pending_test.is_some()
+                    && test.as_ref().is_some_and(|(_, d)| d.new_shot)
+                {
+                    backfill::resolve_test_release(&mut self.test_releases, &body, self.epoch);
+                }
             }
             if let Some((cohort, TestDisposition { new_shot, discard })) = test {
                 match result {
@@ -3614,14 +3640,16 @@ fn auto_reconnect_enabled(settings: &Value) -> bool {
 /// same ImageCaptureCore device and model count.
 fn same_body(previous: &DeviceDesc, device_id: &str, model: &str, serial: &str) -> bool {
     if previous.serial.is_empty() {
-        previous.device_id == device_id && previous.model == model.trim()
+        serial.trim().is_empty()
+            && previous.device_id == device_id
+            && previous.model == model.trim()
     } else {
         previous.serial == serial.trim()
     }
 }
 
 /// Whether a reopened Wi-Fi camera is the one the shoot was using: the same PTP/IP responder
-/// GUID and model, and the same serial when both report one. An address alone proves nothing.
+/// GUID, model and reported serial. An address alone proves nothing.
 fn same_wifi_body(
     previous: &DeviceDesc,
     model: &str,
@@ -3633,7 +3661,7 @@ fn same_wifi_body(
         .route
         .as_ref()
         .is_some_and(|r| r.same_body(model, responder_guid))
-        && (previous.serial.is_empty() || serial.is_empty() || previous.serial == serial)
+        && previous.serial == serial
 }
 
 /// The device to reopen after a loss. Another Sony body is only a candidate when its serial
@@ -6808,6 +6836,13 @@ mod tests {
             model: "ILCE-7M3".into(),
             ..DeviceDesc::default()
         };
+        let snapshot = |d| camera_snapshot(d, &ExposureSnapshot::default(), None);
+        assert_eq!(snapshot(&anonymous)["bodyId"], "old");
+        let second = DeviceDesc {
+            device_id: "new".into(),
+            ..anonymous.clone()
+        };
+        assert_ne!(snapshot(&anonymous)["bodyId"], snapshot(&second)["bodyId"]);
         let other = [device("new", icc::SONY_USB_VENDOR)];
         assert_eq!(reconnect_target(&anonymous, &other), None);
         let back = [
@@ -6843,12 +6878,21 @@ mod tests {
             route: Some(route),
             ..DeviceDesc::default()
         };
+        assert_eq!(
+            camera_snapshot(&previous, &ExposureSnapshot::default(), None)["bodyId"],
+            format!("guid:{}", wifi::format_uuid(&guid))
+        );
         assert!(same_wifi_body(&previous, "ILCE-7CM2 ", "", Some(guid)));
         assert!(!same_wifi_body(&previous, "ILCE-7CM2", "", Some([8; 16])));
         let with_serial = DeviceDesc {
             serial: "0001".into(),
             ..previous.clone()
         };
+        assert_eq!(
+            camera_snapshot(&with_serial, &ExposureSnapshot::default(), None)["bodyId"],
+            "0001"
+        );
+        assert!(!same_wifi_body(&with_serial, "ILCE-7CM2", "", Some(guid)));
         assert!(!same_wifi_body(
             &with_serial,
             "ILCE-7CM2",

@@ -19,7 +19,6 @@ const PUBLISH_BACKLOG: usize = 4;
 const SHUTTER_GRACE: Duration = Duration::from_secs(4);
 /// Card objects planned per Node call.
 const PLAN_BATCH: usize = 128;
-const TEST_RELEASES: usize = 64;
 
 const EMPTY: &str = "The card shows no photos over this connection. It may be empty, or the camera may keep its files hidden in PC Remote mode.";
 
@@ -34,7 +33,7 @@ pub(super) enum BackfillOp {
 pub(super) struct TestRelease {
     body: String,
     at_ms: u64,
-    resolved: bool,
+    epoch: u64,
 }
 
 pub(super) struct Backfill {
@@ -50,6 +49,7 @@ pub(super) struct Backfill {
     already: usize,
     /// Frames left on the card as possible Test Shots.
     held: usize,
+    deferred: usize,
     /// Capture times, as `YYYY:MM:DD hh:mm:ss`, of files on the computer or journaled on their way.
     settled: Vec<String>,
     /// The earliest capture time a later pass must read again.
@@ -79,8 +79,15 @@ enum Phase {
 /// Node's answer for the group being pulled: a member per file to read, or why there is none.
 struct Prepared {
     group: usize,
-    plans: Vec<Option<MemberPlan>>,
-    deferred: Vec<bool>,
+    members: Vec<PreparedMember>,
+}
+
+#[derive(Clone)]
+enum PreparedMember {
+    Read(MemberPlan),
+    Present,
+    Deferred,
+    ClaimedLive(String),
 }
 
 struct Reading {
@@ -89,11 +96,33 @@ struct Reading {
     plan: MemberPlan,
     read: CardRead,
     writer: StageWriter,
-    timeout: Duration,
     started: Instant,
 }
 
 impl Backfill {
+    /// Release the stage path before live delivery opens it, then recheck the journal on the card's turn.
+    pub(super) fn claim_live_member(&mut self, member_id: &str) {
+        let Phase::Pulling {
+            prepared: Some(prepared),
+            reading,
+            ..
+        } = &mut self.phase
+        else {
+            return;
+        };
+        for member in &mut prepared.members {
+            if matches!(member, PreparedMember::Read(plan) if plan.member_id == member_id) {
+                *member = PreparedMember::ClaimedLive(member_id.to_owned());
+            }
+        }
+        if reading
+            .as_ref()
+            .is_some_and(|r| r.plan.member_id == member_id)
+        {
+            *reading = None;
+        }
+    }
+
     fn note_unsettled(&mut self, object: &CardObject) {
         match capture_time(&object.info) {
             Some(t) if self.unsettled.as_ref().map_or(true, |u| t < *u) => self.unsettled = Some(t),
@@ -177,9 +206,15 @@ fn batch_end(objects: &[CardObject], start: usize) -> usize {
 }
 
 /// A Test Shot's photo arrived, so its card frame is known by capture time and name instead.
-pub(super) fn resolve_test_release(releases: &mut VecDeque<TestRelease>, body: &str) {
-    if let Some(release) = releases.iter_mut().find(|r| !r.resolved && r.body == body) {
-        release.resolved = true;
+pub(super) fn resolve_test_release(releases: &mut Vec<TestRelease>, body: &str, epoch: u64) {
+    let mut candidates = releases
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.body == body && r.epoch == epoch);
+    if let Some((index, _)) = candidates.next() {
+        if candidates.next().is_none() {
+            releases.remove(index);
+        }
     }
 }
 
@@ -274,6 +309,7 @@ impl Actor {
             truncated: false,
             already: 0,
             held: 0,
+            deferred: 0,
             settled: Vec::new(),
             unsettled: None,
             blind: false,
@@ -297,23 +333,20 @@ impl Actor {
     }
 
     pub(super) fn record_test_release(&mut self) {
-        if self.test_releases.len() == TEST_RELEASES {
-            self.test_releases.pop_front();
-        }
-        self.test_releases.push_back(TestRelease {
+        self.test_releases.push(TestRelease {
             body: self.body_identity(),
             at_ms: unix_ms(),
-            resolved: false,
+            epoch: self.epoch,
         });
     }
 
     pub(super) fn withdraw_test_release(&mut self) {
-        self.test_releases.pop_back();
+        self.test_releases.pop();
     }
 
     pub(super) fn body_identity(&self) -> String {
         let device = self.device.clone().unwrap_or_default();
-        format!("{}\0{}", device.model, device.serial)
+        format!("{}\0{}", device.model, device.body_id())
     }
 
     fn card_camera(&self) -> Value {
@@ -412,7 +445,7 @@ impl Actor {
             }
         };
         match step {
-            Ok(ScanStep::Yield) => self.backfill = Some(job),
+            Ok(ScanStep::Yield | ScanStep::Busy) => self.backfill = Some(job),
             Ok(ScanStep::Working) => {
                 self.card_busy = true;
                 if job.last_emit.elapsed() >= Duration::from_millis(300) {
@@ -444,7 +477,7 @@ impl Actor {
                 let releases = self
                     .test_releases
                     .iter()
-                    .filter(|r| !r.resolved && r.body == job.body)
+                    .filter(|r| r.body == job.body)
                     .map(|r| r.at_ms)
                     .collect();
                 job.phase = Phase::Planning {
@@ -534,13 +567,6 @@ impl Actor {
             .flatten()
             .filter_map(Value::as_str)
             .collect();
-        let consumed: Vec<u64> = planned["consumed"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_u64)
-            .collect();
-        releases.retain(|at| !consumed.contains(at));
         let mut settled = Vec::new();
         let mut open = Vec::new();
         for (i, object) in batch.iter().enumerate() {
@@ -554,6 +580,7 @@ impl Actor {
         *next = end;
         let finished = end == objects.len();
         job.already += planned["present"].as_u64().unwrap_or(0) as usize;
+        job.deferred += planned["deferred"].as_u64().unwrap_or(0) as usize;
         job.held += planned["held"].as_u64().unwrap_or(0) as usize;
         for object in &settled {
             job.record(object, Outcome::Present);
@@ -607,8 +634,8 @@ impl Actor {
         };
         self.card_busy = true;
         if prepared.as_ref().map(|p| p.group) != Some(group) {
-            match self.prepare_card_group(&binding, group, &groups[group]) {
-                Ok(p) => *prepared = Some(p),
+            match self.prepare_card_group(&binding, &groups[group], None) {
+                Ok(members) => *prepared = Some(Prepared { group, members }),
                 Err(e) => {
                     crate::logs::write(&format!(
                         "tether backfill prepare {}: {}",
@@ -626,30 +653,32 @@ impl Actor {
             }
         }
         let object = groups[group][item].clone();
-        let (plan, deferred) = prepared
-            .as_ref()
-            .map(|p| (p.plans[item].clone(), p.deferred[item]))
-            .unwrap_or((None, false));
-        let outcome = match plan {
-            Some(plan) if matches!(plan.status.as_str(), "announced" | "receiving") => {
-                match self.open_card_read(&binding, &object, plan) {
-                    Ok(Ok(read)) => {
-                        put_reading(&mut job, Reading { item, ..read });
-                        self.backfill = Some(job);
-                        return;
-                    }
-                    Ok(Err(outcome)) => outcome,
-                    Err(message) => {
-                        job.note_unsettled(&object);
-                        if let Phase::Pulling { queue, .. } = &mut job.phase {
-                            queue.advance(Outcome::Failed);
-                        }
-                        return self.finish_backfill_with(job, "error", Some(&message));
-                    }
-                }
+        let member = &mut prepared.as_mut().unwrap().members[item];
+        if let PreparedMember::ClaimedLive(member_id) = member {
+            match self.prepare_card_group(&binding, std::slice::from_ref(&object), Some(member_id))
+            {
+                Ok(mut refreshed) => *member = refreshed.remove(0),
+                Err(e) => return self.finish_backfill_with(job, "error", Some(&e.message)),
             }
-            _ if deferred => Outcome::Deferred,
-            _ => Outcome::Present,
+        }
+        let outcome = match member.clone() {
+            PreparedMember::Read(plan) => match self.open_card_read(&binding, &object, plan) {
+                Ok(Ok(read)) => {
+                    put_reading(&mut job, Reading { item, ..read });
+                    self.backfill = Some(job);
+                    return;
+                }
+                Ok(Err(outcome)) => outcome,
+                Err(message) => {
+                    job.note_unsettled(&object);
+                    if let Phase::Pulling { queue, .. } = &mut job.phase {
+                        queue.advance(Outcome::Failed);
+                    }
+                    return self.finish_backfill_with(job, "error", Some(&message));
+                }
+            },
+            PreparedMember::Deferred | PreparedMember::ClaimedLive(_) => Outcome::Deferred,
+            PreparedMember::Present => Outcome::Present,
         };
         self.advance(job, &object, outcome);
     }
@@ -690,17 +719,20 @@ impl Actor {
     fn prepare_card_group(
         &self,
         binding: &Binding,
-        group: usize,
         objects: &[CardObject],
-    ) -> TResult<Prepared> {
+        live_claim: Option<&str>,
+    ) -> TResult<Vec<PreparedMember>> {
+        let mut exclude = self.unready_members();
+        if let Some(member_id) = live_claim {
+            exclude.push(member_id.to_owned());
+        }
         let reply = node_blocking(
             &self.inner.app,
             "tether-backfill",
             json!([binding.shoot_id, "prepare", {
                 "camera": self.card_camera(),
-                "hostRoles": self.host_roles(),
                 "epoch": self.epoch,
-                "exclude": self.unready_members(),
+                "exclude": exclude,
                 "objects": objects.iter().map(card_object_json).collect::<Vec<_>>(),
             }]),
         )?;
@@ -716,15 +748,11 @@ impl Actor {
                 .collect()
         };
         let (members, deferred) = (names("members"), names("deferred"));
-        let mut prepared = Prepared {
-            group,
-            plans: Vec::with_capacity(objects.len()),
-            deferred: Vec::with_capacity(objects.len()),
-        };
+        let mut prepared = Vec::with_capacity(objects.len());
         for object in objects {
             let key = (object.storage_id as u64, object.handle as u64);
             let plan = match (members.get(&key), &exposure_id) {
-                (Some(m), Some(exposure_id)) => Some(MemberPlan {
+                (Some(m), Some(exposure_id)) => PreparedMember::Read(MemberPlan {
                     exposure_id: exposure_id.clone(),
                     member_id: str_field(m, "memberId")?,
                     stage_rel: str_field(m, "stageRelPath")?,
@@ -732,10 +760,10 @@ impl Actor {
                     name: str_field(m, "originalName")?,
                     declared: m["declaredBytes"].as_u64(),
                 }),
-                _ => None,
+                _ if deferred.contains_key(&key) => PreparedMember::Deferred,
+                _ => PreparedMember::Present,
             };
-            prepared.plans.push(plan);
-            prepared.deferred.push(deferred.contains_key(&key));
+            prepared.push(plan);
         }
         Ok(prepared)
     }
@@ -753,8 +781,16 @@ impl Actor {
             journal_issue(&app, shoot, &plan.member_id, &e);
             Outcome::Failed
         };
+        let Some(session) = self.session.as_ref() else {
+            return Ok(Err(Outcome::Deferred));
+        };
+        let read = match CardRead::new(session, object, MAX_CAPTURE_BYTES) {
+            Ok(read) => read,
+            Err(message) => return Ok(Err(failed(TetherError::new("UNSUPPORTED", message)))),
+        };
+        let declared = object.info.compressed_size as u64;
         if let Ok(free) = transfer::free_space(&binding.root) {
-            if !transfer::has_room(free, plan.declared.unwrap_or(DEFAULT_OBJECT_BUDGET)) {
+            if !transfer::has_room(free, declared) {
                 let e = TetherError::new(
                     "NO_SPACE",
                     "The capture disk is almost full. Free space or choose another folder; the photo stays on the card.",
@@ -763,17 +799,8 @@ impl Actor {
                 return Err(e.message);
             }
         }
-        let Some(session) = self.session.as_ref() else {
-            return Ok(Err(Outcome::Deferred));
-        };
-        let read = match CardRead::new(session, object, MAX_CAPTURE_BYTES) {
-            Ok(read) => read,
-            Err(message) => return Ok(Err(failed(TetherError::new("UNSUPPORTED", message)))),
-        };
-        let wifi = self.device.as_ref().is_some_and(|d| d.wifi);
-        let declared = object.info.compressed_size as u64;
         let writer = transfer::stage_path(&binding.root, &plan.stage_rel)
-            .and_then(|path| StageWriter::create(path, declared.max(MAX_CAPTURE_BYTES)));
+            .and_then(|path| StageWriter::create(path, declared));
         match writer {
             Ok(writer) => Ok(Ok(Reading {
                 item: 0,
@@ -781,7 +808,6 @@ impl Actor {
                 plan,
                 read,
                 writer,
-                timeout: card::whole_read_timeout(declared, wifi),
                 started: Instant::now(),
             })),
             Err(e) => Ok(Err(failed(TetherError::from_transfer(e)))),
@@ -797,9 +823,7 @@ impl Actor {
         // An orphan left by any other transaction is not this file; the card keeps its own.
         drop(session.transport_mut().take_orphan());
         self.inner.receiving.fetch_add(1, Ordering::SeqCst);
-        let step = reading
-            .read
-            .step(session, &mut reading.writer, reading.timeout);
+        let step = reading.read.step(session, &mut reading.writer);
         self.inner.receiving.fetch_sub(1, Ordering::SeqCst);
         drop(session.transport_mut().take_orphan());
         let object = reading.object.clone();
@@ -811,7 +835,7 @@ impl Actor {
             Outcome::Failed
         };
         let outcome = match step {
-            Ok(ReadStep::Yield) => {
+            Ok(ReadStep::Yield | ReadStep::Busy) => {
                 put_reading(&mut job, reading);
                 self.backfill = Some(job);
                 return;
@@ -946,7 +970,7 @@ impl Actor {
                 crate::logs::write(&format!("tether backfill synced {}: {}", e.code, e.message));
             }
         }
-        if job.listed == 0 {
+        if job.listed == 0 && !job.blind {
             self.emit_backfill(&job, "empty", Some(EMPTY));
         } else {
             self.emit_backfill(&job, "done", None);
@@ -976,8 +1000,8 @@ impl Actor {
             "INCOMPLETE",
             "Not read from the camera card yet; it stays there for the next pull.",
         );
-        for plan in prepared.plans[from..].iter().flatten() {
-            if matches!(plan.status.as_str(), "announced" | "receiving") {
+        for member in &prepared.members[from..] {
+            if let PreparedMember::Read(plan) = member {
                 journal_issue(&self.inner.app, shoot, &plan.member_id, &e);
             }
         }
@@ -1024,6 +1048,7 @@ impl Actor {
         payload["already"] = job.already.into();
         payload["held"] = job.held.into();
         payload["truncated"] = job.truncated.into();
+        payload["incomplete"] = job.blind.into();
         match &job.phase {
             Phase::Scanning(scan) => {
                 payload["scanned"] = scan.inspected.into();
@@ -1042,7 +1067,7 @@ impl Actor {
                 payload["shots"] = queue.shots.into();
                 payload["pulled"] = queue.pulled.into();
                 payload["failed"] = queue.failed.into();
-                payload["deferred"] = queue.deferred.into();
+                payload["deferred"] = (job.deferred + queue.deferred).into();
                 payload["present"] = queue.present.into();
             }
         }
