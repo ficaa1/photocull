@@ -298,7 +298,7 @@
         this.issues.set(this.issueKey(issue), issue); this.renderIssues();
       });
     }
-    issueKey(issue) { return `${issue.exposureId || ''}:${issue.memberId || ''}:${issue.code}`; }
+    issueKey(issue) { return `${issue.exposureId || issue.keepId || ''}:${issue.memberId || ''}:${issue.code}`; }
 
     receiveDelta(delta) {
       if (!this.shoot || delta.shootId && delta.shootId !== this.shoot.shootId || delta.session !== this.host.session()?.id) return;
@@ -819,6 +819,7 @@
       if (authMode === 'ssh' && (!username || !password)) { status.textContent = 'Enter the username and password shown in Access Authen. Info.'; (username ? $('tether-wifi-password') : $('tether-wifi-user')).focus(); return; }
       if (!this.api.canTether || this.wifi.busy) return;
       this.wifi.busy = true; status.textContent = authMode === 'plain' ? 'Connecting… approve PhotoCull on the camera if it asks.' : 'Connecting…'; this.renderWifi();
+      const open = this.openSeq;
       try {
         const result = await this.api.tetherAddWifi({ address, authMode, ...(authMode === 'ssh' ? { username, password } : {}), ...(acceptFingerprint ? { acceptFingerprint } : {}) });
         this.wifi.pending = null; this.clearSecret();
@@ -826,7 +827,8 @@
         else { try { this.camera.devices = (await this.api.tetherDevices()).devices || this.camera.devices; } catch {} }
         if (!this.shoot) { status.textContent = 'Camera added. Start a tethered session to connect.'; return; }
         const addedId = result?.deviceId || result?.device?.deviceId;
-        if (addedId) await this.connect(addedId, this.carriedExpect(addedId));
+        // A sign-in begun before the shoot was stopped or changed never connects the later one.
+        if (addedId && this.openSeq === open) await this.connect(addedId, this.carriedExpect(addedId));
         if (this.connected()) { status.textContent = ''; this.toggleWifiForm(false); }
         else status.textContent = this.camera.reason || 'Camera added. Choose it above to connect.';
       } catch (error) {
@@ -1129,7 +1131,7 @@
         else if (pending && !camera && usb.length === 1 && available.length === 1) await this.connect(usb[0].deviceId);
         else if (pending && camera && available.length && !this.connected()) this.camera.reason = `The ${camera.model || 'camera'} this shoot used was not found. Choose a camera to continue.`;
         else if (available.length > 1 && !this.connected()) this.camera.reason = 'Several cameras found. Choose one above.';
-      } catch (error) { this.camera.state = 'offline'; this.camera.reason = error.message; }
+      } catch (error) { if (this.openSeq === open) { this.camera.state = 'offline'; this.camera.reason = error.message; } }
       this.render();
     }
     async connect(deviceId, expect = null) {

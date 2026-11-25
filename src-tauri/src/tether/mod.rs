@@ -2668,7 +2668,7 @@ impl Actor {
                 tauri::async_runtime::block_on(keep_composition(&self.inner, &binding, &promotion))
             {
                 let issue = json!({
-                    "v": 1, "shootId": binding.shoot_id, "session": binding.session, "code": e.code,
+                    "v": 1, "shootId": binding.shoot_id, "session": binding.session, "code": e.code, "keepId": format!("keep:{}", promotion.seq),
                     "message": format!("Keeping test shot {}: {}", promotion.seq, e.message), "retryable": e.retryable, "actions": [],
                 });
                 emit(&self.inner.app, "tether-issue", issue.clone());
@@ -4835,18 +4835,20 @@ fn layout_root(root: &Path, layout: &str) -> PathBuf {
 }
 
 /// Validates a destination root: a real folder, accepted by `check` before anything is written,
-/// whose staging area accepts exclusive publication. Returns the root and the identity `check`
-/// approved; a folder replaced meanwhile is refused before and after staging is created.
+/// whose staging area accepts exclusive publication. Returns the root, its identity (the one
+/// `check` approved where this platform reads none) and whether the staging folder is new; a
+/// folder replaced meanwhile is refused before and after staging is created.
 fn preflight_root(
     path: &Path,
-    check: impl FnOnce(&Path) -> TResult<()>,
-) -> TResult<(PathBuf, Option<String>)> {
+    check: impl FnOnce(&Path) -> TResult<Option<String>>,
+) -> TResult<(PathBuf, Option<String>, bool)> {
     let root = dunce::canonicalize(path)
         .map_err(|_| TetherError::new("DEST_CHANGED", "The capture folder is not available."))?;
     transfer::resolve_dir(&root, "").map_err(TetherError::from_transfer)?;
     let identity = transfer::dir_identity(&root);
-    check(&root)?;
+    let approved = check(&root)?;
     same_root(&root, &identity)?;
+    let fresh_stage = !root.join(transfer::STAGE_DIR).exists();
     let stage = transfer::stage_dir(&root).map_err(TetherError::from_transfer)?;
     same_root(&root, &identity)?;
     let token = transfer::hex(&transfer::Sha256::digest(
@@ -4869,7 +4871,7 @@ fn preflight_root(
     let _ = std::fs::remove_file(&probe);
     let _ = std::fs::remove_file(&published);
     result?;
-    Ok((root, identity))
+    Ok((root, identity.or(approved), fresh_stage))
 }
 
 /// Refuses a root that is no longer the folder first resolved at this path.
@@ -4965,13 +4967,13 @@ pub async fn tether_open(
                         "tether-check-destination",
                         json!([root.to_string_lossy(), folder_id]),
                     )
-                    .map(|_| ())
+                    .map(|checked| checked["folderId"].as_str().map(String::from))
                 })
             })
             .await?;
-            let (root, identity) = root;
+            let (root, identity, fresh_stage) = root;
             let identity = identity.map(|id| json!({ "folderId": id }));
-            let bound = node(
+            let bound = match node(
                 &app,
                 "tether-bind",
                 json!([
@@ -4983,7 +4985,17 @@ pub async fn tether_open(
                     resume
                 ]),
             )
-            .await?;
+            .await
+            {
+                Ok(bound) => bound,
+                Err(e) => {
+                    // Only an empty staging folder this open created is removed.
+                    if fresh_stage {
+                        let _ = std::fs::remove_dir(root.join(transfer::STAGE_DIR));
+                    }
+                    return Err(e);
+                }
+            };
             let shoot_id = str_field(&bound, "shootId")?;
             let attached = match bound["session"]["id"].as_str() {
                 Some(session_id) => {
@@ -7102,8 +7114,10 @@ mod tests {
         });
         assert_eq!(refused.unwrap_err().code, "UNSUPPORTED");
         assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
-        let (accepted, _) = preflight_root(&root, |_| Ok(())).unwrap();
-        assert!(accepted.join(transfer::STAGE_DIR).is_dir());
+        let (accepted, _, fresh) = preflight_root(&root, |_| Ok(None)).unwrap();
+        assert!(fresh && accepted.join(transfer::STAGE_DIR).is_dir());
+        let (_, identity, fresh) = preflight_root(&root, |_| Ok(Some("7:9".into()))).unwrap();
+        assert!(!fresh && identity.is_some());
         std::fs::remove_dir_all(&root).unwrap();
     }
 
@@ -7116,7 +7130,7 @@ mod tests {
         let replaced = preflight_root(&root, |checked| {
             std::fs::rename(checked, &moved).unwrap();
             std::fs::create_dir(checked).unwrap();
-            Ok(())
+            Ok(None)
         });
         assert_eq!(replaced.unwrap_err().code, "DEST_CHANGED");
         assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);

@@ -284,7 +284,7 @@ class TetherService {
     if (await this.isCard(root)) fail('UNSUPPORTED', 'Camera cards cannot be tether destinations. Choose a folder on this computer.');
     // Each await is a chance for the folder to be replaced; nothing is created in a replacement.
     const unchanged = async () => {
-      const now = await fs.realpath(root).catch(() => null) === root && await fs.stat(root).catch(() => null);
+      const now = await fs.realpath(root).catch(() => null) === root ? await fs.stat(root).catch(() => null) : null;
       if (!now?.isDirectory() || `${now.dev}:${now.ino}` !== folderId) fail('DEST_CHANGED', 'The capture folder was moved or replaced while tethering started. Choose it again.');
     };
     await unchanged();
@@ -323,12 +323,15 @@ class TetherService {
       ? this.library.publicSession(current) : await this.library.openEmptyOrExisting(libraryRoot, scope);
     const bound = await this.tx(shoot.shootId, async (draft, events) => {
       const s = draft.shoot;
+      await unchanged();
+      const library = this.library.get(opened.id), now = await fs.lstat(libraryRoot).catch(() => null);
+      if (library.folder !== libraryRoot || library.folderId !== (now && `${now.dev}:${now.ino}`)) fail('DEST_CHANGED', 'The capture folder was moved or replaced while tethering started. Choose it again.');
       Object.assign(s, { session: opened.id, recursive: scope, closedAt: null });
+      if (s.activeRelDir || s.recentRelDirs.some(r => r.relative)) s.usedShotFolders = true;
       if (!s.recursive && s.activeRelDir) s.activeRelDir = '';
       const identity = await this.directoryIdentity(s, s.activeRelDir).catch(() => null);
       // A shot folder removed or replaced while the shoot was stopped falls back to the capture folder itself.
       if (s.activeRelDir && identity !== s.activeDirId) {
-        s.droppedShotDir = s.activeRelDir;
         s.recentRelDirs = s.recentRelDirs.filter(r => r.relative !== s.activeRelDir);
         s.activeRelDir = '';
         s.activeDirId = await this.directoryIdentity(s, '').catch(() => null);
@@ -351,7 +354,7 @@ class TetherService {
     if (!stat?.isDirectory()) fail('DEST_CHANGED', 'Choose a capture folder.');
     if (folderId !== null && `${stat.dev}:${stat.ino}` !== folderId) fail('DEST_CHANGED', `${root} was moved, renamed or deleted. Start a new session instead.`);
     if (await this.isCard(canonical)) fail('UNSUPPORTED', 'Camera cards cannot be tether destinations. Choose a folder on this computer.');
-    return { canonicalRoot: canonical };
+    return { canonicalRoot: canonical, folderId: `${stat.dev}:${stat.ino}` };
   }
 
   // Rust has already created and verified the folder; this records it for the next acceptance.
@@ -363,6 +366,7 @@ class TetherService {
       if (relative && !shoot.recursive) fail('UNSUPPORTED', 'Include shot subfolders before shooting into a subfolder.', { field: 'relative' });
       const identity = await this.directoryIdentity(shoot, relative);
       if (directoryIdentity !== null && directoryIdentity !== identity) fail('DEST_CHANGED', 'The capture folder changed. Choose it again.', { field: 'relative' });
+      if (relative) shoot.usedShotFolders = true;
       shoot.recentRelDirs = [{ relative, identity }, ...shoot.recentRelDirs.filter(r => r.identity !== identity && r.relative !== relative)].slice(0, 12);
       if (activate !== false) { shoot.activeRelDir = relative; shoot.activeDirId = identity; }
       shoot.configRev++;
@@ -556,8 +560,9 @@ class TetherService {
       const connection = Number.isSafeInteger(epoch) ? epoch : 0;
       const existing = key && Object.values(ledger.exposures).find(e => e.providerShotKey === key && (e.epoch === connection || (!!snapshot.captureTime && e.captureTime === snapshot.captureTime)));
       if (existing) return { ...receipt(existing), boundRequestId: null };
-      // A Keep recorded without its folder may have been for a shot folder that has since gone.
-      if (providerExposure?.staged !== undefined && !providerExposure.target && shoot.droppedShotDir) fail('DEST_CHANGED', `This test shot was kept before its shot folder was recorded, and “${shoot.droppedShotDir}” is gone. It is not saved anywhere else.`, { retryable: false });
+      // A Keep recorded without its folder cannot be placed once the shoot has used shot folders.
+      const usedShotFolders = shoot.usedShotFolders || !!shoot.activeRelDir || shoot.recentRelDirs.some(r => r.relative);
+      if (providerExposure?.staged !== undefined && !providerExposure.target && usedShotFolders) fail('DEST_CHANGED', 'This test shot was kept before PhotoCull recorded its folder, and this shoot uses shot folders, so where it belongs is unknown. It is not saved anywhere else.', { retryable: false });
       const target = providerExposure?.target ? await this.keptTarget(shoot, providerExposure.target) : { relative: shoot.activeRelDir, dirId: shoot.activeDirId };
       const staged = providerExposure?.staged;
       const kept = staged === undefined ? [] : await this.verifiedKeep(ledger, key, requestId, hostRoles, staged);

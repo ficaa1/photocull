@@ -40,8 +40,8 @@ function simulateCamera() {
         if (T.replay) {
           T.shoot.libraryRev = libraryRev + 1;
           T.emit('tether-library-delta', { shootId: resume, session, rev: T.shoot.libraryRev, firstArrival: true, ordinal: 99, itemId: state.session.items[0].id, upserts: [{ ...state.session.items[0], exposureId: 'E99', ordinal: 99 }] });
-          issues.push({ v: 1, shootId: resume, session, code: 'DEST_CHANGED', message: 'Keeping test shot 3: Blue was moved, renamed or deleted after the test shot was kept.', retryable: false, actions: [] });
-          T.emit('tether-issue', issues[0]);
+          for (const seq of [3, 4]) issues.push({ v: 1, shootId: resume, session, code: 'DEST_CHANGED', keepId: `keep:${seq}`, message: `Keeping test shot ${seq}: Blue was moved, renamed or deleted after the test shot was kept.`, retryable: false, actions: [] });
+          for (const issue of issues) T.emit('tether-issue', issue);
         }
         return { shootId: resume, configRev: T.shoot.configRev, libraryRev, issues };
       }
@@ -54,6 +54,7 @@ function simulateCamera() {
       library: { ...state.session, items: state.session.items.map((item, n) => n === 0 ? { ...item, exposureId: 'E99', ordinal: 99 } : item) } }),
     tetherAddWifi: async ({ address }) => {
       log('addWifi', address);
+      if (T.holdAddWifi) await new Promise(resolve => { T.finishAddWifi = resolve; });
       for (const d of T.devices || []) if (d.address === address) d.needsCredentials = false;
       return { deviceId: `wifi:${address}` };
     },
@@ -63,8 +64,9 @@ function simulateCamera() {
     tetherPrimary: async (shootId, session, input) => { log('primary', input.seq); await wait(120); log('primary-ack', input.seq); return { acceptedSeq: input.seq, sourceId: input.id }; },
     // Like the shell: only a camera with an open link is busy, and a resumed shoot's body is verified after opening.
     tetherDevices: async () => {
-      const devices = (T.devices || [{ deviceId: 'usb-1', model: 'ILCE-7M3', transport: 'usb-icc' }]).map(d => ({ ...d, availability: d.deviceId === T.attached ? 'connected' : 'available' }));
+      const fails = T.failDevices, devices = (T.devices || [{ deviceId: 'usb-1', model: 'ILCE-7M3', transport: 'usb-icc' }]).map(d => ({ ...d, availability: d.deviceId === T.attached ? 'connected' : 'available' }));
       if (T.holdDevices) await new Promise(resolve => { (T.finishDevices ||= []).push(resolve); });
+      if (fails) throw Object.assign(new Error('Camera discovery failed.'), { code: 'IO_ERROR' });
       return { devices };
     },
     tetherConnect: async (shootId, deviceId, expect = null) => {
@@ -818,6 +820,28 @@ async function main() {
     await page.locator('#tether-wifi-cancel').click();
     check('Resume: a Wi-Fi camera that asks for sign-in is still checked against the shoot\'s body');
 
+    // A sign-in begun before Stop never connects the shoot once it resumes.
+    await page.locator('#tether-stop').click(); await page.locator('#tether-resume').waitFor({ state: 'visible' });
+    await page.evaluate(async () => {
+      __camera.devices[0].needsCredentials = true; __camera.holdAddWifi = true;
+      __camera.stopped[0].camera = { deviceId: __camera.devices[0].deviceId, model: 'ILCE-7M3', transport: 'wifi-ptpip', bodyKey: 'b5'.repeat(16) };
+      await tether.loadRecent();
+    });
+    await clearCalls(); await page.locator('#tether-resume-last').click();
+    await page.locator('#tether-wifi-form').waitFor({ state: 'visible' });
+    await page.locator('#tether-wifi-user').fill('admin'); await page.locator('#tether-wifi-password').fill('secret');
+    await page.locator('#tether-wifi-connect').click();
+    await untilCall(c => c[0] === 'addWifi', 'held Wi-Fi sign-in');
+    await page.locator('#tether-stop').click(); await page.locator('#tether-resume').waitFor({ state: 'visible' });
+    await page.locator('#tether-resume-last').click();
+    await page.waitForFunction(() => tether.active() && !['discovering', 'connecting'].includes(tether.camera.state));
+    await page.evaluate(() => { __camera.holdAddWifi = false; __camera.finishAddWifi(); });
+    await page.waitForFunction(() => !tether.wifi.busy);
+    assert.deepEqual((await calls()).filter(c => c[0] === 'connect'), []);
+    assert.equal(await page.evaluate(() => tether.connected()), false);
+    if (await page.locator('#tether-wifi-form').isVisible()) await page.locator('#tether-wifi-cancel').click();
+    check('Resume: a Wi-Fi sign-in begun before Stop never connects the resumed shoot');
+
     // A discovery from before Stop never acts for the same shoot resumed again.
     await page.locator('#tether-stop').click(); await page.locator('#tether-resume').waitFor({ state: 'visible' });
     await page.evaluate(() => { __camera.devices = null; __camera.holdDevices = true; });
@@ -837,8 +861,25 @@ async function main() {
     await page.locator('#tether-resume-last').click();
     await page.waitForFunction(() => tether.active() && tether.connected());
     await page.waitForFunction(() => state.session.items[0].ordinal === 99);
-    assert.match(await page.locator('#tether-issues').textContent(), /Keeping test shot 3: Blue was moved/);
+    const problems = await page.locator('#tether-issues').textContent();
+    assert.match(problems, /Keeping test shot 3: Blue was moved/); assert.match(problems, /Keeping test shot 4: Blue was moved/);
     check('Resume: photos and Keep problems from replayed Keeps reach the resumed shoot');
+
+    // A discovery from before Stop that fails never marks the resumed shoot's camera offline.
+    await page.locator('#tether-stop').click(); await page.locator('#tether-resume').waitFor({ state: 'visible' });
+    await page.evaluate(() => { __camera.replay = false; __camera.holdDevices = true; __camera.failDevices = true; });
+    await page.locator('#tether-resume-last').click();
+    await page.waitForFunction(() => tether.active() && __camera.finishDevices.length === 1);
+    await page.locator('#tether-stop').click(); await page.locator('#tether-resume').waitFor({ state: 'visible' });
+    await page.evaluate(() => { __camera.failDevices = false; });
+    await page.locator('#tether-resume-last').click();
+    await page.waitForFunction(() => tether.active() && __camera.finishDevices.length === 2);
+    await page.evaluate(() => { __camera.holdDevices = false; __camera.finishDevices[1](); });
+    await page.waitForFunction(() => tether.connected());
+    await page.evaluate(async () => { __camera.finishDevices.splice(0)[0](); await new Promise(resolve => setTimeout(resolve, 100)); });
+    const [connected, reason] = await page.evaluate(() => [tether.connected(), tether.camera.reason]);
+    assert.equal(connected, true); assert.doesNotMatch(reason, /discovery failed/);
+    check('Resume: a failed discovery begun before Stop leaves the resumed camera connected');
 
     assert.equal(errors.length, 0, errors.join('\n'));
     console.log(JSON.stringify({ passed: true, checks, errors }, null, 2));

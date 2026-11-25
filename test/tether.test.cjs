@@ -779,7 +779,26 @@ test('a capture folder replaced while it is checked gets no layout folders', asy
   assert.equal(ctx.service.active(), false);
 });
 
-test('a Keep recorded without its folder waits once its shot folder has gone', async t => {
+for (const [what, layout, replaced, swap] of [
+  ['capture folder replaced', 'single', ctx => ctx.root, folder => fs.mkdir(folder)],
+  ['session layout\'s Capture folder replaced', 'session', ctx => path.join(ctx.root, 'Capture'), folder => fs.mkdir(folder)],
+  ['capture folder replaced by a link to itself', 'session', ctx => ctx.root, folder => fs.symlink(folder + ' moved', folder)],
+]) test(`a ${what} while its Library opens leaves no shoot running`, async t => {
+  const ctx = await setup(t);
+  const open = ctx.library.openEmptyOrExisting.bind(ctx.library);
+  ctx.library.openEmptyOrExisting = async (...args) => {
+    const opened = await open(...args), folder = replaced(ctx);
+    await fs.rename(folder, folder + ' moved'); await swap(folder);
+    return opened;
+  };
+  await assert.rejects(ctx.bind(layout, true), e => e.code === 'DEST_CHANGED');
+  assert.equal(ctx.service.active(), false);
+});
+
+for (const [when, leaveBlue] of [
+  ['its shot folder has gone', ctx => fs.rm(path.join(ctx.root, 'Blue'), { recursive: true })],
+  ['the photographer went back to the capture folder', ctx => ctx.service.setLocation(ctx.shootId, 2, '')],
+]) test(`a Keep recorded without its folder waits once ${when}`, async t => {
   const ctx = await setup(t);
   await ctx.bind('single', true);
   await fs.mkdir(path.join(ctx.root, 'Blue'));
@@ -788,18 +807,19 @@ test('a Keep recorded without its folder waits once its shot folder has gone', a
   const member = { memberId: sha(key + ':raw'), originalName: 'DSC00004.ARW', bytes: content.length, sha256: sha(content) };
   const stage = path.join(ctx.root, '.photocull-tether', member.memberId + '.part');
   await fs.mkdir(path.dirname(stage), { recursive: true }); await fs.writeFile(stage, content);
+  await leaveBlue(ctx);
   await ctx.service.journal(ctx.shootId, 'close');
-  await fs.rm(path.join(ctx.root, 'Blue'), { recursive: true });
   await ctx.service.bind(ctx.root, null, 'single', true, null, ctx.shootId);
   const keep = () => ctx.service.accept(ctx.shootId, 2, null, { key, staged: [member] }, ['raw'], { model: 'ILCE-7M3', bodyId: 'studio' });
-  await assert.rejects(keep(), e => e.code === 'DEST_CHANGED' && e.detail.retryable === false && e.message.includes('Blue'));
+  await assert.rejects(keep(), e => e.code === 'DEST_CHANGED' && e.detail.retryable === false && e.message.includes('shot folders'));
   // Still held after another restart, when nothing falls back any more.
   await ctx.service.journal(ctx.shootId, 'close');
   await ctx.open();
   await ctx.bind('single', true);
   await assert.rejects(keep(), e => e.code === 'DEST_CHANGED');
   assert.equal((await ctx.state()).counters.next, 1);
-  assert.deepEqual((await fs.readdir(ctx.root)).sort(), ['.photocull-tether']);
+  const files = (await fs.readdir(ctx.root, { recursive: true })).filter(name => !name.startsWith('.photocull-tether'));
+  assert.deepEqual(files, files.includes('Blue') ? ['Blue'] : []);
 });
 
 test('a bind whose journal cannot be saved leaves no shoot running', async t => {
@@ -1149,7 +1169,8 @@ test('choosing a camera card as the destination is refused before anything is wr
   await assert.rejects(ctx.service.bind(card, null, 'session'), e => e.code === 'UNSUPPORTED');
   assert.deepEqual(await fs.readdir(card), ['DCIM']);
   await fs.symlink(ctx.root, path.join(ctx.base, 'link'));
-  assert.deepEqual(await ctx.service.checkDestination(path.join(ctx.base, 'link')), { canonicalRoot: ctx.root });
+  const root = await fs.stat(ctx.root);
+  assert.deepEqual(await ctx.service.checkDestination(path.join(ctx.base, 'link')), { canonicalRoot: ctx.root, folderId: `${root.dev}:${root.ino}` });
   assert.deepEqual(await fs.readdir(ctx.root), []);
   await assert.rejects(ctx.service.checkDestination('relative'), e => e.code === 'DEST_CHANGED');
 });
