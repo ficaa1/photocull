@@ -2381,7 +2381,6 @@ impl Actor {
             let _ = session.close();
         }
         self.half_press_since = None;
-        self.late_claims.clear();
     }
 
     fn disconnect(&mut self) {
@@ -2424,7 +2423,6 @@ impl Actor {
             let _ = session.close();
         }
         self.half_press_since = None;
-        self.late_claims.clear();
         // The photos may still arrive after a reconnect and bind then; nobody waits meanwhile.
         for (id, _) in self.pending.clone() {
             self.inner.confirmations.lock().unwrap().remove(&id);
@@ -3197,9 +3195,8 @@ impl Actor {
                 }
             }
         }
-        let epoch = self.epoch;
         self.late_claims
-            .retain(|_, c| c.epoch == epoch && c.created_at.elapsed() < LATE_CLAIM_TTL);
+            .retain(|_, c| c.created_at.elapsed() < LATE_CLAIM_TTL);
     }
 
     /// Durable first: the payload is on disk before any journal or publication step.
