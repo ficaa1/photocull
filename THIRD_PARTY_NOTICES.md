@@ -184,9 +184,11 @@ Metadata captured with `cargo metadata --locked --format-version 1`; reviewed li
 | combine | 4.6.9 | MIT | https://github.com/Marwes/combine |
 | concurrent-queue | 2.5.0 | Apache-2.0 OR MIT | https://github.com/smol-rs/concurrent-queue |
 | const-oid | 0.9.6 | Apache-2.0 OR MIT | https://github.com/RustCrypto/formats/tree/master/const-oid |
+| constant_time_eq | 0.6.2 | CC0-1.0 OR MIT-0 OR Apache-2.0 | https://codeberg.org/cesarb/constant_time_eq |
 | cookie | 0.18.2 | MIT OR Apache-2.0 | https://github.com/SergioBenitez/cookie-rs |
 | core-foundation-sys | 0.8.7 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs |
 | core-foundation | 0.10.1 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs |
+| core-foundation | 0.9.4 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs |
 | core-graphics-types | 0.2.0 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs |
 | core-graphics | 0.25.0 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs |
 | cpufeatures | 0.2.17 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
@@ -254,6 +256,7 @@ Metadata captured with `cargo metadata --locked --format-version 1`; reviewed li
 | ff | 0.13.1 | MIT/Apache-2.0 | https://github.com/zkcrypto/ff |
 | fiat-crypto | 0.2.9 | MIT OR Apache-2.0 OR BSD-1-Clause | https://github.com/mit-plv/fiat-crypto |
 | field-offset | 0.3.6 | MIT OR Apache-2.0 | https://github.com/Diggsey/rust-field-offset |
+| filetime | 0.2.30 | MIT/Apache-2.0 | https://github.com/alexcrichton/filetime |
 | find-msvc-tools | 0.1.15 | MIT OR Apache-2.0 | https://github.com/rust-lang/cc-rs |
 | flate2 | 1.1.10 | MIT OR Apache-2.0 | https://github.com/rust-lang/flate2-rs |
 | fnv | 1.0.7 | Apache-2.0 / MIT | https://github.com/servo/rust-fnv |
@@ -314,6 +317,7 @@ Metadata captured with `cargo metadata --locked --format-version 1`; reviewed li
 | http-body | 1.1.0 | MIT | https://github.com/hyperium/http-body |
 | http | 1.5.0 | MIT OR Apache-2.0 | https://github.com/hyperium/http |
 | httparse | 1.10.1 | MIT OR Apache-2.0 | https://github.com/seanmonstar/httparse |
+| hyper-rustls | 0.27.10 | Apache-2.0 OR ISC OR MIT | https://github.com/rustls/hyper-rustls |
 | hyper-util | 0.1.21 | MIT | https://github.com/hyperium/hyper-util |
 | hyper | 1.12.0 | MIT | https://github.com/hyperium/hyper |
 | iana-time-zone-haiku | 0.1.2 | MIT OR Apache-2.0 | https://github.com/strawlab/iana-time-zone |
@@ -350,10 +354,12 @@ Metadata captured with `cargo metadata --locked --format-version 1`; reviewed li
 | jiff-tzdb | 0.1.9 | Unlicense OR MIT | https://github.com/BurntSushi/jiff |
 | jiff | 0.2.39 | Unlicense OR MIT | https://github.com/BurntSushi/jiff |
 | jixel | 0.3.4 | BSD-3-Clause OR Apache-2.0 | https://github.com/awxkee/jixel |
+| jni-macros | 0.22.4 | MIT OR Apache-2.0 | https://github.com/jni-rs/jni-rs |
 | jni-sys-macros | 0.4.1 | MIT OR Apache-2.0 | https://github.com/jni-rs/jni-sys |
 | jni-sys | 0.3.1 | MIT OR Apache-2.0 | https://github.com/jni-rs/jni-sys |
 | jni-sys | 0.4.1 | MIT OR Apache-2.0 | https://github.com/jni-rs/jni-sys |
 | jni | 0.21.1 | MIT/Apache-2.0 | https://github.com/jni-rs/jni-rs |
+| jni | 0.22.4 | MIT OR Apache-2.0 | https://github.com/jni-rs/jni-rs |
 | jobserver | 0.1.35 | MIT OR Apache-2.0 | https://github.com/rust-lang/jobserver-rs |
 | jpeg-decoder | 0.3.2 | MIT OR Apache-2.0 | https://github.com/image-rs/jpeg-decoder |
 | jpeg-encoder | 0.7.1 | (MIT OR Apache-2.0) AND IJG | https://github.com/vstroebel/jpeg-encoder |
@@ -420,6 +426,7 @@ Metadata captured with `cargo metadata --locked --format-version 1`; reviewed li
 | memchr | 2.8.3 | Unlicense OR MIT | https://github.com/BurntSushi/memchr |
 | memoffset | 0.9.1 | MIT | https://github.com/Gilnaa/memoffset |
 | mime | 0.3.17 | MIT OR Apache-2.0 | https://github.com/hyperium/mime |
+| minisign-verify | 0.3.0 | MIT | https://github.com/jedisct1/rust-minisign-verify |
 | miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 | https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide |
 | miniz_oxide | 0.9.1 | MIT OR Zlib OR Apache-2.0 | https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide |
 | mio | 1.2.4 | MIT | https://github.com/tokio-rs/mio |
@@ -433,6 +440,7 @@ Metadata captured with `cargo metadata --locked --format-version 1`; reviewed li
 | ndk-sys | 0.6.0+11769913 | MIT OR Apache-2.0 | https://github.com/rust-mobile/ndk |
 | ndk | 0.9.0 | MIT OR Apache-2.0 | https://github.com/rust-mobile/ndk |
 | new_debug_unreachable | 1.0.6 | MIT | https://github.com/mbrubeck/rust-debug-unreachable |
+| nix | 0.32.0 | MIT | https://github.com/nix-rust/nix |
 | no_std_io2 | 0.9.4 | Apache-2.0 OR MIT | https://github.com/wcampbell0x2a/no-std-io2 |
 | nom | 8.0.0 | MIT | https://github.com/rust-bakery/nom |
 | noop_proc_macro | 0.3.0 | MIT | https://github.com/lu-zero/noop_proc_macro |
@@ -460,6 +468,7 @@ Metadata captured with `cargo metadata --locked --format-version 1`; reviewed li
 | objc2-foundation | 0.3.2 | MIT | https://github.com/madsmtm/objc2 |
 | objc2-io-surface | 0.3.2 | Zlib OR Apache-2.0 OR MIT | https://github.com/madsmtm/objc2 |
 | objc2-metal | 0.3.2 | Zlib OR Apache-2.0 OR MIT | https://github.com/madsmtm/objc2 |
+| objc2-osa-kit | 0.3.2 | Zlib OR Apache-2.0 OR MIT | https://github.com/madsmtm/objc2 |
 | objc2-quartz-core | 0.3.2 | Zlib OR Apache-2.0 OR MIT | https://github.com/madsmtm/objc2 |
 | objc2-ui-kit | 0.3.2 | Zlib OR Apache-2.0 OR MIT | https://github.com/madsmtm/objc2 |
 | objc2-user-notifications | 0.3.2 | Zlib OR Apache-2.0 OR MIT | https://github.com/madsmtm/objc2 |
@@ -468,9 +477,11 @@ Metadata captured with `cargo metadata --locked --format-version 1`; reviewed li
 | once_cell | 1.21.4 | MIT OR Apache-2.0 | https://github.com/matklad/once_cell |
 | opaque-debug | 0.3.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | open | 5.4.5 | MIT | https://github.com/Byron/open-rs |
+| openssl-probe | 0.2.2 | MIT OR Apache-2.0 | https://github.com/rustls/openssl-probe |
 | option-ext | 0.2.0 | MPL-2.0 | https://github.com/soc/option-ext.git |
 | ordered-float | 5.5.1 | MIT | https://github.com/reem/rust-ordered-float |
 | ordered-stream | 0.2.0 | MIT OR Apache-2.0 | https://github.com/danieldg/ordered-stream |
+| osakit | 0.3.1 | MIT OR Apache-2.0 | https://github.com/mdevils/rust-osakit |
 | owned_ttf_parser | 0.25.1 | Apache-2.0 | https://github.com/alexheretic/owned-ttf-parser |
 | p256 | 0.13.2 | Apache-2.0 OR MIT | https://github.com/RustCrypto/elliptic-curves/tree/master/p256 |
 | p384 | 0.13.1 | Apache-2.0 OR MIT | https://github.com/RustCrypto/elliptic-curves/tree/master/p384 |
@@ -556,19 +567,25 @@ Metadata captured with `cargo metadata --locked --format-version 1`; reviewed li
 | rustc-hash | 1.1.0 | Apache-2.0/MIT | https://github.com/rust-lang-nursery/rustc-hash |
 | rustc-hash | 2.1.3 | Apache-2.0 OR MIT | https://github.com/rust-lang/rustc-hash |
 | rustix | 1.1.6 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/rustix |
+| rustls-native-certs | 0.8.5 | Apache-2.0 OR ISC OR MIT | https://github.com/rustls/rustls-native-certs |
 | rustls-pki-types | 1.15.1 | MIT OR Apache-2.0 | https://github.com/rustls/pki-types |
+| rustls-platform-verifier-android | 0.2.0 | MIT OR Apache-2.0 | https://github.com/rustls/rustls-platform-verifier |
+| rustls-platform-verifier | 0.7.1 | MIT OR Apache-2.0 | https://github.com/rustls/rustls-platform-verifier |
 | rustls-rustcrypto | 0.0.2-alpha | MIT OR Apache-2.0 | https://github.com/RustCrypto/rustls-rustcrypto |
 | rustls-webpki | 0.102.8 | ISC | https://github.com/rustls/webpki |
 | rustls-webpki | 0.103.16 | ISC | https://github.com/rustls/webpki |
 | rustls | 0.23.46 | Apache-2.0 OR ISC OR MIT | https://github.com/rustls/rustls |
 | rustversion | 1.0.23 | MIT OR Apache-2.0 | https://github.com/dtolnay/rustversion |
 | same-file | 1.0.6 | Unlicense/MIT | https://github.com/BurntSushi/same-file |
+| schannel | 0.1.30 | MIT | https://github.com/steffengy/schannel-rs |
 | schemars_derive | 0.8.22 | MIT | https://github.com/GREsau/schemars |
 | schemars | 0.8.22 | MIT | https://github.com/GREsau/schemars |
 | schemars | 0.9.0 | MIT | https://github.com/GREsau/schemars |
 | schemars | 1.2.3 | MIT | https://github.com/GREsau/schemars |
 | scopeguard | 1.2.0 | MIT OR Apache-2.0 | https://github.com/bluss/scopeguard |
 | sec1 | 0.7.3 | Apache-2.0 OR MIT | https://github.com/RustCrypto/formats/tree/master/sec1 |
+| security-framework-sys | 2.17.0 | MIT OR Apache-2.0 | https://github.com/kornelski/rust-security-framework |
+| security-framework | 3.7.0 | MIT OR Apache-2.0 | https://github.com/kornelski/rust-security-framework |
 | selectors | 0.38.0 | MPL-2.0 | https://github.com/servo/stylo |
 | semver | 1.0.28 | MIT OR Apache-2.0 | https://github.com/dtolnay/semver |
 | serde_core | 1.0.229 | MIT OR Apache-2.0 | https://github.com/serde-rs/serde |
@@ -589,8 +606,10 @@ Metadata captured with `cargo metadata --locked --format-version 1`; reviewed li
 | shlex | 2.0.1 | MIT OR Apache-2.0 | https://github.com/comex/rust-shlex |
 | signal-hook-registry | 1.4.8 | MIT OR Apache-2.0 | https://github.com/vorner/signal-hook |
 | signature | 2.2.0 | Apache-2.0 OR MIT | https://github.com/RustCrypto/traits/tree/master/signature |
+| simd_cesu8 | 1.2.0 | Apache-2.0 OR MIT | https://github.com/seancroach/simd_cesu8 |
 | simd_helpers | 0.1.0 | MIT | https://github.com/lu-zero/simd_helpers |
 | simd-adler32 | 0.3.10 | MIT | https://github.com/mcountryman/simd-adler32 |
+| simdutf8 | 0.1.5 | MIT OR Apache-2.0 | https://github.com/rusticstuff/simdutf8 |
 | siphasher | 1.0.4 | MIT OR Apache-2.0 | https://github.com/jedisct1/rust-siphash |
 | slab | 0.4.12 | MIT | https://github.com/tokio-rs/slab |
 | smallvec | 1.16.4 | MIT OR Apache-2.0 | https://github.com/servo/rust-smallvec |
@@ -614,9 +633,12 @@ Metadata captured with `cargo metadata --locked --format-version 1`; reviewed li
 | syn | 3.0.9 | MIT OR Apache-2.0 | https://github.com/dtolnay/syn |
 | sync_wrapper | 1.0.2 | Apache-2.0 | https://github.com/Actyx/sync_wrapper |
 | synstructure | 0.14.0 | MIT | https://github.com/mystor/synstructure |
+| system-configuration-sys | 0.6.0 | MIT OR Apache-2.0 | https://github.com/mullvad/system-configuration-rs |
+| system-configuration | 0.7.0 | MIT OR Apache-2.0 | https://github.com/mullvad/system-configuration-rs |
 | system-deps | 6.2.2 | MIT OR Apache-2.0 | https://github.com/gdesmott/system-deps |
 | tao-macros | 0.1.4 | MIT OR Apache-2.0 | https://github.com/tauri-apps/tao |
 | tao | 0.37.2 | Apache-2.0 | https://github.com/tauri-apps/tao |
+| tar | 0.4.46 | MIT OR Apache-2.0 | https://github.com/composefs/tar-rs |
 | target-lexicon | 0.12.16 | Apache-2.0 WITH LLVM-exception | https://github.com/bytecodealliance/target-lexicon |
 | tauri-build | 2.7.4 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | tauri-codegen | 2.7.4 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
@@ -624,6 +646,7 @@ Metadata captured with `cargo metadata --locked --format-version 1`; reviewed li
 | tauri-plugin-dialog | 2.8.4 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
 | tauri-plugin-fs | 2.7.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
 | tauri-plugin-opener | 2.7.2 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
+| tauri-plugin-updater | 2.14.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
 | tauri-plugin | 2.7.2 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | tauri-runtime-wry | 2.12.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | tauri-runtime | 2.12.2 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
@@ -642,6 +665,7 @@ Metadata captured with `cargo metadata --locked --format-version 1`; reviewed li
 | time | 0.3.55 | MIT OR Apache-2.0 | https://github.com/time-rs/time |
 | tinystr | 0.8.5 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | tinyvec | 1.13.3 | Zlib OR Apache-2.0 OR MIT | https://github.com/Lokathor/tinyvec |
+| tokio-rustls | 0.26.6 | MIT OR Apache-2.0 | https://github.com/rustls/tokio-rustls |
 | tokio-util | 0.7.20 | MIT | https://github.com/tokio-rs/tokio |
 | tokio | 1.54.1 | MIT | https://github.com/tokio-rs/tokio |
 | toml_datetime | 0.6.3 | MIT OR Apache-2.0 | https://github.com/toml-rs/toml |
@@ -664,6 +688,7 @@ Metadata captured with `cargo metadata --locked --format-version 1`; reviewed li
 | tray-icon | 0.25.1 | MIT OR Apache-2.0 | https://github.com/tauri-apps/tray-icon |
 | try-lock | 0.2.5 | MIT | https://github.com/seanmonstar/try-lock |
 | ttf-parser | 0.25.1 | MIT OR Apache-2.0 | https://github.com/harfbuzz/ttf-parser |
+| typed-path | 0.13.0 | MIT OR Apache-2.0 | https://github.com/chipsenkbeil/typed-path |
 | typeid | 1.0.3 | MIT OR Apache-2.0 | https://github.com/dtolnay/typeid |
 | typenum | 1.20.1 | MIT OR Apache-2.0 | https://github.com/paholg/typenum |
 | uds_windows | 1.2.1 | MIT | https://github.com/haraldh/rust_uds_windows |
@@ -700,6 +725,7 @@ Metadata captured with `cargo metadata --locked --format-version 1`; reviewed li
 | webkit2gtk-sys | 2.0.2 | MIT | https://github.com/tauri-apps/webkit2gtk-rs |
 | webkit2gtk | 2.0.2 | MIT | https://github.com/tauri-apps/webkit2gtk-rs |
 | webp | 0.3.1 | MIT OR Apache-2.0 | https://github.com/jaredforth/webp.git |
+| webpki-root-certs | 1.0.12 | CDLA-Permissive-2.0 | https://github.com/rustls/webpki-roots |
 | webpki-roots | 1.0.11 | CDLA-Permissive-2.0 | https://github.com/rustls/webpki-roots |
 | webview2-com-macros | 0.8.1 | MIT | https://github.com/wravery/webview2-rs |
 | webview2-com-sys | 0.39.1 | MIT | https://github.com/wravery/webview2-rs |
@@ -739,6 +765,7 @@ Metadata captured with `cargo metadata --locked --format-version 1`; reviewed li
 | windows-interface | 0.59.3 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-link | 0.2.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-numerics | 0.3.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
+| windows-registry | 0.6.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-result | 0.4.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-strings | 0.5.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-sys | 0.45.0 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
@@ -758,6 +785,7 @@ Metadata captured with `cargo metadata --locked --format-version 1`; reviewed li
 | x11-dl | 2.21.0 | MIT | https://github.com/AltF02/x11-rs.git |
 | x11 | 2.21.0 | MIT | https://github.com/AltF02/x11-rs.git |
 | x25519-dalek | 2.0.1 | BSD-3-Clause | https://github.com/dalek-cryptography/curve25519-dalek/tree/main/x25519-dalek |
+| xattr | 1.7.0 | MIT OR Apache-2.0 | https://github.com/Stebalien/xattr |
 | y4m | 0.8.0 | MIT | https://github.com/image-rs/y4m.git |
 | yoke-derive | 0.8.4 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | yoke | 0.8.4 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
@@ -774,6 +802,7 @@ Metadata captured with `cargo metadata --locked --format-version 1`; reviewed li
 | zerotrie | 0.2.5 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | zerovec-derive | 0.11.7 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | zerovec | 0.11.9 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
+| zip | 9.8.2 | MIT | https://github.com/zip-rs/zip2 |
 | zlib-rs | 0.6.8 | Zlib | https://github.com/trifectatechfoundation/zlib-rs |
 | zmij | 1.0.23 | MIT | https://github.com/dtolnay/zmij |
 | zune-core | 0.5.3 | MIT OR Apache-2.0 OR Zlib | https://github.com/etemesi254/zune-image |
@@ -828,6 +857,36 @@ Exact binaries from the locked npm tarball; license archive retained intact. Som
 | exiftool_files/perl.exe | Artistic-1.0-Perl OR GPL-1.0-or-later (Perl/XS); inspect component-specific notices | 4d61ebe19311dbf7b9710ac2c6c402e3cba3e23b63e8b82be88e471343bed52d |
 
 ## Bundled Rust license texts
+
+### system-configuration-sys 0.6.0, system-configuration 0.7.0
+
+```text
+Copyright (c) 2024 Mullvad VPN AB
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
 
 ### fiat-crypto 0.2.9
 
@@ -2179,7 +2238,7 @@ NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### tauri-plugin-dialog 2.8.4, tauri-plugin-fs 2.7.1, tauri-plugin-opener 2.7.2
+### simdutf8 0.1.5, tauri-plugin-dialog 2.8.4, tauri-plugin-fs 2.7.1, tauri-plugin-opener 2.7.2, tauri-plugin-updater 2.14.1
 
 ```text
 Apache License
@@ -3218,6 +3277,30 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
+### simdutf8 0.1.5
+
+```text
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ### schemars_derive 0.8.22, schemars 0.8.22, schemars 0.9.0, schemars 1.2.3
 
 ```text
@@ -3304,6 +3387,32 @@ SOFTWARE.
 
 ```text
 Copyright (c) 2023 Steve Fan, ctz
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### rustls-platform-verifier-android 0.2.0, rustls-platform-verifier 0.7.1
+
+```text
+MIT License
+
+Copyright (c) 2022 1Password
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -4073,7 +4182,7 @@ notice may not be copied, modified, or distributed except
 according to those terms.
 ```
 
-### adler2 2.0.1, allocator-api2 0.2.21, anyhow 1.0.104, async-channel 2.5.0, async-executor 1.14.1, async-io 2.6.0, async-lock 3.5.0, async-process 2.5.0, async-signal 0.2.14, async-task 4.7.1, async-trait 0.1.92, atomic-waker 1.1.2, blocking 1.7.0, camino 1.2.6, cargo_metadata 0.19.2, cargo-platform 0.1.9, concurrent-queue 2.5.0, curve25519-dalek-derive 0.1.1, displaydoc 0.2.7, dtoa 1.0.11, dyn-clone 1.0.20, endi 1.1.1, erased-serde 0.4.11, event-listener-strategy 0.5.4, event-listener 5.4.2, fastrand 2.5.0, futures-lite 2.6.1, group 0.13.0, hermit-abi 0.5.3, itoa 1.0.18, jxl-bitstream 1.1.0, jxl-coding 1.0.1, jxl-color 0.11.0, jxl-frame 0.13.3, jxl-grid 0.6.2, jxl-image 0.13.0, jxl-jbr 0.2.1, jxl-modular 0.11.3, jxl-oxide-common 1.0.0, jxl-oxide 0.12.6, jxl-render 0.12.4, jxl-threadpool 1.0.0, jxl-vardct 0.11.1, lazy_static 1.5.1, linux-raw-sys 0.12.1, num_enum_derive 0.7.6, num_enum 0.7.6, once_cell 1.21.4, ordered-stream 0.2.0, parking 2.2.1, paste 1.0.15, pastey 0.1.1, pin-project-lite 0.2.17, piper 0.2.5, polling 3.11.0, portable-atomic-util 0.2.8, portable-atomic 1.15.0, proc-macro-crate 1.3.1, proc-macro-crate 2.0.2, proc-macro-crate 3.5.0, proc-macro2 1.0.107, quote 1.0.47, ref-cast-impl 1.0.27, ref-cast 1.0.27, rustc-hash 1.1.0, rustix 1.1.6, rustversion 1.0.23, selectors 0.38.0, semver 1.0.28, serde_core 1.0.229, serde_derive_internals 0.29.1, serde_derive 1.0.229, serde_json 1.0.154, serde_repr 0.1.21, serde-untagged 0.1.9, serde 1.0.229, servo_arc 0.4.3, syn 1.0.109, syn 2.0.119, syn 3.0.9, system-deps 6.2.2, thiserror-impl 1.0.69, thiserror-impl 2.0.21, thiserror 1.0.69, thiserror 2.0.21, typeid 1.0.3, unicode-ident 1.0.27, wasi 0.11.1+wasi-snapshot-preview1, wasip2 1.0.4+wasi-0.2.12, wasm-streams 0.5.0, wit-bindgen 0.57.1, x11-dl 2.21.0, x11 2.21.0, zmij 1.0.23, zvariant_utils 4.2.0
+### adler2 2.0.1, allocator-api2 0.2.21, anyhow 1.0.104, async-channel 2.5.0, async-executor 1.14.1, async-io 2.6.0, async-lock 3.5.0, async-process 2.5.0, async-signal 0.2.14, async-task 4.7.1, async-trait 0.1.92, atomic-waker 1.1.2, blocking 1.7.0, camino 1.2.6, cargo_metadata 0.19.2, cargo-platform 0.1.9, concurrent-queue 2.5.0, curve25519-dalek-derive 0.1.1, displaydoc 0.2.7, dtoa 1.0.11, dyn-clone 1.0.20, endi 1.1.1, erased-serde 0.4.11, event-listener-strategy 0.5.4, event-listener 5.4.2, fastrand 2.5.0, futures-lite 2.6.1, group 0.13.0, hermit-abi 0.5.3, itoa 1.0.18, jxl-bitstream 1.1.0, jxl-coding 1.0.1, jxl-color 0.11.0, jxl-frame 0.13.3, jxl-grid 0.6.2, jxl-image 0.13.0, jxl-jbr 0.2.1, jxl-modular 0.11.3, jxl-oxide-common 1.0.0, jxl-oxide 0.12.6, jxl-render 0.12.4, jxl-threadpool 1.0.0, jxl-vardct 0.11.1, lazy_static 1.5.1, linux-raw-sys 0.12.1, num_enum_derive 0.7.6, num_enum 0.7.6, once_cell 1.21.4, ordered-stream 0.2.0, parking 2.2.1, paste 1.0.15, pastey 0.1.1, pin-project-lite 0.2.17, piper 0.2.5, polling 3.11.0, portable-atomic-util 0.2.8, portable-atomic 1.15.0, proc-macro-crate 1.3.1, proc-macro-crate 2.0.2, proc-macro-crate 3.5.0, proc-macro2 1.0.107, quote 1.0.47, ref-cast-impl 1.0.27, ref-cast 1.0.27, rustc-hash 1.1.0, rustix 1.1.6, rustversion 1.0.23, selectors 0.38.0, semver 1.0.28, serde_core 1.0.229, serde_derive_internals 0.29.1, serde_derive 1.0.229, serde_json 1.0.154, serde_repr 0.1.21, serde-untagged 0.1.9, serde 1.0.229, servo_arc 0.4.3, simd_cesu8 1.2.0, syn 1.0.109, syn 2.0.119, syn 3.0.9, system-deps 6.2.2, thiserror-impl 1.0.69, thiserror-impl 2.0.21, thiserror 1.0.69, thiserror 2.0.21, typed-path 0.13.0, typeid 1.0.3, unicode-ident 1.0.27, wasi 0.11.1+wasi-snapshot-preview1, wasip2 1.0.4+wasi-0.2.12, wasm-streams 0.5.0, wit-bindgen 0.57.1, x11-dl 2.21.0, x11 2.21.0, zmij 1.0.23, zvariant_utils 4.2.0
 
 ```text
 Permission is hereby granted, free of charge, to any
@@ -6573,7 +6682,7 @@ is licensed under:
 at your option.
 ```
 
-### cc 1.11.0, cfg-if 1.0.5, find-msvc-tools 0.1.15, jobserver 0.1.35, js-sys 0.3.107, pkg-config 0.3.34, socket2 0.6.5, toml_datetime 0.6.3, wasm-bindgen-futures 0.4.80, wasm-bindgen-macro-support 0.2.130, wasm-bindgen-macro 0.2.130, wasm-bindgen-shared 0.2.130, wasm-bindgen 0.2.130, web-sys 0.3.107
+### cc 1.11.0, cfg-if 1.0.5, filetime 0.2.30, find-msvc-tools 0.1.15, jobserver 0.1.35, js-sys 0.3.107, openssl-probe 0.2.2, pkg-config 0.3.34, socket2 0.6.5, toml_datetime 0.6.3, wasm-bindgen-futures 0.4.80, wasm-bindgen-macro-support 0.2.130, wasm-bindgen-macro 0.2.130, wasm-bindgen-shared 0.2.130, wasm-bindgen 0.2.130, web-sys 0.3.107
 
 ```text
 Copyright (c) 2014 Alex Crichton
@@ -7737,6 +7846,70 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+### minisign-verify 0.3.0
+
+```text
+Copyright (c) 2019-2025 Frank Denis
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+--
+
+Code in the src/crypto folder is derived from the rust-crypto project:
+https://github.com/DaGenix/rust-crypto
+
+Original ISC license follows:
+
+Copyright (c) 2006-2009 Graydon Hoare
+Copyright (c) 2009-2013 Mozilla Foundation
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
 ### bs58 0.5.1
 
 ```text
@@ -8765,6 +8938,114 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ```
 
+### security-framework 3.7.0
+
+```text
+This project contains documentation adapted from Apple Inc.'s Security Framework
+under the following license:
+
+APPLE PUBLIC SOURCE LICENSE
+Version 2.0 -  August 6, 2003
+
+Please read this License carefully before downloading this software.  By downloading or using this software, you are agreeing to be bound by the terms of this License.  If you do not or cannot agree to the terms of this License, please do not download or use the software.
+
+Apple Note:  In January 2007, Apple changed its corporate name from "Apple Computer, Inc." to "Apple Inc."  This change has been reflected below and copyright years updated, but no other changes have been made to the APSL 2.0.
+
+1.  General; Definitions.  This License applies to any program or other work which Apple Inc. ("Apple") makes publicly available and which contains a notice placed by Apple identifying such program or work as "Original Code" and stating that it is subject to the terms of this Apple Public Source License version 2.0 ("License").  As used in this License:
+
+1.1  "Applicable Patent Rights" mean:  (a) in the case where Apple is the grantor of rights, (i) claims of patents that are now or hereafter acquired, owned by or assigned to Apple and (ii) that cover subject matter contained in the Original Code, but only to the extent necessary to use, reproduce and/or distribute the Original Code without infringement; and (b) in the case where You are the grantor of rights, (i) claims of patents that are now or hereafter acquired, owned by or assigned to You and (ii) that cover subject matter in Your Modifications, taken alone or in combination with Original Code.
+
+1.2 "Contributor" means any person or entity that creates or contributes to the creation of Modifications.
+
+1.3  "Covered Code" means the Original Code, Modifications, the combination of Original Code and any Modifications, and/or any respective portions thereof.
+
+1.4 "Externally Deploy" means: (a) to sublicense, distribute or otherwise make Covered Code available, directly or indirectly, to anyone other than You; and/or (b) to use Covered Code, alone or as part of a Larger Work, in any way to provide a service, including but not limited to delivery of content, through electronic communication with a client other than You.
+
+1.5 "Larger Work" means a work which combines Covered Code or portions thereof with code not governed by the terms of this License.
+
+1.6 "Modifications" mean any addition to, deletion from, and/or change to, the substance and/or structure of the Original Code, any previous Modifications, the combination of Original Code and any previous Modifications, and/or any respective portions thereof.  When code is released as a series of files, a Modification is:  (a) any addition to or deletion from the contents of a file containing Covered Code; and/or (b) any new file or other representation of computer program statements that contains any part of Covered Code. 
+
+1.7 "Original Code" means (a) the Source Code of a program or other work as originally made available by Apple under this License, including the Source Code of any updates or upgrades to such programs or works made available by Apple under this License, and that has been expressly identified by Apple as such in the header file(s) of such work; and (b) the object code compiled from such Source Code and originally made available by Apple under this License
+
+1.8 "Source Code" means the human readable form of a program or other work that is suitable for making modifications to it, including all modules it contains, plus any associated interface definition files, scripts used to control compilation and installation of an executable (object code).
+
+1.9 "You" or "Your" means an individual or a legal entity exercising rights under this License.  For legal entities, "You" or "Your" includes any entity which controls, is controlled by, or is under common control with, You, where "control" means (a) the power, direct or indirect, to cause the direction or management of such entity, whether by contract or otherwise, or (b) ownership of fifty percent (50%) or more of the outstanding shares or beneficial ownership of such entity.
+
+2.  Permitted Uses; Conditions & Restrictions.   Subject to the terms and conditions of this License, Apple hereby grants You, effective on the date You accept this License and download the Original Code, a world-wide, royalty-free, non-exclusive license, to the extent of Apple's Applicable Patent Rights and copyrights covering the Original Code, to do the following:
+
+2.1 Unmodified Code.  You may use, reproduce, display, perform, internally distribute within Your organization, and Externally Deploy verbatim, unmodified copies of the Original Code, for commercial or non-commercial purposes, provided that in each instance:
+
+(a) You must retain and reproduce in all copies of Original Code the copyright and other proprietary notices and disclaimers of Apple as they appear in the Original Code, and keep intact all notices in the Original Code that refer to this License; and
+
+(b)     You must include a copy of this License with every copy of Source Code of Covered Code and documentation You distribute or Externally Deploy, and You may not offer or impose any terms on such Source Code that alter or restrict this License or the recipients' rights hereunder, except as permitted under Section 6.
+
+2.2 Modified Code.  You may modify Covered Code and use, reproduce, display, perform, internally distribute within Your organization, and Externally Deploy Your Modifications and Covered Code, for commercial or non-commercial purposes, provided that in each instance You also meet all of these conditions:
+
+(a) You must satisfy all the conditions of Section 2.1 with respect to the Source Code of the Covered Code; 
+
+(b) You must duplicate, to the extent it does not already exist, the notice in Exhibit A in each file of the Source Code of all Your Modifications, and cause the modified files to carry prominent notices stating that You changed the files and the date of any change; and
+
+(c) If You Externally Deploy Your Modifications, You must make Source Code of all Your Externally Deployed Modifications either available to those to whom You have Externally Deployed Your Modifications, or publicly available.  Source Code of Your Externally Deployed Modifications must be released under the terms set forth in this License, including the license grants set forth in Section 3 below, for as long as you Externally Deploy the Covered Code or twelve (12) months from the date of initial External Deployment, whichever is longer. You should preferably distribute the Source Code of Your Externally Deployed Modifications electronically (e.g. download from a web site).
+
+2.3 Distribution of Executable Versions.  In addition, if You Externally Deploy Covered Code (Original Code and/or Modifications) in object code, executable form only, You must include a prominent notice, in the code itself as well as in related documentation, stating that Source Code of the Covered Code is available under the terms of this License with information on how and where to obtain such Source Code.  
+
+2.4 Third Party Rights.  You expressly acknowledge and agree that although Apple and each Contributor grants the licenses to their respective portions of the Covered Code set forth herein, no assurances are provided by Apple or any Contributor that the Covered Code does not infringe the patent or other intellectual property rights of any other entity. Apple and each Contributor disclaim any liability to You for claims brought by any other entity based on infringement of intellectual property rights or otherwise. As a condition to exercising the rights and licenses granted hereunder, You hereby assume sole responsibility to secure any other intellectual property rights needed, if any. For example, if a third party patent license is required to allow You to distribute the Covered Code, it is Your responsibility to acquire that license before distributing the Covered Code.
+
+3.  Your Grants.  In consideration of, and as a condition to, the licenses granted to You under this License, You hereby grant to any person or entity receiving or distributing Covered Code under this License a non-exclusive, royalty-free, perpetual, irrevocable license, under Your Applicable Patent Rights and other intellectual property rights (other than patent) owned or controlled by You, to use, reproduce, display, perform, modify, sublicense, distribute and Externally Deploy Your Modifications of the same scope and extent as Apple's licenses under Sections 2.1 and 2.2 above.  
+
+4.  Larger Works.  You may create a Larger Work by combining Covered Code with other code not governed by the terms of this License and distribute the Larger Work as a single product.  In each such instance, You must make sure the requirements of this License are fulfilled for the Covered Code or any portion thereof. 
+
+5.  Limitations on Patent License.   Except as expressly stated in Section 2, no other patent rights, express or implied, are granted by Apple herein.  Modifications and/or Larger Works may require additional patent licenses from Apple which Apple may grant in its sole discretion.  
+
+6.  Additional Terms.  You may choose to offer, and to charge a fee for, warranty, support, indemnity or liability obligations and/or other rights consistent with the scope of the license granted herein ("Additional Terms") to one or more recipients of Covered Code. However, You may do so only on Your own behalf and as Your sole responsibility, and not on behalf of Apple or any Contributor. You must obtain the recipient's agreement that any such Additional Terms are offered by You alone, and You hereby agree to indemnify, defend and hold Apple and every Contributor harmless for any liability incurred by or claims asserted against Apple or such Contributor by reason of any such Additional Terms. 
+
+7.  Versions of the License.  Apple may publish revised and/or new versions of this License from time to time.  Each version will be given a distinguishing version number.  Once Original Code has been published under a particular version of this License, You may continue to use it under the terms of that version. You may also choose to use such Original Code under the terms of any subsequent version of this License published by Apple.  No one other than Apple has the right to modify the terms applicable to Covered Code created under this License.  
+
+8.  NO WARRANTY OR SUPPORT.  The Covered Code may contain in whole or in part pre-release, untested, or not fully tested works.  The Covered Code may contain errors that could cause failures or loss of data, and may be incomplete or contain inaccuracies.  You expressly acknowledge and agree that use of the Covered Code, or any portion thereof, is at Your sole and entire risk.  THE COVERED CODE IS PROVIDED "AS IS" AND WITHOUT WARRANTY, UPGRADES OR SUPPORT OF ANY KIND AND APPLE AND APPLE'S LICENSOR(S) (COLLECTIVELY REFERRED TO AS "APPLE" FOR THE PURPOSES OF SECTIONS 8 AND 9) AND ALL CONTRIBUTORS EXPRESSLY DISCLAIM ALL WARRANTIES AND/OR CONDITIONS, EXPRESS OR IMPLIED, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES AND/OR CONDITIONS OF MERCHANTABILITY, OF SATISFACTORY QUALITY, OF FITNESS FOR A PARTICULAR PURPOSE, OF ACCURACY, OF QUIET ENJOYMENT, AND NONINFRINGEMENT OF THIRD PARTY RIGHTS.  APPLE AND EACH CONTRIBUTOR DOES NOT WARRANT AGAINST INTERFERENCE WITH YOUR ENJOYMENT OF THE COVERED CODE, THAT THE FUNCTIONS CONTAINED IN THE COVERED CODE WILL MEET YOUR REQUIREMENTS, THAT THE OPERATION OF THE COVERED CODE WILL BE UNINTERRUPTED OR ERROR-FREE, OR THAT DEFECTS IN THE COVERED CODE WILL BE CORRECTED.  NO ORAL OR WRITTEN INFORMATION OR ADVICE GIVEN BY APPLE, AN APPLE AUTHORIZED REPRESENTATIVE OR ANY CONTRIBUTOR SHALL CREATE A WARRANTY.  You acknowledge that the Covered Code is not intended for use in the operation of nuclear facilities, aircraft navigation, communication systems, or air traffic control machines in which case the failure of the Covered Code could lead to death, personal injury, or severe physical or environmental damage.
+
+9.  LIMITATION OF LIABILITY. TO THE EXTENT NOT PROHIBITED BY LAW, IN NO EVENT SHALL APPLE OR ANY CONTRIBUTOR BE LIABLE FOR ANY INCIDENTAL, SPECIAL, INDIRECT OR CONSEQUENTIAL DAMAGES ARISING OUT OF OR RELATING TO THIS LICENSE OR YOUR USE OR INABILITY TO USE THE COVERED CODE, OR ANY PORTION THEREOF, WHETHER UNDER A THEORY OF CONTRACT, WARRANTY, TORT (INCLUDING NEGLIGENCE), PRODUCTS LIABILITY OR OTHERWISE, EVEN IF APPLE OR SUCH CONTRIBUTOR HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES AND NOTWITHSTANDING THE FAILURE OF ESSENTIAL PURPOSE OF ANY REMEDY. SOME JURISDICTIONS DO NOT ALLOW THE LIMITATION OF LIABILITY OF INCIDENTAL OR CONSEQUENTIAL DAMAGES, SO THIS LIMITATION MAY NOT APPLY TO YOU. In no event shall Apple's total liability to You for all damages (other than as may be required by applicable law) under this License exceed the amount of fifty dollars ($50.00).
+
+10. Trademarks.  This License does not grant any rights to use the trademarks or trade names  "Apple", "Mac", "Mac OS", "QuickTime", "QuickTime Streaming Server" or any other trademarks, service marks, logos or trade names belonging to Apple (collectively "Apple Marks") or to any trademark, service mark, logo or trade name belonging to any Contributor.  You agree not to use any Apple Marks in or as part of the name of products derived from the Original Code or to endorse or promote products derived from the Original Code other than as expressly permitted by and in strict compliance at all times with Apple's third party trademark usage guidelines which are posted at http://www.apple.com/legal/guidelinesfor3rdparties.html.  
+
+11. Ownership. Subject to the licenses granted under this License, each Contributor retains all rights, title and interest in and to any Modifications made by such Contributor.  Apple retains all rights, title and interest in and to the Original Code and any Modifications made by or on behalf of Apple ("Apple Modifications"), and such Apple Modifications will not be automatically subject to this License.  Apple may, at its sole discretion, choose to license such Apple Modifications under this License, or on different terms from those contained in this License or may choose not to license them at all.  
+
+12. Termination.  
+
+12.1    Termination.  This License and the rights granted hereunder will terminate:
+
+(a) automatically without notice from Apple if You fail to comply with any term(s) of this License and fail to cure such breach within 30 days of becoming aware of such breach;
+(b) immediately in the event of the circumstances described in Section 13.5(b); or
+(c) automatically without notice from Apple if You, at any time during the term of this License, commence an action for patent infringement against Apple; provided that Apple did not first commence an action for patent infringement against You in that instance.
+
+12.2    Effect of Termination.  Upon termination, You agree to immediately stop any further use, reproduction, modification, sublicensing and distribution of the Covered Code.  All sublicenses to the Covered Code which have been properly granted prior to termination shall survive any termination of this License.  Provisions which, by their nature, should remain in effect beyond the termination of this License shall survive, including but not limited to Sections 3, 5, 8, 9, 10, 11, 12.2 and 13.  No party will be liable to any other for compensation, indemnity or damages of any sort solely as a result of terminating this License in accordance with its terms, and termination of this License will be without prejudice to any other right or remedy of any party.
+
+13.     Miscellaneous.
+
+13.1    Government End Users.   The Covered Code is a "commercial item" as defined in FAR 2.101.  Government software and technical data rights in the Covered Code include only those rights customarily provided to the public as defined in this License. This customary commercial license in technical data and software is provided in accordance with FAR 12.211 (Technical Data) and 12.212 (Computer Software) and, for Department of Defense purchases, DFAR 252.227-7015 (Technical Data -- Commercial Items) and 227.7202-3 (Rights in Commercial Computer Software or Computer Software Documentation).  Accordingly, all U.S. Government End Users acquire Covered Code with only those rights set forth herein.
+
+13.2    Relationship of Parties.  This License will not be construed as creating an agency, partnership, joint venture or any other form of legal association between or among You, Apple or any Contributor, and You will not represent to the contrary, whether expressly, by implication, appearance or otherwise.
+
+13.3    Independent Development.   Nothing in this License will impair Apple's right to acquire, license, develop, have others develop for it, market and/or distribute technology or products that perform the same or similar functions as, or otherwise compete with, Modifications, Larger Works, technology or products that You may develop, produce, market or distribute.
+
+13.4    Waiver; Construction.  Failure by Apple or any Contributor to enforce any provision of this License will not be deemed a waiver of future enforcement of that or any other provision.  Any law or regulation which provides that the language of a contract shall be construed against the drafter will not apply to this License.
+
+13.5    Severability.  (a) If for any reason a court of competent jurisdiction finds any provision of this License, or portion thereof, to be unenforceable, that provision of the License will be enforced to the maximum extent permissible so as to effect the economic benefits and intent of the parties, and the remainder of this License will continue in full force and effect.  (b) Notwithstanding the foregoing, if applicable law prohibits or restricts You from fully and/or specifically complying with Sections 2 and/or 3 or prevents the enforceability of either of those Sections, this License will immediately terminate and You must immediately discontinue any use of the Covered Code and destroy all copies of it that are in your possession or control.
+
+13.6    Dispute Resolution.  Any litigation or other dispute resolution between You and Apple relating to this License shall take place in the Northern District of California, and You and Apple hereby consent to the personal jurisdiction of, and venue in, the state and federal courts within that District with respect to this License. The application of the United Nations Convention on Contracts for the International Sale of Goods is expressly excluded.
+
+13.7    Entire Agreement; Governing Law.  This License constitutes the entire agreement between the parties with respect to the subject matter hereof.  This License shall be governed by the laws of the United States and the State of California, except that body of California law concerning conflicts of law. 
+
+Where You are located in the province of Quebec, Canada, the following clause applies:  The parties hereby confirm that they have requested that this License and all related documents be drafted in English.  Les parties ont exigé que le présent contrat et tous les documents connexes soient rédigés en anglais.
+
+EXHIBIT A. 
+
+"Portions Copyright (c) 1999-2007 Apple Inc.  All Rights Reserved.
+
+This file contains Original Code and/or Modifications of Original Code as defined in and that are subject to the Apple Public Source License Version 2.0 (the 'License').  You may not use this file except in compliance with the License.  Please obtain a copy of the License at http://www.opensource.apple.com/apsl/ and read it before using this file.
+
+The Original Code and all software distributed under the License are distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES, INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.  Please see the License for the specific language governing rights and limitations under the License."
+```
+
 ### getrandom 0.4.3
 
 ```text
@@ -9111,6 +9392,32 @@ DEALINGS IN THE SOFTWARE.
 The MIT License (MIT)
 
 Copyright (c) HeroicKatora 2020
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### zip 9.8.2
+
+```text
+The MIT License (MIT)
+
+Copyright (c) 2014 Mathijs van de Nes
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -10038,6 +10345,36 @@ PackageDownloadLocation: git+ssh://github.com/tauri-apps/tauri.git
 Creator: Person: Daniel Thompson-Yvetot
 ```
 
+### osakit 0.3.1
+
+```text
+Copyright (c) 2024 Marat Dulin
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
 ### tendril 0.5.1
 
 ```text
@@ -10120,7 +10457,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### core-foundation-sys 0.8.7, core-foundation 0.10.1, core-graphics-types 0.2.0, core-graphics 0.25.0, string_cache_codegen 0.6.1, string_cache 0.9.0
+### core-foundation-sys 0.8.7, core-foundation 0.10.1, core-foundation 0.9.4, core-graphics-types 0.2.0, core-graphics 0.25.0, string_cache_codegen 0.6.1, string_cache 0.9.0
 
 ```text
 Copyright (c) 2012-2013 Mozilla Foundation
@@ -10402,7 +10739,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### allocator-api2 0.2.21, anyhow 1.0.104, async-trait 0.1.92, dtoa 1.0.11, dyn-clone 1.0.20, erased-serde 0.4.11, itoa 1.0.18, jxl-bitstream 1.1.0, jxl-coding 1.0.1, jxl-color 0.11.0, jxl-frame 0.13.3, jxl-grid 0.6.2, jxl-image 0.13.0, jxl-jbr 0.2.1, jxl-modular 0.11.3, jxl-oxide-common 1.0.0, jxl-oxide 0.12.6, jxl-render 0.12.4, jxl-threadpool 1.0.0, jxl-vardct 0.11.1, libc 0.2.191, litrs 1.0.1, num_enum_derive 0.7.6, num_enum 0.7.6, paste 1.0.15, pastey 0.1.1, proc-macro2 1.0.107, quote 1.0.47, ref-cast-impl 1.0.27, ref-cast 1.0.27, rustversion 1.0.23, semver 1.0.28, serde_core 1.0.229, serde_derive_internals 0.29.1, serde_derive 1.0.229, serde_json 1.0.154, serde_repr 0.1.21, serde-untagged 0.1.9, serde 1.0.229, syn 2.0.119, syn 3.0.9, thiserror-impl 1.0.69, thiserror-impl 2.0.21, thiserror 1.0.69, thiserror 2.0.21, typeid 1.0.3, unicode-ident 1.0.27, wasm-streams 0.5.0
+### allocator-api2 0.2.21, anyhow 1.0.104, async-trait 0.1.92, constant_time_eq 0.6.2, dtoa 1.0.11, dyn-clone 1.0.20, erased-serde 0.4.11, itoa 1.0.18, jxl-bitstream 1.1.0, jxl-coding 1.0.1, jxl-color 0.11.0, jxl-frame 0.13.3, jxl-grid 0.6.2, jxl-image 0.13.0, jxl-jbr 0.2.1, jxl-modular 0.11.3, jxl-oxide-common 1.0.0, jxl-oxide 0.12.6, jxl-render 0.12.4, jxl-threadpool 1.0.0, jxl-vardct 0.11.1, libc 0.2.191, litrs 1.0.1, num_enum_derive 0.7.6, num_enum 0.7.6, osakit 0.3.1, paste 1.0.15, pastey 0.1.1, proc-macro2 1.0.107, quote 1.0.47, ref-cast-impl 1.0.27, ref-cast 1.0.27, rustversion 1.0.23, semver 1.0.28, serde_core 1.0.229, serde_derive_internals 0.29.1, serde_derive 1.0.229, serde_json 1.0.154, serde_repr 0.1.21, serde-untagged 0.1.9, serde 1.0.229, syn 2.0.119, syn 3.0.9, thiserror-impl 1.0.69, thiserror-impl 2.0.21, thiserror 1.0.69, thiserror 2.0.21, typed-path 0.13.0, typeid 1.0.3, unicode-ident 1.0.27, wasm-streams 0.5.0
 
 ```text
 Apache License
@@ -11137,6 +11474,32 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
 
   This Source Code Form is "Incompatible With Secondary Licenses", as
   defined by the Mozilla Public License, v. 2.0.
+```
+
+### nix 0.32.0
+
+```text
+The MIT License (MIT)
+
+Copyright (c) 2015 Carl Lerche + nix-rust Authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
 ```
 
 ### enumflags2_derive 0.7.12
@@ -12255,7 +12618,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ```
 
-### rustls 0.23.46
+### hyper-rustls 0.27.10, rustls-native-certs 0.8.5, rustls 0.23.46
 
 ```text
 Copyright (c) 2016 Joseph Birr-Pixton <jpixton@gmail.com>
@@ -13407,7 +13770,7 @@ PackageDownloadLocation: git+ssh://github.com/tauri-apps/window-vibrancy.git
 Creator: Person: Daniel Thompson-Yvetot
 ```
 
-### rustls 0.23.46
+### hyper-rustls 0.27.10, rustls-native-certs 0.8.5, rustls 0.23.46
 
 ```text
 ISC License (ISC)
@@ -13486,7 +13849,7 @@ OTHER DEALINGS IN THE SOFTWARE.
 For more information, please refer to <http://unlicense.org/>
 ```
 
-### block2 0.6.2, dispatch2 0.3.1, objc2-app-kit 0.3.2, objc2-cloud-kit 0.3.2, objc2-core-data 0.3.2, objc2-core-foundation 0.3.2, objc2-core-graphics 0.3.2, objc2-core-image 0.3.2, objc2-core-location 0.3.2, objc2-core-text 0.3.2, objc2-encode 4.1.0, objc2-exception-helper 0.1.1, objc2-foundation 0.3.2, objc2-io-surface 0.3.2, objc2-metal 0.3.2, objc2-quartz-core 0.3.2, objc2-ui-kit 0.3.2, objc2-user-notifications 0.3.2, objc2-web-kit 0.3.2, objc2 0.6.5
+### block2 0.6.2, dispatch2 0.3.1, objc2-app-kit 0.3.2, objc2-cloud-kit 0.3.2, objc2-core-data 0.3.2, objc2-core-foundation 0.3.2, objc2-core-graphics 0.3.2, objc2-core-image 0.3.2, objc2-core-location 0.3.2, objc2-core-text 0.3.2, objc2-encode 4.1.0, objc2-exception-helper 0.1.1, objc2-foundation 0.3.2, objc2-io-surface 0.3.2, objc2-metal 0.3.2, objc2-osa-kit 0.3.2, objc2-quartz-core 0.3.2, objc2-ui-kit 0.3.2, objc2-user-notifications 0.3.2, objc2-web-kit 0.3.2, objc2 0.6.5
 
 ```text
 # License
@@ -14346,7 +14709,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### tauri-plugin-dialog 2.8.4, tauri-plugin-fs 2.7.1, tauri-plugin-opener 2.7.2
+### tauri-plugin-dialog 2.8.4, tauri-plugin-fs 2.7.1, tauri-plugin-opener 2.7.2, tauri-plugin-updater 2.14.1
 
 ```text
 MIT License
@@ -14604,7 +14967,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ```
 
-### tempfile 3.27.0
+### tempfile 3.27.0, xattr 1.7.0
 
 ```text
 Copyright (c) 2015 Steven Allen
@@ -14874,6 +15237,36 @@ limitations under the License.
 
 ```text
 Copyright (c) 2018-2026 The RustCrypto Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+### tar 0.4.46
+
+```text
+Copyright (c) The tar-rs Project Contributors
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -15569,6 +15962,31 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
+### security-framework-sys 2.17.0, security-framework 3.7.0
+
+```text
+The MIT License (MIT)
+
+Copyright (c) 2015 Steven Fackler
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
 ### chrono 0.4.45
 
 ```text
@@ -16051,6 +16469,25 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+### constant_time_eq 0.6.2
+
+```text
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
 ### parking 2.2.1
 
 ```text
@@ -16519,7 +16956,7 @@ have been licensed under extremely permissive terms.
 ------------------------------------------------------------------------------
 ```
 
-### dunce 1.0.5, imgref 1.12.3
+### constant_time_eq 0.6.2, dunce 1.0.5, imgref 1.12.3
 
 ```text
 Creative Commons Legal Code
@@ -16955,7 +17392,7 @@ Apache License
    limitations under the License.
 ```
 
-### aligned 0.4.3, arbitrary 1.5.0, arrayvec 0.7.8, as-slice 0.2.1, async-channel 2.5.0, async-executor 1.14.1, async-io 2.6.0, async-lock 3.5.0, async-process 2.5.0, async-signal 0.2.14, async-task 4.7.1, atomic-waker 1.1.2, autocfg 1.5.1, base64 0.21.7, base64 0.23.1, bitflags 1.3.2, bitflags 2.13.2, bitstream-io 4.10.0, blocking 1.7.0, bs58 0.5.1, bumpalo 3.20.3, camino 1.2.6, cc 1.11.0, cfg-if 1.0.5, concurrent-queue 2.5.0, core-foundation-sys 0.8.7, core-foundation 0.10.1, core-graphics-types 0.2.0, core-graphics 0.25.0, crossbeam-channel 0.5.17, crossbeam-deque 0.8.8, crossbeam-epoch 0.9.21, crossbeam-utils 0.8.23, curve25519-dalek-derive 0.1.1, displaydoc 0.2.7, either 1.19.0, equivalent 1.0.3, errno 0.3.14, event-listener-strategy 0.5.4, event-listener 5.4.2, fastrand 2.5.0, find-msvc-tools 0.1.15, flate2 1.1.10, fnv 1.0.7, form_urlencoded 1.2.2, fs4 1.1.0, futures-lite 2.6.1, glob 0.3.4, group 0.13.0, hashbrown 0.12.3, hashbrown 0.16.1, hashbrown 0.17.1, heck 0.4.1, heck 0.5.0, hermit-abi 0.5.3, html5ever 0.39.0, httparse 1.10.1, idna_adapter 1.2.2, idna 1.1.0, indexmap 1.9.3, indexmap 2.14.2, itertools 0.14.0, jni 0.21.1, jobserver 0.1.35, jpeg-decoder 0.3.2, js-sys 0.3.107, lazy_static 1.5.1, libappindicator 0.9.0, libfuzzer-sys 0.4.13, linux-raw-sys 0.12.1, lock_api 0.4.14, log 0.4.35, markup5ever 0.39.0, matrixmultiply 0.3.11, mime 0.3.17, muda 0.20.0, ndarray 0.17.2, num-bigint-dig 0.8.6, num-bigint 0.4.8, num-complex 0.4.6, num-derive 0.4.2, num-integer 0.1.47, num-iter 0.1.46, num-rational 0.4.2, num-traits 0.2.19, once_cell 1.21.4, ordered-stream 0.2.0, parking_lot_core 0.9.12, parking_lot 0.12.5, parking 2.2.1, percent-encoding 2.3.2, piper 0.2.5, pkg-config 0.3.34, png 0.18.1, polling 3.11.0, pollster 1.0.1, rawpointer 0.2.1, rayon-core 1.13.0, rayon 1.12.0, regex-automata 0.4.18, regex-syntax 0.8.11, regex 1.13.1, renderdoc-sys 1.1.0, rustc_version 0.4.1, rustc-hash 1.1.0, rustix 1.1.6, rustls 0.23.46, scopeguard 1.2.0, selectors 0.38.0, serde_with_macros 3.24.0, serde_with 3.24.0, servo_arc 0.4.3, signal-hook-registry 1.4.8, smallvec 1.16.4, socket2 0.6.5, stable_deref_trait 1.2.1, string_cache_codegen 0.6.1, string_cache 0.9.0, syn 1.0.109, system-deps 6.2.2, tao-macros 0.1.4, tempfile 3.27.0, tendril 0.5.1, toml_datetime 0.6.3, tray-icon 0.25.1, ttf-parser 0.25.1, unicode-normalization 0.1.26, unicode-segmentation 1.13.3, unicode-width 0.2.3, url 2.5.8, uuid 1.29.0, version_check 0.9.5, wasi 0.11.1+wasi-snapshot-preview1, wasip2 1.0.4+wasi-0.2.12, wasm-bindgen-futures 0.4.80, wasm-bindgen-macro-support 0.2.130, wasm-bindgen-macro 0.2.130, wasm-bindgen-shared 0.2.130, wasm-bindgen 0.2.130, web_atoms 0.2.6, web-sys 0.3.107, window-vibrancy 0.8.1, wit-bindgen 0.57.1, wry 0.57.1
+### aligned 0.4.3, arbitrary 1.5.0, arrayvec 0.7.8, as-slice 0.2.1, async-channel 2.5.0, async-executor 1.14.1, async-io 2.6.0, async-lock 3.5.0, async-process 2.5.0, async-signal 0.2.14, async-task 4.7.1, atomic-waker 1.1.2, autocfg 1.5.1, base64 0.21.7, base64 0.23.1, bitflags 1.3.2, bitflags 2.13.2, bitstream-io 4.10.0, blocking 1.7.0, bs58 0.5.1, bumpalo 3.20.3, camino 1.2.6, cc 1.11.0, cfg-if 1.0.5, concurrent-queue 2.5.0, core-foundation-sys 0.8.7, core-foundation 0.10.1, core-foundation 0.9.4, core-graphics-types 0.2.0, core-graphics 0.25.0, crossbeam-channel 0.5.17, crossbeam-deque 0.8.8, crossbeam-epoch 0.9.21, crossbeam-utils 0.8.23, curve25519-dalek-derive 0.1.1, displaydoc 0.2.7, either 1.19.0, equivalent 1.0.3, errno 0.3.14, event-listener-strategy 0.5.4, event-listener 5.4.2, fastrand 2.5.0, filetime 0.2.30, find-msvc-tools 0.1.15, flate2 1.1.10, fnv 1.0.7, form_urlencoded 1.2.2, fs4 1.1.0, futures-lite 2.6.1, glob 0.3.4, group 0.13.0, hashbrown 0.12.3, hashbrown 0.16.1, hashbrown 0.17.1, heck 0.4.1, heck 0.5.0, hermit-abi 0.5.3, html5ever 0.39.0, httparse 1.10.1, hyper-rustls 0.27.10, idna_adapter 1.2.2, idna 1.1.0, indexmap 1.9.3, indexmap 2.14.2, itertools 0.14.0, jni-macros 0.22.4, jni 0.21.1, jni 0.22.4, jobserver 0.1.35, jpeg-decoder 0.3.2, js-sys 0.3.107, lazy_static 1.5.1, libappindicator 0.9.0, libfuzzer-sys 0.4.13, linux-raw-sys 0.12.1, lock_api 0.4.14, log 0.4.35, markup5ever 0.39.0, matrixmultiply 0.3.11, mime 0.3.17, muda 0.20.0, ndarray 0.17.2, num-bigint-dig 0.8.6, num-bigint 0.4.8, num-complex 0.4.6, num-derive 0.4.2, num-integer 0.1.47, num-iter 0.1.46, num-rational 0.4.2, num-traits 0.2.19, once_cell 1.21.4, openssl-probe 0.2.2, ordered-stream 0.2.0, parking_lot_core 0.9.12, parking_lot 0.12.5, parking 2.2.1, percent-encoding 2.3.2, piper 0.2.5, pkg-config 0.3.34, png 0.18.1, polling 3.11.0, pollster 1.0.1, rawpointer 0.2.1, rayon-core 1.13.0, rayon 1.12.0, regex-automata 0.4.18, regex-syntax 0.8.11, regex 1.13.1, renderdoc-sys 1.1.0, rustc_version 0.4.1, rustc-hash 1.1.0, rustix 1.1.6, rustls-native-certs 0.8.5, rustls 0.23.46, scopeguard 1.2.0, security-framework-sys 2.17.0, security-framework 3.7.0, selectors 0.38.0, serde_with_macros 3.24.0, serde_with 3.24.0, servo_arc 0.4.3, signal-hook-registry 1.4.8, simd_cesu8 1.2.0, smallvec 1.16.4, socket2 0.6.5, stable_deref_trait 1.2.1, string_cache_codegen 0.6.1, string_cache 0.9.0, syn 1.0.109, system-configuration-sys 0.6.0, system-configuration 0.7.0, system-deps 6.2.2, tao-macros 0.1.4, tar 0.4.46, tempfile 3.27.0, tendril 0.5.1, toml_datetime 0.6.3, tray-icon 0.25.1, ttf-parser 0.25.1, unicode-normalization 0.1.26, unicode-segmentation 1.13.3, unicode-width 0.2.3, url 2.5.8, uuid 1.29.0, version_check 0.9.5, wasi 0.11.1+wasi-snapshot-preview1, wasip2 1.0.4+wasi-0.2.12, wasm-bindgen-futures 0.4.80, wasm-bindgen-macro-support 0.2.130, wasm-bindgen-macro 0.2.130, wasm-bindgen-shared 0.2.130, wasm-bindgen 0.2.130, web_atoms 0.2.6, web-sys 0.3.107, window-vibrancy 0.8.1, wit-bindgen 0.57.1, wry 0.57.1, xattr 1.7.0
 
 ```text
 Apache License
@@ -17802,6 +18239,18 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+```
+
+### schannel 0.1.30
+
+```text
+Copyright (c) 2015 steffengy
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
 ### document-features 0.2.12
@@ -19716,7 +20165,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-### windows_aarch64_gnullvm 0.42.2, windows_aarch64_gnullvm 0.52.6, windows_aarch64_msvc 0.42.2, windows_aarch64_msvc 0.52.6, windows_i686_gnu 0.42.2, windows_i686_gnu 0.52.6, windows_i686_gnullvm 0.52.6, windows_i686_msvc 0.42.2, windows_i686_msvc 0.52.6, windows_x86_64_gnu 0.42.2, windows_x86_64_gnu 0.52.6, windows_x86_64_gnullvm 0.42.2, windows_x86_64_gnullvm 0.52.6, windows_x86_64_msvc 0.42.2, windows_x86_64_msvc 0.52.6, windows-collections 0.3.2, windows-core 0.62.2, windows-future 0.3.2, windows-implement 0.60.2, windows-interface 0.59.3, windows-link 0.2.1, windows-numerics 0.3.1, windows-result 0.4.1, windows-strings 0.5.1, windows-sys 0.45.0, windows-sys 0.52.0, windows-sys 0.61.2, windows-targets 0.42.2, windows-targets 0.52.6, windows-threading 0.2.1, windows-version 0.1.7, windows 0.62.2
+### windows_aarch64_gnullvm 0.42.2, windows_aarch64_gnullvm 0.52.6, windows_aarch64_msvc 0.42.2, windows_aarch64_msvc 0.52.6, windows_i686_gnu 0.42.2, windows_i686_gnu 0.52.6, windows_i686_gnullvm 0.52.6, windows_i686_msvc 0.42.2, windows_i686_msvc 0.52.6, windows_x86_64_gnu 0.42.2, windows_x86_64_gnu 0.52.6, windows_x86_64_gnullvm 0.42.2, windows_x86_64_gnullvm 0.52.6, windows_x86_64_msvc 0.42.2, windows_x86_64_msvc 0.52.6, windows-collections 0.3.2, windows-core 0.62.2, windows-future 0.3.2, windows-implement 0.60.2, windows-interface 0.59.3, windows-link 0.2.1, windows-numerics 0.3.1, windows-registry 0.6.1, windows-result 0.4.1, windows-strings 0.5.1, windows-sys 0.45.0, windows-sys 0.52.0, windows-sys 0.61.2, windows-targets 0.42.2, windows-targets 0.52.6, windows-threading 0.2.1, windows-version 0.1.7, windows 0.62.2
 
 ```text
 Apache License
@@ -19938,7 +20387,7 @@ Permission is granted to anyone to use this software for any purpose, including 
 3. This notice may not be removed or altered from any source distribution.
 ```
 
-### windows_aarch64_gnullvm 0.42.2, windows_aarch64_gnullvm 0.52.6, windows_aarch64_msvc 0.42.2, windows_aarch64_msvc 0.52.6, windows_i686_gnu 0.42.2, windows_i686_gnu 0.52.6, windows_i686_gnullvm 0.52.6, windows_i686_msvc 0.42.2, windows_i686_msvc 0.52.6, windows_x86_64_gnu 0.42.2, windows_x86_64_gnu 0.52.6, windows_x86_64_gnullvm 0.42.2, windows_x86_64_gnullvm 0.52.6, windows_x86_64_msvc 0.42.2, windows_x86_64_msvc 0.52.6, windows-collections 0.3.2, windows-core 0.62.2, windows-future 0.3.2, windows-implement 0.60.2, windows-interface 0.59.3, windows-link 0.2.1, windows-numerics 0.3.1, windows-result 0.4.1, windows-strings 0.5.1, windows-sys 0.45.0, windows-sys 0.52.0, windows-sys 0.61.2, windows-targets 0.42.2, windows-targets 0.52.6, windows-threading 0.2.1, windows-version 0.1.7, windows 0.62.2
+### windows_aarch64_gnullvm 0.42.2, windows_aarch64_gnullvm 0.52.6, windows_aarch64_msvc 0.42.2, windows_aarch64_msvc 0.52.6, windows_i686_gnu 0.42.2, windows_i686_gnu 0.52.6, windows_i686_gnullvm 0.52.6, windows_i686_msvc 0.42.2, windows_i686_msvc 0.52.6, windows_x86_64_gnu 0.42.2, windows_x86_64_gnu 0.52.6, windows_x86_64_gnullvm 0.42.2, windows_x86_64_gnullvm 0.52.6, windows_x86_64_msvc 0.42.2, windows_x86_64_msvc 0.52.6, windows-collections 0.3.2, windows-core 0.62.2, windows-future 0.3.2, windows-implement 0.60.2, windows-interface 0.59.3, windows-link 0.2.1, windows-numerics 0.3.1, windows-registry 0.6.1, windows-result 0.4.1, windows-strings 0.5.1, windows-sys 0.45.0, windows-sys 0.52.0, windows-sys 0.61.2, windows-targets 0.42.2, windows-targets 0.52.6, windows-threading 0.2.1, windows-version 0.1.7, windows 0.62.2
 
 ```text
 MIT License
@@ -20217,7 +20666,7 @@ Apache License
    limitations under the License.
 ```
 
-### codespan-reporting 0.13.1, imgref 1.12.3, ndk-context 0.1.1, ndk-sys 0.6.0+11769913, ndk 0.9.0, serialize-to-javascript-impl 0.1.2, serialize-to-javascript 0.1.2, webp 0.3.1, zune-core 0.5.3, zune-jpeg 0.5.15
+### codespan-reporting 0.13.1, imgref 1.12.3, ndk-context 0.1.1, ndk-sys 0.6.0+11769913, ndk 0.9.0, rustls-platform-verifier-android 0.2.0, rustls-platform-verifier 0.7.1, serialize-to-javascript-impl 0.1.2, serialize-to-javascript 0.1.2, webp 0.3.1, zune-core 0.5.3, zune-jpeg 0.5.15
 
 ```text
 Apache License
@@ -20739,6 +21188,212 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+```
+
+### tokio-rustls 0.26.6
+
+```text
+Apache License
+                        Version 2.0, January 2004
+                     http://www.apache.org/licenses/
+
+TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+1. Definitions.
+
+   "License" shall mean the terms and conditions for use, reproduction,
+   and distribution as defined by Sections 1 through 9 of this document.
+
+   "Licensor" shall mean the copyright owner or entity authorized by
+   the copyright owner that is granting the License.
+
+   "Legal Entity" shall mean the union of the acting entity and all
+   other entities that control, are controlled by, or are under common
+   control with that entity. For the purposes of this definition,
+   "control" means (i) the power, direct or indirect, to cause the
+   direction or management of such entity, whether by contract or
+   otherwise, or (ii) ownership of fifty percent (50%) or more of the
+   outstanding shares, or (iii) beneficial ownership of such entity.
+
+   "You" (or "Your") shall mean an individual or Legal Entity
+   exercising permissions granted by this License.
+
+   "Source" form shall mean the preferred form for making modifications,
+   including but not limited to software source code, documentation
+   source, and configuration files.
+
+   "Object" form shall mean any form resulting from mechanical
+   transformation or translation of a Source form, including but
+   not limited to compiled object code, generated documentation,
+   and conversions to other media types.
+
+   "Work" shall mean the work of authorship, whether in Source or
+   Object form, made available under the License, as indicated by a
+   copyright notice that is included in or attached to the work
+   (an example is provided in the Appendix below).
+
+   "Derivative Works" shall mean any work, whether in Source or Object
+   form, that is based on (or derived from) the Work and for which the
+   editorial revisions, annotations, elaborations, or other modifications
+   represent, as a whole, an original work of authorship. For the purposes
+   of this License, Derivative Works shall not include works that remain
+   separable from, or merely link (or bind by name) to the interfaces of,
+   the Work and Derivative Works thereof.
+
+   "Contribution" shall mean any work of authorship, including
+   the original version of the Work and any modifications or additions
+   to that Work or Derivative Works thereof, that is intentionally
+   submitted to Licensor for inclusion in the Work by the copyright owner
+   or by an individual or Legal Entity authorized to submit on behalf of
+   the copyright owner. For the purposes of this definition, "submitted"
+   means any form of electronic, verbal, or written communication sent
+   to the Licensor or its representatives, including but not limited to
+   communication on electronic mailing lists, source code control systems,
+   and issue tracking systems that are managed by, or on behalf of, the
+   Licensor for the purpose of discussing and improving the Work, but
+   excluding communication that is conspicuously marked or otherwise
+   designated in writing by the copyright owner as "Not a Contribution."
+
+   "Contributor" shall mean Licensor and any individual or Legal Entity
+   on behalf of whom a Contribution has been received by Licensor and
+   subsequently incorporated within the Work.
+
+2. Grant of Copyright License. Subject to the terms and conditions of
+   this License, each Contributor hereby grants to You a perpetual,
+   worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+   copyright license to reproduce, prepare Derivative Works of,
+   publicly display, publicly perform, sublicense, and distribute the
+   Work and such Derivative Works in Source or Object form.
+
+3. Grant of Patent License. Subject to the terms and conditions of
+   this License, each Contributor hereby grants to You a perpetual,
+   worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+   (except as stated in this section) patent license to make, have made,
+   use, offer to sell, sell, import, and otherwise transfer the Work,
+   where such license applies only to those patent claims licensable
+   by such Contributor that are necessarily infringed by their
+   Contribution(s) alone or by combination of their Contribution(s)
+   with the Work to which such Contribution(s) was submitted. If You
+   institute patent litigation against any entity (including a
+   cross-claim or counterclaim in a lawsuit) alleging that the Work
+   or a Contribution incorporated within the Work constitutes direct
+   or contributory patent infringement, then any patent licenses
+   granted to You under this License for that Work shall terminate
+   as of the date such litigation is filed.
+
+4. Redistribution. You may reproduce and distribute copies of the
+   Work or Derivative Works thereof in any medium, with or without
+   modifications, and in Source or Object form, provided that You
+   meet the following conditions:
+
+   (a) You must give any other recipients of the Work or
+       Derivative Works a copy of this License; and
+
+   (b) You must cause any modified files to carry prominent notices
+       stating that You changed the files; and
+
+   (c) You must retain, in the Source form of any Derivative Works
+       that You distribute, all copyright, patent, trademark, and
+       attribution notices from the Source form of the Work,
+       excluding those notices that do not pertain to any part of
+       the Derivative Works; and
+
+   (d) If the Work includes a "NOTICE" text file as part of its
+       distribution, then any Derivative Works that You distribute must
+       include a readable copy of the attribution notices contained
+       within such NOTICE file, excluding those notices that do not
+       pertain to any part of the Derivative Works, in at least one
+       of the following places: within a NOTICE text file distributed
+       as part of the Derivative Works; within the Source form or
+       documentation, if provided along with the Derivative Works; or,
+       within a display generated by the Derivative Works, if and
+       wherever such third-party notices normally appear. The contents
+       of the NOTICE file are for informational purposes only and
+       do not modify the License. You may add Your own attribution
+       notices within Derivative Works that You distribute, alongside
+       or as an addendum to the NOTICE text from the Work, provided
+       that such additional attribution notices cannot be construed
+       as modifying the License.
+
+   You may add Your own copyright statement to Your modifications and
+   may provide additional or different license terms and conditions
+   for use, reproduction, or distribution of Your modifications, or
+   for any such Derivative Works as a whole, provided Your use,
+   reproduction, and distribution of the Work otherwise complies with
+   the conditions stated in this License.
+
+5. Submission of Contributions. Unless You explicitly state otherwise,
+   any Contribution intentionally submitted for inclusion in the Work
+   by You to the Licensor shall be under the terms and conditions of
+   this License, without any additional terms or conditions.
+   Notwithstanding the above, nothing herein shall supersede or modify
+   the terms of any separate license agreement you may have executed
+   with Licensor regarding such Contributions.
+
+6. Trademarks. This License does not grant permission to use the trade
+   names, trademarks, service marks, or product names of the Licensor,
+   except as required for reasonable and customary use in describing the
+   origin of the Work and reproducing the content of the NOTICE file.
+
+7. Disclaimer of Warranty. Unless required by applicable law or
+   agreed to in writing, Licensor provides the Work (and each
+   Contributor provides its Contributions) on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+   implied, including, without limitation, any warranties or conditions
+   of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+   PARTICULAR PURPOSE. You are solely responsible for determining the
+   appropriateness of using or redistributing the Work and assume any
+   risks associated with Your exercise of permissions under this License.
+
+8. Limitation of Liability. In no event and under no legal theory,
+   whether in tort (including negligence), contract, or otherwise,
+   unless required by applicable law (such as deliberate and grossly
+   negligent acts) or agreed to in writing, shall any Contributor be
+   liable to You for damages, including any direct, indirect, special,
+   incidental, or consequential damages of any character arising as a
+   result of this License or out of the use or inability to use the
+   Work (including but not limited to damages for loss of goodwill,
+   work stoppage, computer failure or malfunction, or any and all
+   other commercial damages or losses), even if such Contributor
+   has been advised of the possibility of such damages.
+
+9. Accepting Warranty or Additional Liability. While redistributing
+   the Work or Derivative Works thereof, You may choose to offer,
+   and charge a fee for, acceptance of support, warranty, indemnity,
+   or other liability obligations and/or rights consistent with this
+   License. However, in accepting such obligations, You may act only
+   on Your own behalf and on Your sole responsibility, not on behalf
+   of any other Contributor, and only if You agree to indemnify,
+   defend, and hold each Contributor harmless for any liability
+   incurred by, or claims asserted against, such Contributor by reason
+   of your accepting any such warranty or additional liability.
+
+END OF TERMS AND CONDITIONS
+
+APPENDIX: How to apply the Apache License to your work.
+
+   To apply the Apache License to your work, attach the following
+   boilerplate notice, with the fields enclosed by brackets "[]"
+   replaced with your own identifying information. (Don't include
+   the brackets!)  The text should be enclosed in the appropriate
+   comment syntax for the file format. We also recommend that a
+   file or class name and description of purpose be included on the
+   same "printed page" as the copyright notice for easier
+   identification within third-party archives.
+
+Copyright 2017 quininer kel
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 ```
 
 ### libwebp-sys 0.9.6
@@ -21503,6 +22158,20 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+### rustls-native-certs 0.8.5
+
+```text
+Rustls is distributed under the following three licenses:
+
+- Apache License version 2.0.
+- MIT license.
+- ISC license.
+
+These are included as LICENSE-APACHE, LICENSE-MIT and LICENSE-ISC
+respectively.  You may use this software under the terms of any
+of these licenses, at your option.
+```
+
 ### tauri-winres 0.3.7
 
 ```text
@@ -21745,7 +22414,37 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-### webpki-roots 1.0.11
+### tokio-rustls 0.26.6
+
+```text
+Copyright (c) 2017 quininer kel
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```
+
+### webpki-root-certs 1.0.12, webpki-roots 1.0.11
 
 ```text
 # Community Data License Agreement - Permissive - Version 2.0
@@ -22332,7 +23031,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### tauri-plugin-dialog 2.8.4, tauri-plugin-fs 2.7.1, tauri-plugin-opener 2.7.2
+### tauri-plugin-dialog 2.8.4, tauri-plugin-fs 2.7.1, tauri-plugin-opener 2.7.2, tauri-plugin-updater 2.14.1
 
 ```text
 SPDXVersion: SPDX-2.1
@@ -23850,7 +24549,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### jni 0.21.1
+### jni-macros 0.22.4, jni 0.21.1, jni 0.22.4
 
 ```text
 The MIT License (MIT)

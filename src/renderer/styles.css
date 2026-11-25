@@ -59,7 +59,7 @@ button:disabled { cursor: default; opacity: .4; }
 button:focus:not(:focus-visible) { outline: none; }
 input[type=checkbox], input[type=radio] { accent-color: var(--accent); width: 14px; height: 14px; margin: 0; flex-shrink: 0; }
 input, select, textarea { min-width: 0; }
-input[type=text], input:not([type]), input[type=number], input[type=search], select, textarea {
+input[type=text], input[type=password], input:not([type]), input[type=number], input[type=search], select, textarea {
   height: var(--control); background: var(--canvas); border: 1px solid var(--field-line); border-radius: var(--r1); padding: 0 var(--s2); font-size: var(--fs-m);
   transition: border-color .12s var(--ease);
 }
@@ -127,6 +127,14 @@ kbd { color: var(--text-2); font-family: inherit; font-size: var(--fs-xs); borde
 .topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: var(--s4); height: 44px; padding: 0 var(--s2); border-bottom: 1px solid var(--seam); background: var(--panel); }
 .topbar-start, .topbar-end { display: flex; align-items: center; gap: var(--s2); min-width: 0; }
 .topbar-end { justify-content: flex-end; }
+.topbar:has(#update-banner:not([hidden])) { grid-template-columns: minmax(0, 1fr) auto max-content; }
+#update-banner { display: flex; align-items: center; gap: 3px; padding: 1px 3px 1px 9px; white-space: nowrap; border: 1px solid var(--accent-line); border-radius: 20px; background: var(--raised); color: var(--text-2); font-size: var(--fs-s); font-variant-numeric: tabular-nums; }
+#update-banner button { height: 22px; border: 0; border-radius: 12px; background: transparent; padding: 0 6px; }
+#update-banner button:hover:enabled { background: var(--hover); color: var(--text); }
+#update-banner-install { color: var(--accent); }
+#settings-update-status { overflow-wrap: anywhere; }
+#settings-update-status:empty { display: none; }
+#settings-update-progress { width: 100%; accent-color: var(--accent); }
 .brand { display: flex; align-items: center; gap: 7px; white-space: nowrap; font-size: var(--fs-l); font-weight: 650; letter-spacing: -.2px; margin: 0 var(--s2) 0 2px; color: var(--text); }
 .brand-symbol { width: 18px; height: 18px; color: var(--text-2); }
 .breadcrumb { flex: 1; min-width: 0; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-s); }
@@ -184,7 +192,7 @@ kbd { color: var(--text-2); font-family: inherit; font-size: var(--fs-xs); borde
 #shortcuts:hover { text-decoration: none; background: var(--raised); }
 
 /* Main column and view toolbar. */
-.main { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 0 var(--s3); background: var(--app); }
+.main { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 0 var(--s3); background: var(--app); }
 .toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); min-height: 44px; }
 .toolbar-right { flex: 1 1 auto; min-width: 0; }
 .view-heading { flex: 0 0 auto; }
@@ -650,6 +658,9 @@ dialog details > summary:hover { color: var(--text); }
 .develop-controls details[open] > summary::before { transform: rotate(45deg); margin-top: -3px; }
 .develop-controls summary:hover::before { border-color: var(--text); }
 .develop-controls select { width: 100%; font-size: var(--fs-s); }
+.develop-wb-row { display: flex; gap: var(--s1); }
+.develop-wb-row select { flex: 1; min-width: 0; }
+.develop-wb-row .button { height: 26px; padding: 0 8px; font-size: var(--fs-s); flex-shrink: 0; }
 .develop-controls .button { height: 24px; font-size: var(--fs-s); padding: 0 var(--s2); }
 .develop-controls .toggle-row { font-size: var(--fs-s); margin: var(--s1) 0; }
 .develop-controls p { margin: 6px 0; }
@@ -891,3 +902,276 @@ dialog details > summary:hover { color: var(--text); }
 /* A phone has no keyboard to customize. */
 @media (pointer: coarse) and (max-width: 640px) { [data-settings-tab="keyboard"] { display: none !important; } }
 .server-mode .settings-footer { justify-content: flex-end; }
+
+/* Tethered capture. Desktop-only camera controls stay visible but disabled in browser modes. */
+.tabular { font-variant-numeric: tabular-nums; }
+.tether-sidebar { margin: var(--s4) 0 0; padding: var(--s3) 0 0; border-top: 1px solid var(--line); }
+.tether-sidebar-label { display: flex; justify-content: space-between; align-items: center; margin: 0 var(--s2) var(--s2); }
+.tether-battery { color: var(--text-2); font-weight: 500; }
+.tether-sidebar-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); padding: 0 var(--s2); }
+.tether-sidebar-row .button { height: 24px; padding: 0 8px; font-size: var(--fs-s); }
+.tether-pill { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-s); color: var(--text-2); }
+.tether-pill::before { content: ''; width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--star-empty); }
+.tether-pill[data-state=ready]::before, .tether-pill[data-state=busy]::before { background: var(--green); }
+.tether-pill[data-state=paused]::before, .tether-pill[data-state=armed]::before, .tether-pill[data-state=reconnecting]::before, .tether-pill[data-state=draining]::before { background: var(--warn); }
+.tether-pill[data-state=lost]::before { background: var(--red); }
+
+
+.tether-panel { display: flex; flex-direction: column; gap: var(--s2); font-size: var(--fs-m); }
+.tether-panel[hidden] { display: none; }
+.tether-panel > p:empty { display: none; }
+.tether-panel .small, .tether-panel .subtle { overflow-wrap: anywhere; }
+.tether-tool { border-top: 1px solid var(--line); padding-top: var(--s2); }
+.tether-tool > summary { cursor: pointer; list-style: none; display: flex; align-items: center; justify-content: space-between; height: 24px; color: var(--text); font-size: var(--fs-m); font-weight: 600; }
+.tether-tool > summary::-webkit-details-marker { display: none; }
+.tether-tool > summary::after { content: ''; width: 10px; height: 10px; background: var(--chevron) no-repeat center; transform: rotate(-90deg); transition: transform .12s var(--ease); }
+.tether-tool[open] > summary::after { transform: none; }
+.tether-tool-body { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s2) 0 var(--s1); }
+.tether-panel .field-row { margin: 0; gap: var(--s2); }
+.tether-panel .field-row > label { min-width: 72px; font-size: var(--fs-s); }
+.tether-panel .toggle-row { margin: 0; font-size: var(--fs-s); }
+.tether-panel input[type=text], .tether-panel input[type=password], .tether-panel input:not([type]), .tether-panel input[type=number], .tether-panel select { height: 26px; font-size: var(--fs-s); }
+.tether-panel input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.tether-panel input[type=color] { width: 26px; height: 24px; padding: 0 2px; border: 1px solid var(--field-line); border-radius: var(--r1); background: var(--panel); flex-shrink: 0; }
+.tether-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1); }
+.tether-row .button, .tether-tool-body > .button { height: 26px; padding: 0 8px; font-size: var(--fs-s); }
+.tether-panel .button.quiet { border-color: var(--line-strong); }
+.tether-pair { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s2); }
+.tether-status { grid-template-columns: 64px minmax(0, 1fr) !important; }
+.tether-warning { margin: 0; padding: 6px var(--s2); border-radius: var(--r1); background: #3a3122; color: var(--warn); font-size: var(--fs-s); line-height: 1.4; }
+.tether-warning[hidden] { display: none; }
+.tether-capture { width: 100%; height: 32px; font-size: var(--fs-l); }
+.tether-capture-row { display: flex; gap: var(--s1); }
+.tether-capture-row .tether-capture { flex: 1; width: auto; min-width: 0; }
+.tether-test-toggle { height: 32px; padding: 0 10px; font-size: var(--fs-s); flex-shrink: 0; }
+.tether-test-toggle[aria-pressed=true] { background: #3a3122; border-color: #7a6440; color: var(--warn); }
+.tether-recycle:empty, .is-recycling > .tether-capture-label { display: none; }
+.is-recycling { font-variant-numeric: tabular-nums; }
+.tether-lcd span.is-sync-warn { color: var(--warn); }
+.tether-property.is-sync-warn > label { color: var(--warn); }
+.tether-property.is-sync-warn > :not(label) { box-shadow: 0 0 0 1px #7a6440; border-radius: var(--r1); }
+.tether-flash-field { display: grid; grid-template-columns: 104px minmax(0, 1fr); align-items: center; gap: var(--s2); }
+.tether-flash-field > label { color: var(--text-2); font-size: var(--fs-s); }
+.tether-flash-sub { padding-left: 22px; }
+.tether-flash p { margin: 0; }
+.tether-checklist-studio { display: flex; flex-direction: column; gap: 4px; margin-top: var(--s2); padding-top: var(--s2); border-top: 1px solid var(--line); }
+.tether-checklist-studio[hidden] { display: none; }
+.tether-checklist-subhead { margin: 0; color: var(--text); font-weight: 600; }
+.tether-reason:empty { display: none; }
+.tether-reason { margin: 0; }
+.tether-lcd { display: grid; grid-template-columns: minmax(24px, auto) repeat(4, minmax(0, 1fr)); gap: 0; padding: 6px 0; background: var(--canvas); border-radius: var(--r2); text-align: center; font-size: var(--fs-l); font-weight: 600; color: var(--text); }
+.tether-lcd span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tether-properties { display: flex; flex-direction: column; gap: 6px; }
+.tether-property { display: grid; grid-template-columns: 88px minmax(0, 1fr); align-items: center; gap: 2px var(--s2); }
+.tether-property > label { color: var(--text-2); font-size: var(--fs-s); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tether-property output { color: var(--text); font-size: var(--fs-s); }
+.tether-property .tether-lock { grid-column: 2; color: var(--muted); }
+.tether-property.last-seen > :not(label) { opacity: .6; }
+.tether-offline { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s2); border: 1px dashed var(--line-strong); border-radius: var(--r2); }
+.tether-offline[hidden] { display: none; }
+.tether-offline-title { margin: 0; color: var(--text); font-weight: 600; }
+.tether-checklist-tabs { display: flex; gap: 2px; }
+.tether-checklist-tabs [role=tab] { flex: 1; height: 24px; border: 1px solid var(--line-strong); border-radius: var(--r1); background: transparent; color: var(--text-2); font-size: var(--fs-s); }
+.tether-checklist-tabs [role=tab][aria-selected=true] { background: var(--accent-bg); border-color: var(--accent-line); color: #e3eef5; }
+.tether-checklist { margin: 0; padding-left: 18px; color: var(--text-2); display: flex; flex-direction: column; gap: 4px; }
+.tether-location { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1); }
+.tether-path { color: var(--text-2); font-size: var(--fs-s); overflow-wrap: anywhere; }
+.tether-new-shot { display: flex; flex-direction: column; gap: 6px; padding: var(--s2); background: var(--raised); border-radius: var(--r2); font-size: var(--fs-s); }
+.tether-new-shot[hidden] { display: none; }
+.tether-disk[hidden] { display: none; }
+.tether-disk-bar { height: 4px; border-radius: 2px; background: var(--raised); overflow: hidden; }
+#tether-disk-fill { height: 100%; background: var(--accent); }
+.tether-disk[data-level=low] #tether-disk-fill { background: var(--warn); }
+.tether-disk[data-level=blocked] #tether-disk-fill { background: var(--red); }
+.tether-disk p { margin: 4px 0 0; color: var(--text-2); }
+.tether-disk[data-level=low] p { color: var(--warn); }
+.tether-disk[data-level=blocked] p { color: var(--red); }
+.tether-tokens { display: flex; flex-wrap: wrap; gap: 4px; }
+.token-pill { height: 22px; padding: 0 6px; border: 1px solid var(--line-strong); border-radius: 11px; background: transparent; color: var(--text-2); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+.token-pill:hover { color: var(--text); background: var(--hover); }
+.tether-sample { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; color: var(--text-2); overflow-wrap: anywhere; }
+.tether-sample strong { color: var(--text); font-weight: 500; }
+.tether-sample.error, .tether-sample-warning { color: var(--warn); }
+.tether-badge { height: 16px; padding: 0 5px; border-radius: 8px; background: var(--raised); color: var(--text-2); font-size: var(--fs-xs); line-height: 16px; }
+.tether-counter { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 6px; font-size: var(--fs-s); color: var(--text-2); }
+.tether-groups { margin: 0; padding: 6px var(--s2); border: 1px solid var(--line); border-radius: var(--r1); display: grid; grid-template-columns: 1fr 1fr; gap: 4px var(--s2); }
+.tether-groups legend { color: var(--muted); font-size: var(--fs-s); padding: 0 4px; }
+.tether-groups[disabled], .tether-groups:has(input:disabled) { opacity: .55; }
+.tether-aid { display: flex; flex-direction: column; gap: 6px; padding: var(--s2); background: var(--raised); border-radius: var(--r2); }
+.tether-aid { margin: 0; min-width: 0; border: 0; }
+.tether-aid > legend { float: left; width: 100%; padding: 0; }
+.tether-aid > :not(legend) { clear: both; }
+.tether-aid kbd { margin-left: auto; min-width: 18px; height: 18px; padding: 0 4px; border: 1px solid var(--line-strong); border-radius: 3px; color: var(--muted); font: 500 var(--fs-xs)/16px var(--font); text-align: center; }
+.tether-pair > label:not(.toggle-row) { display: flex; flex-direction: column; gap: 3px; min-width: 0; color: var(--text-2); font-size: var(--fs-s); }
+.tether-pair > label:not(.toggle-row) > input:not([type=color]), .tether-pair > label > select { width: 100%; }
+.tether-pair > label > input[type=range] { height: 24px; }
+.tether-aid > p { margin: 0; }
+.tether-aid > .toggle-row:first-child { color: var(--text); font-weight: 500; }
+.tether-aid [hidden] { display: none; }
+.tether-guides { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.tether-guide { display: grid; grid-template-columns: 72px 64px auto 24px; align-items: center; gap: 4px; font-size: var(--fs-s); color: var(--text-2); }
+.tether-guide .button { height: 24px; width: 24px; padding: 0; }
+.tether-issues { display: flex; flex-direction: column; gap: 6px; }
+.tether-stepper { display: grid; grid-template-columns: 24px minmax(0, 1fr) 24px; align-items: center; gap: 4px; }
+.tether-stepper .button { height: 24px; width: 24px; padding: 0; }
+.tether-stepper output { text-align: center; font-size: var(--fs-m); color: var(--text); }
+.tether-issue { padding: var(--s2); border-radius: var(--r2); background: var(--red-bg); color: var(--text); font-size: var(--fs-s); }
+.tether-issue strong { text-transform: capitalize; }
+.tether-issue p { margin: 4px 0 6px; color: var(--text-2); }
+.tether-start-group { border: 0; margin: 0 0 var(--s3); padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.tether-start-group legend { font-weight: 600; margin-bottom: 6px; }
+
+/* Review aids sit under the AF overlay; only the move mode takes the pointer. */
+.overlay-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
+.overlay-layer[hidden] { display: none; }
+.overlay-layer.moving { pointer-events: auto; cursor: move; outline: 2px dashed var(--accent); outline-offset: -2px; }
+.overlay-status { position: absolute; top: var(--s2); left: 50%; transform: translateX(-50%); z-index: 5; }
+.overlay-status[hidden] { display: none; }
+
+/* Live View: covers the main column, or docks as a picture-in-picture over it. */
+.tether-live-stage { position: absolute; inset: 0; z-index: 9; display: flex; flex-direction: column; gap: var(--s2); padding: var(--s2) var(--s3); background: var(--app); }
+.tether-live-stage[hidden] { display: none; }
+/* Expanded Live View sits over the photo stage (placed by tether.js) so the filmstrip and decision bar stay in reach. */
+.tether-live-stage.over-image { right: auto; bottom: auto; border-radius: var(--r1); }
+.tether-live-stage.docked { inset: auto var(--s3) 40px auto; width: min(380px, 45%); height: auto; padding: var(--s1); gap: var(--s1); background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--r2); box-shadow: var(--shadow); }
+.tether-live-stage.docked .tether-live-viewport { aspect-ratio: 3 / 2; flex: none; }
+.tether-live-stage.docked .tether-live-bar.bottom { display: none; }
+.tether-live-stage.docked #tether-live-fps { display: none; }
+.tether-live-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); min-height: var(--control); }
+.tether-live-bar .button { height: 26px; padding: 0 8px; font-size: var(--fs-s); }
+.tether-live-bar .button.quiet { border-color: var(--line-strong); }
+.tether-live-spacer { flex: 1; }
+.tether-live-group { display: inline-flex; align-items: center; gap: 2px; }
+.tether-focus-steps .button { min-width: 28px; padding: 0 4px; font-variant-numeric: tabular-nums; }
+.tether-live-group input[type=range] { width: 72px; accent-color: var(--accent); }
+.tether-live-group input[type=color] { width: 24px; height: 24px; padding: 0 2px; border: 1px solid var(--field-line); border-radius: var(--r1); background: var(--panel); }
+.tether-live-viewport { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--canvas); border-radius: var(--r1); outline-offset: -2px; touch-action: none; }
+.tether-live-viewport canvas:first-child { position: absolute; inset: 0; }
+.tether-live-empty { position: absolute; inset: 0; margin: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: var(--fs-m); }
+.tether-live-empty[hidden] { display: none; }
+.tether-live-histogram { width: 128px; height: 40px; background: var(--canvas); border-radius: var(--r1); }
+.tether-live-histogram[hidden] { display: none; }
+.tether-arrival-pill { position: absolute; left: 50%; bottom: 44px; transform: translateX(-50%); z-index: 10; height: var(--control); padding: 0 14px; border: 1px solid var(--accent-line); border-radius: 14px; background: var(--accent-bg); color: #e3eef5; font-size: var(--fs-m); font-weight: 500; box-shadow: var(--shadow); white-space: nowrap; }
+.tether-arrival-pill:hover { background: #33485a; }
+.tether-arrival-pill[hidden] { display: none; }
+
+/* Pinned reference Compare. */
+.compare.pinned .compare-pane { position: relative; }
+.reference-badge { position: absolute; top: var(--s2); left: var(--s2); z-index: 4; height: 20px; padding: 0 7px; border-radius: var(--r1); background: var(--ivory); color: var(--on-ivory); font-size: var(--fs-s); font-weight: 600; line-height: 20px; pointer-events: none; }
+.compare-waiting { position: absolute; inset: 0; margin: 0; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: var(--fs-m); }
+.compare-waiting[hidden] { display: none; }
+
+@media (max-width: 900px) {
+  .tether-live-bar .button, .tether-stage-bar .button, .tether-stage-bar select { height: 40px; min-width: 40px; }
+}
+@media (prefers-reduced-motion: reduce) { .tether-tool > summary::after { transition: none; } }
+
+
+/* Tether workspace: dock on the left, stage bar over Review's photo stage, histogram atop Details. */
+body:not(.tether-active) #tether-dock, body:not(.tether-active) #tether-stage-bar, body:not(.tether-active) #tether-stage-alerts, body:not(.tether-active) #tether-inspector-histogram-panel, .tether-active #sources { display: none; }
+.view-switch .tether-mode-icon { position: relative; display: inline-flex; }
+.tether-mode-dot { position: absolute; top: -2px; right: -3px; width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 2px var(--panel); }
+.tether-mode-dot[data-state=armed] { background: var(--warn); }
+.tether-mode-dot[data-state=live] { background: var(--red); }
+
+#tether-dock { width: min(276px, 92vw); padding: var(--s3); gap: var(--s1); }
+.tether-dock-header { display: flex; flex-direction: column; gap: var(--s1); padding: 0 0 var(--s2); }
+.tether-dock-title { display: flex; align-items: center; gap: var(--s2); min-height: 24px; }
+.tether-dock-title h2 { margin: 0; color: var(--text); font-size: var(--fs-l); font-weight: 600; }
+.tether-dock-title .tether-pill { flex: 1; }
+#tether-dock-start, #tether-stop { height: 24px; padding: 0 8px; font-size: var(--fs-s); }
+.tether-dock-header p { margin: 0; }
+.tether-dock-header p:empty { display: none; }
+.tether-dock .tether-tool[hidden] { display: none; }
+.tether-label { color: var(--muted); font-size: var(--fs-s); font-weight: 600; }
+.tether-device-head { display: flex; align-items: center; justify-content: space-between; min-height: 24px; }
+.tether-icon-button { width: 24px; height: 24px; color: var(--text-2); }
+.tether-devices { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.tether-devices:empty { display: none; }
+.tether-device-item { display: flex; align-items: center; gap: 6px; width: 100%; height: 28px; padding: 0 var(--s2); border: 1px solid var(--line); border-radius: var(--r1); background: var(--canvas); color: var(--text); font: inherit; font-size: var(--fs-m); text-align: left; cursor: pointer; }
+.tether-device-item:hover:not(:disabled) { background: var(--raised); }
+.tether-device-item:disabled { cursor: default; color: var(--text-2); }
+.tether-device-item[aria-pressed=true] { border-color: var(--accent-line); background: var(--accent-bg); color: var(--text); }
+.tether-device-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tether-device-state { color: var(--text-2); font-size: var(--fs-s); white-space: nowrap; }
+.tether-device-empty { margin: 0; }
+.tether-transport { display: inline-flex; align-items: center; flex-shrink: 0; height: 16px; padding: 0 5px; border: 1px solid var(--line-strong); border-radius: 3px; color: var(--text-2); font-size: var(--fs-xs); font-weight: 600; letter-spacing: .02em; line-height: 1; vertical-align: 1px; }
+.tether-transport.wifi { border-color: var(--accent-line); color: var(--accent); }
+.tether-wifi-actions .button { flex: 1; }
+.tether-wifi-actions .icon { width: 14px; height: 14px; }
+.tether-wifi-form { display: flex; flex-direction: column; gap: 6px; padding: var(--s2); background: var(--raised); border-radius: var(--r2); }
+.tether-wifi-form[hidden], .tether-wifi-ssh[hidden], .tether-fingerprint[hidden] { display: none; }
+.tether-wifi-title { margin: 0; color: var(--text); font-size: var(--fs-m); font-weight: 600; }
+.tether-wifi-form p { margin: 0; }
+.tether-wifi-form .field-row > label { min-width: 64px; }
+.tether-wifi-form .field-row > input, .tether-wifi-form .field-row > select { flex: 1; min-width: 0; }
+.tether-wifi-form input[aria-invalid=true] { border-color: var(--warn); }
+.tether-wifi-ssh { display: flex; flex-direction: column; gap: 6px; }
+.tether-wifi-submit, .tether-fingerprint .tether-row { justify-content: flex-end; }
+#tether-wifi-status:empty { display: none; }
+.tether-fingerprint { display: flex; flex-direction: column; gap: 6px; padding: var(--s2); border: 1px solid var(--accent-line); border-radius: var(--r1); background: var(--canvas); }
+.tether-fingerprint.changed { border-color: var(--red); }
+.tether-fingerprint-title { color: var(--text); font-weight: 600; }
+.tether-fingerprint.changed .tether-fingerprint-title { color: var(--red); }
+.tether-fingerprint-value { display: block; padding: 4px 6px; border-radius: var(--r1); background: var(--panel); color: var(--text); font: 500 var(--fs-s)/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; user-select: all; }
+.tether-fingerprint p.small { color: var(--text-2); }
+.tether-badge-dest { display: inline-block; padding: 0 6px; border-radius: 3px; background: var(--raised); color: var(--text); }
+.tether-badge-dest[data-level=ok] { background: var(--green-bg); color: var(--green); }
+.tether-badge-dest[data-level=warn] { background: #3a3122; color: var(--warn); }
+.tether-shoot-row .button { flex: 1; }
+.tether-lcd span { padding: 0 4px; }
+.tether-lcd span + span { border-left: 1px solid var(--line); }
+.tether-lcd [data-lcd=program] { color: var(--accent); }
+.tether-dock .tether-properties { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--s2); }
+.tether-dock .tether-property { grid-template-columns: minmax(0, 1fr); align-content: start; gap: 2px; }
+.tether-dock .tether-property > select, .tether-dock .tether-property > input:not([type=checkbox]) { width: 100%; min-width: 0; }
+.tether-dock .tether-property .tether-lock { grid-column: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tether-checklist-tabs [role=tab] { flex: 1 1 auto; padding: 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tether-checklist-panel { display: flex; flex-direction: column; gap: 6px; }
+.tether-checklist-note { margin: 0; padding: 6px var(--s2); border-left: 2px solid var(--accent); background: var(--canvas); color: var(--text); }
+
+.tether-stage-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); min-height: 36px; padding: 0 0 var(--s2); container-type: inline-size; }
+.tether-stage-group { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.tether-stage-end { gap: var(--s1); flex-shrink: 0; }
+.tether-stage-bar .button { height: var(--control); padding: 0 var(--s2); font-size: var(--fs-m); }
+.tether-stage-bar .button .icon { width: 16px; height: 16px; flex-shrink: 0; }
+.tether-icon-toggle { width: var(--control); padding: 0 !important; }
+.tether-aids-button .icon:last-child { width: 12px; height: 12px; transition: transform .12s var(--ease); }
+.tether-aids-button[aria-expanded=true] { background: var(--raised); color: var(--text); }
+.tether-aids-button[aria-expanded=true] .icon:last-child { transform: rotate(180deg); }
+.tether-follow-field { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: var(--fs-s); }
+.tether-follow-field select { height: var(--control); font-size: var(--fs-m); }
+.tether-stage-bar .tether-telemetry { margin: 0 0 0 var(--s1); color: var(--text-2); font-size: var(--fs-s); white-space: nowrap; }
+@container (max-width: 1080px) { .tether-stage-group:first-child .button:not(.tether-aids-button) > span { display: none; } .tether-stage-group:first-child .button:not(.tether-aids-button) { padding: 0 6px; } }
+@container (max-width: 800px) { .tether-aids-button > span { display: none; } .tether-aids-button { padding: 0 6px !important; } }
+@container (max-width: 640px) { .tether-follow-field > span, .tether-stage-bar .tether-telemetry { display: none; } }
+/* Stage alerts sit under the stage bar; amber and red appear only while a warning is live. */
+.tether-stage-alerts { display: flex; flex-direction: column; gap: var(--s1); padding: 0 0 var(--s2); }
+.tether-stage-alerts[hidden], .tether-alert[hidden] { display: none; }
+.tether-alert { display: flex; align-items: center; gap: var(--s2); min-height: 30px; margin: 0; padding: 3px 4px 3px var(--s3); border-radius: var(--r2); font-size: var(--fs-m); line-height: 1.35; }
+.tether-alert .button { height: 24px; padding: 0 10px; font-size: var(--fs-s); }
+.tether-alert-text { flex: 1; min-width: 0; }
+.tether-alert-meta { color: var(--text-2); font-size: var(--fs-s); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tether-alert-test { background: #3a3122; color: var(--warn); box-shadow: inset 2px 0 0 var(--warn); }
+.tether-alert-test .tether-alert-meta { color: #c9ad86; }
+.tether-alert-warn { background: #3a3122; color: var(--warn); }
+.tether-alert-danger { align-self: flex-start; padding-right: 2px; border: 1px solid #7a4a49; background: var(--red-bg); color: #ffe3e0; }
+.tether-alert-danger strong { font-weight: 600; }
+.tether-alert-danger .icon-button { width: 24px; height: 24px; color: #f6d9d7; font-size: 16px; }
+#image-viewport.is-wb-pick, #image-viewport.is-wb-pick *, #develop-image.is-wb-pick { cursor: crosshair !important; }
+
+.tether-aids-drawer { position: absolute; z-index: 11; top: 88px; left: var(--s3); display: flex; flex-direction: column; gap: var(--s2); width: 320px; max-width: calc(100% - 16px); max-height: calc(100% - 104px); overflow: auto; padding: var(--s3); background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--r2); box-shadow: var(--shadow); scrollbar-width: thin; outline-offset: -2px; }
+.tether-aids-drawer[hidden] { display: none; }
+.tether-drawer-header { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); }
+.tether-drawer-header h2 { margin: 0; color: var(--text); font-size: var(--fs-l); font-weight: 600; }
+.tether-drawer-header .icon-button { width: 24px; height: 24px; font-size: 16px; color: var(--text-2); }
+.tether-drawer-body { display: flex; flex-direction: column; gap: var(--s2); }
+.tether-aid > legend:not(:has(label)) { color: var(--text); font-size: var(--fs-s); font-weight: 500; margin-bottom: 2px; }
+.tether-drawer-status { margin: 0; color: var(--warn); }
+.tether-drawer-status:empty { display: none; }
+
+.tether-histogram-label { display: flex; justify-content: space-between; gap: var(--s2); }
+#tether-histogram-source { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); font-weight: 400; }
+.tether-inspector-histogram { display: block; width: 100%; height: 72px; background: var(--canvas); border-radius: var(--r1); }
+.tether-histogram-clip { margin: 6px 0 0; color: var(--text-2); }
+.tether-histogram-clip:empty { display: none; }

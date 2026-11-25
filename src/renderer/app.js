@@ -1,45 +1,60 @@
 const api = window.photocull;
 const $ = id => document.getElementById(id);
-const state = { deleting: false, session: null, selected: null, marked: new Set(), anchor: null, filter: 'all', query: '', mode: 'review', fullscreen: false,
+const state = { deleting: false, session: null, selected: null, marked: new Set(), anchor: null, filter: 'all', query: '', mode: 'review', studio: false, fullscreen: false,
   generation: 0, previewRevision: 0, showOriginal: false, proposals: [], proposalsLoading: false, proposalsBusy: false, proposalWarning: '', pendingSaves: 0, saveError: false, busy: false, settings: { autoAdvance: true, recursive: false, autoOpenCards: true, colors: [], naming: { template: '{filename}', text: '', start: 1 } }, settingsReady: false, colorFilter: '', devices: [], deviceError: '', autoOpened: new Set(), copy: { running: false, destination: null, copiedTo: null } };
 let toastTimer, metadataTimer, framePending = false, handoffUsageKey = '', handoffUsageGeneration = 0;
 const gridNodes = new Map(), filmNodes = new Map();
 const culling = { metadata:new Map(), jobs:new Map(), scores:new Map(), bursts:[], byId:new Map(), expanded:new Set(), epoch:0, paused:false, running:false };
-let survey, burstPrompt=null;
+let survey, burstPrompt=null, tether=null;
 const menus = [];
 // Automatic card opening waits until first-run Welcome has been shown and answered.
 let welcomeSettled = false, autoOpenSuppressed = false;
-let layoutPrefs = { sources: true, details: true, gridSize: 205 };
-try { const saved = JSON.parse(localStorage.getItem('photocull-layout') || '{}'); layoutPrefs = { sources: saved.sources !== false, details: saved.details !== false, gridSize: Math.min(320, Math.max(160, Number(saved.gridSize) || 205)) }; } catch {}
+// The left pane is Sources, or the tether dock in the Tether workspace; each keeps its own shown state.
+let layoutPrefs = { sources: true, dock: true, details: true, gridSize: 205 };
+try { const saved = JSON.parse(localStorage.getItem('photocull-layout') || '{}'); layoutPrefs = { sources: saved.sources !== false, dock: saved.dock !== false, details: saved.details !== false, gridSize: Math.min(320, Math.max(160, Number(saved.gridSize) || 205)) }; } catch {}
+const leftPane = () => state.studio ? 'dock' : 'sources';
+// Tether is Review's photo stage inside the studio workspace.
+const photoStage = () => state.mode === 'review' || state.mode === 'tether';
+const stageMode = () => state.studio ? 'tether' : 'review';
 const glyph = paths => `<svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
 const fullscreenIcons = { enter: glyph('<path d="M8 3H3v5m13-5h5v5M3 16v5h5m8 0h5v-5"/>'), exit: glyph('<path d="M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5"/>') };
 function storeLayout() { try { localStorage.setItem('photocull-layout', JSON.stringify(layoutPrefs)); } catch {} }
 function applyPaneLayout() {
   const narrow = matchMedia('(max-width: 900px)').matches;
-  const sources = narrow ? document.body.classList.contains('mobile-sources') : layoutPrefs.sources;
+  const sources = narrow ? document.body.classList.contains('mobile-sources') : layoutPrefs[leftPane()];
   const details = narrow ? document.body.classList.contains('mobile-details') : layoutPrefs.details;
   document.body.classList.toggle('sources-hidden', !narrow && !sources); document.body.classList.toggle('details-hidden', !narrow && !details);
-  $('toggle-sidebar').setAttribute('aria-expanded', String(sources)); $('toggle-sidebar').setAttribute('aria-label', sources ? 'Hide sources' : 'Show sources');
+  const left = state.studio ? 'tether tools' : 'sources';
+  $('toggle-sidebar').setAttribute('aria-controls', state.studio ? 'tether-dock' : 'sources'); $('toggle-sidebar').title = state.studio ? 'Tether tools (B)' : 'Sources (B)';
+  $('toggle-sidebar').setAttribute('aria-expanded', String(sources)); $('toggle-sidebar').setAttribute('aria-label', `${sources ? 'Hide' : 'Show'} ${left}`);
   $('toggle-inspector').setAttribute('aria-expanded', String(details)); $('toggle-inspector').setAttribute('aria-label', details ? 'Hide details' : 'Show details');
   requestGrid(); loupe.layout();
 }
 function togglePane(pane) {
   if (matchMedia('(max-width: 900px)').matches) document.body.classList.toggle(pane === 'sources' ? 'mobile-sources' : 'mobile-details');
-  else { layoutPrefs[pane] = !layoutPrefs[pane]; storeLayout(); }
+  else { const key = pane === 'sources' ? leftPane() : pane; layoutPrefs[key] = !layoutPrefs[key]; storeLayout(); }
   applyPaneLayout();
 }
 $('toggle-sidebar').onclick = () => togglePane('sources'); $('toggle-inspector').onclick = () => togglePane('details');
 $('grid-size').value = layoutPrefs.gridSize; $('grid-size').oninput = () => { layoutPrefs.gridSize = Number($('grid-size').value); storeLayout(); requestGrid(); };
+// A Tether test shot is an unsaved frame that the loupe shows like a photo; the backend knows nothing about it.
+const testShot = () => state.mode === 'tether' ? state.testShot : null;
+const testCullMessage = 'Exit or keep Test Shot before culling session photos.';
+function testBlocksCulling() { return state.mode === 'tether' && tether?.test.active && tether.test.hasShot; }
+function guardStageCull() {
+  if (!testBlocksCulling()) return false;
+  toast(testCullMessage); return true;
+}
 // The single-photo view: zoom, pan, navigator and which preview size to load (loupe.js).
-const loupe = PhotoCullLoupe.create({ api,
+const loupe = PhotoCullLoupe.create({ api: Object.create(api, { previewStatus: { value: (session, id, ...rest) => state.testShot?.item.id === id ? Promise.resolve({}) : api.previewStatus(session, id, ...rest) } }),
   elements: { viewport: $('image-viewport'), image: $('review-image'), loading: $('image-loading'), error: $('image-error'), retry: $('retry-preview'),
     previewSource: $('preview-source'), previewStatus: $('preview-status'), cameraBadge: $('camera-preview'), zoomFit: $('zoom'), zoomFill: $('zoom-fill'),
     zoomPercent: $('zoom-percent'), zoomLevel: $('zoom-level'), navigator: $('navigator'), navigatorImage: $('navigator-image'), navigatorView: $('navigator-view'),
     navigatorPanel: $('navigator-panel'), navigatorDock: $('navigator-dock'), navigatorOverlay: $('navigator-overlay'), navigatorZoom: $('navigator-zoom'), inspector: $('inspector') },
-  imageUrl: (item, kind, extra = '') => api.imageUrl(state.session.id, item.id, kind, `&d=${item.developRevision || 0}&edit=${item.externalEdit ? 1 : 0}&v=${state.previewRevision}${state.showOriginal ? '&original=1' : ''}${extra}`),
-  context: () => ({ session: state.session, items: state.session ? filtered() : [], mode: state.mode, revision: state.previewRevision, original: state.showOriginal, fullscreen: state.fullscreen }),
+  imageUrl: (item, kind, extra = '') => item.testShot ? item.url : api.imageUrl(state.session.id, item.id, kind, `&d=${item.developRevision || 0}&edit=${item.externalEdit ? 1 : 0}&v=${state.previewRevision}${state.showOriginal ? '&original=1' : ''}${item.contentRev ? `&cr=${item.contentRev}` : ''}${extra}`),
+  context: () => ({ session: state.session, items: state.session ? filtered() : [], mode: photoStage() ? 'review' : state.mode, revision: state.previewRevision, original: state.showOriginal, fullscreen: state.fullscreen }),
   settings: () => state.settings,
-  onLoaded: item => { void loadMetadata(item); },
+  onLoaded: item => { if (!item.testShot) void loadMetadata(item); },
   onClickZoomChange: async percent => { try { state.settings = await api.settings({ zoomPercent: percent }); } catch (error) { toast(error.message); } },
   onSwipe: swipe => photoSwipe(swipe) });
 // Touch swipes on a photo at Fit: left and right change photos, up picks, down rejects.
@@ -52,12 +67,17 @@ function photoSwipe({ direction, armed, done }) {
     hint.textContent = direction === 'up' ? '⚑ Pick' : '× Reject';
     hint.className = `swipe-hint ${direction === 'up' ? 'pick' : 'reject'}${armed ? ' armed' : ''}`;
   }
-  if (done && armed && state.mode === 'review' && photo()) SWIPES[direction]?.();
+  if (done && armed && photoStage() && photo()) SWIPES[direction]?.();
 }
 matchMedia('(max-width: 900px)').addEventListener('change', applyPaneLayout);
 applyPaneLayout();
+function workspaceBusy() {
+  return state.busy || state.copy.running || state.deleting || !!developView.batch || !!developView.editing;
+}
+function setBusy(value) { state.busy = value; render(); }
+
 // Develop owns its controls and render queue; app hooks keep selection and badges shared.
-const developView = PhotoCullDevelop.init({ api, selection, toast, status: setStatus, settings: () => state.settings, editorName, openEditors: () => openSettings('editors'), setBusy: value => { state.busy=value; render(); },
+const developView = PhotoCullDevelop.init({ api, selection, toast, status: setStatus, settings: () => state.settings, editorName, openEditors: () => openSettings('editors'), setBusy,
   updateItems(session, items) {
     if (state.session?.id !== session) return;
     let changed=false;
@@ -66,14 +86,145 @@ const developView = PhotoCullDevelop.init({ api, selection, toast, status: setSt
   },
   viewResult(session,id) { if(state.session?.id!==session)return; state.selected=id; resetSelection(); setMode('develop'); developView.key=''; render(); },
   async saveSettings(patch) { state.settings = await api.settings(patch); return state.settings; },
+  onDraftChange: draft => tether?.draftChanged(draft),
 });
 
 // The open Del / Shift+Del confirmation, if any: { ids, mode, session, view }.
 let deletePrompt = null;
 function toast(message) {
-  $('toast').textContent = message; $('toast').hidden = false;
+  const notice = $('toast'), settings = $('settings-dialog');
+  const surface = settings.open ? settings : document.body;
+  if (notice.parentNode !== surface) surface.append(notice);
+  notice.textContent = message; notice.hidden = false;
   clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 5500);
 }
+function initUpdater({ api, $, toast, getTether, confirmInstall, isBusy, setBusy }) {
+  const banner = $('update-banner'), bannerText = $('update-banner-text'), dismiss = $('update-banner-dismiss');
+  const checkButton = $('settings-check-updates'), installButton = $('settings-install-update');
+  const status = $('settings-update-status'), progress = $('settings-update-progress');
+  const dismissed = new Set();
+  let available = null, checking = null, manual = false, installing = false;
+
+  function controls() {
+    banner.hidden = !available || dismissed.has(available.version);
+    installButton.hidden = !available;
+    installButton.disabled = $('update-banner-install').disabled = !!checking || installing;
+    checkButton.disabled = manual || installing;
+    dismiss.disabled = installing;
+  }
+  function showAvailable(result) {
+    available = result;
+    const message = `PhotoCull ${result.version} is available`;
+    const notes = result.body?.trim().replace(/\s+/g, ' ') || '';
+    status.textContent = notes ? `${message} · ${notes.length > 240 ? notes.slice(0, 239) + '…' : notes}` : message;
+    bannerText.textContent = `Update ${result.version}`;
+    return message;
+  }
+  function notify(message) {
+    status.textContent = message;
+    toast(message);
+  }
+  function check(userRequested) {
+    if (installing) return;
+    if (userRequested && !manual) {
+      manual = true;
+      status.textContent = 'Checking for updates…';
+      if (status.offsetParent === null) toast(status.textContent);
+    }
+    if (!checking) {
+      checking = Promise.resolve().then(() => api.checkForUpdates()).then(result => {
+        if (result.status === 'available') {
+          const message = showAvailable(result);
+          if (manual) { dismissed.delete(result.version); toast(message); }
+        } else if (result.status === 'up-to-date') {
+          available = null;
+          if (manual) {
+            status.textContent = `PhotoCull ${result.currentVersion} is up to date`;
+            if (status.offsetParent === null) toast(status.textContent);
+          } else status.textContent = '';
+        } else if (manual) {
+          throw new Error(result.message || (result.status === 'unsupported' ? 'Updates are only available in the desktop app.' : 'Please try again later.'));
+        }
+      }).catch(error => {
+        if (manual) {
+          status.textContent = `Couldn’t check for updates. ${error?.message || error}`;
+          if (status.offsetParent === null) toast(status.textContent);
+        }
+      }).finally(() => { checking = null; manual = false; controls(); });
+    }
+    controls();
+    return checking;
+  }
+  function showProgress(event) {
+    if (!installing) return;
+    if (event.phase === 'error') {
+      status.textContent = event.message;
+      progress.hidden = true;
+      return;
+    }
+    let percent = null, message;
+    if (event.phase === 'installing') message = 'Installing…';
+    else if (event.phase === 'downloading') {
+      if (Number.isFinite(event.percent)) percent = event.percent;
+      else if (event.total > 0 && Number.isFinite(event.downloaded)) percent = event.downloaded * 100 / event.total;
+      if (percent !== null) percent = Math.min(100, Math.max(0, Math.round(percent)));
+      message = percent === null ? 'Downloading…' : `Downloading ${percent}%…`;
+    } else return;
+    if (percent === null) progress.removeAttribute('value'); else progress.value = percent;
+    progress.hidden = false;
+    status.textContent = bannerText.textContent = message;
+  }
+  async function install() {
+    if (!available || checking || installing) return;
+    if (isBusy()) return notify('Finish the active operation before installing an update.');
+    installing = true;
+    try {
+      setBusy(true);
+      controls();
+      const tether = getTether();
+      if (tether?.shoot) {
+        if (await tether.hasPendingWork()) return notify('Wait for pending tethered captures to finish before installing an update.');
+        if (!confirmInstall(`Stop the active tethered session and restart PhotoCull to install update ${available.version}?`)) return;
+        const stopped = await tether.stopSession({ requireIdle: true });
+        if (!stopped) return;
+        if (Array.isArray(stopped.pending) ? stopped.pending.length > 0 : stopped.pending > 0) {
+          return notify('The tethered session stopped with unrecovered captures. Recover them before installing the update.');
+        }
+        if (tether.shoot) return notify('A tethered session is still active. Update canceled.');
+      }
+      dismissed.delete(available.version);
+      controls();
+      showProgress({ phase: 'downloading' });
+      const result = await api.installUpdate(available.version);
+      if (result?.status === 'up-to-date') {
+        available = null;
+        notify(`PhotoCull ${result.currentVersion} is up to date`);
+      } else if (result?.status === 'changed') {
+        dismissed.delete(result.version);
+        showAvailable(result);
+        toast(`PhotoCull ${result.version} is now available — click Install to confirm.`);
+      } else if (typeof result === 'string' && result) throw new Error(result);
+      else showAvailable(available);
+    } catch (error) {
+      bannerText.textContent = `Update ${available.version}`;
+      notify(error?.message || String(error || 'Couldn’t install the update. Please try again.'));
+    } finally {
+      installing = false;
+      progress.hidden = true;
+      controls();
+      setBusy(false);
+    }
+  }
+  $('settings-updates').hidden = false;
+  checkButton.onclick = () => check(true);
+  installButton.onclick = $('update-banner-install').onclick = install;
+  dismiss.onclick = () => { dismissed.add(available.version); controls(); };
+  api.onUpdateProgress(showProgress);
+  api.onCheckUpdates(() => check(true));
+  return { check };
+}
+const updater = api.desktop && initUpdater({ api, $, toast, getTether: () => tether, confirmInstall: message => confirm(message),
+  isBusy: workspaceBusy, setBusy });
 function photo() { return state.session?.items.find(i => i.id === state.selected); }
 function selection() { return state.marked.size > 1 ? filtered().filter(i => state.marked.has(i.id)) : photo() ? [photo()] : []; }
 function resetSelection() { state.marked = new Set(state.selected ? [state.selected] : []); state.anchor = state.selected; }
@@ -93,16 +244,24 @@ function filtered() {
   });
 }
 function imageUrl(item, kind = 'thumb', prefetch = false) {
-  return api.imageUrl(state.session.id, item.id, kind, `&d=${item.developRevision || 0}&edit=${item.externalEdit ? 1 : 0}&v=${state.previewRevision}${state.showOriginal ? '&original=1' : ''}${prefetch ? '&prefetch=1' : ''}`);
+  return api.imageUrl(state.session.id, item.id, kind, `&d=${item.developRevision || 0}&edit=${item.externalEdit ? 1 : 0}&v=${state.previewRevision}${state.showOriginal ? '&original=1' : ''}${item.contentRev ? `&cr=${item.contentRev}` : ''}${prefetch ? '&prefetch=1' : ''}`);
 }
+// Matches the backend's source XMP export: decisions, develop state or frozen capture metadata.
+const xmpEligible = item => item.edited || item.adjusted || item.developed || item.externalEdit || item.recipe || item.developRevision > 0 || !!item.captureMetadata;
 function fileSize(bytes) { return bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`; }
 function setStatus(text, error = false) {
   $('save-status').textContent = text;
   $('save-status').style.color = error ? '#e99787' : '';
 }
 
+// The backend keeps a tethered shoot's folder open, so another folder or card needs the shoot stopped first.
+async function leaveTether() {
+  if (!tether?.active()) return true;
+  if (!confirm('Stop the tethered session and open another folder?')) return false;
+  return tether.stopSession();
+}
 async function openFolder() {
-  if (state.busy || state.copy.running || state.deleting) return;
+  if (state.busy || state.copy.running || state.deleting || !await leaveTether()) return;
   state.busy = true;
   $('open-folder').disabled = true; $('empty-open').disabled = true;
   setStatus('Reading folder…');
@@ -115,7 +274,7 @@ async function openFolder() {
 }
 
 function loadSession(session) {
-  if(state.mode==='compare')state.mode='review';
+  if(state.mode==='compare')state.mode=stageMode();
   cancelCulling();culling.metadata.clear();culling.jobs.clear();culling.scores.clear();culling.expanded.clear();culling.bursts=[];culling.byId.clear();
   state.session = session; state.selected = session.items[0]?.id ?? null;
   state.proposals = []; state.proposalsBusy = false; state.proposalsLoading = !api.server; state.proposalWarning = ''; proposalSignature = '';
@@ -129,7 +288,7 @@ function loadSession(session) {
   $('breadcrumb').title = session.folder;
   $('export').disabled = !session.items.length;
   gridNodes.clear(); filmNodes.clear(); $('grid-content').replaceChildren();
-  render(); renderDevices();
+  survey?.unpin(); render(); renderDevices(); tether?.sessionLoaded(session);
   setStatus('Saved');void analyzeCulling();
   if (session.warnings.length) toast(`${session.warnings.length} file or sidecar warning(s): ${session.warnings[0]}`);
   const missingHandoffs = session.items.filter(i => i.handoffMissing).length;
@@ -158,7 +317,7 @@ function renderDevices() {
   $('device-status').textContent = removed ? 'Card disconnected' : state.deviceError || '';
 }
 async function openDevice(device) {
-  if (state.busy || state.copy.running || state.deleting) return;
+  if (state.busy || state.copy.running || state.deleting || !await leaveTether()) return;
   state.busy = true; $('open-folder').disabled = true; $('empty-open').disabled = true; renderDevices();
   setStatus('Reading camera card…');
   try { loadSession(await api.openDevice(device.id)); }
@@ -172,7 +331,7 @@ function receiveDevices(snapshot) {
   state.devices = snapshot.devices; state.deviceError = snapshot.error;
   renderDevices();
   const cameras = state.devices.filter(d => d.camera);
-  if (welcomeSettled && !autoOpenSuppressed && state.settingsReady && state.settings.autoOpenCards && !document.querySelector('dialog[open]') && !state.session && !state.busy && cameras.length === 1 && !state.autoOpened.has(cameras[0].id)) {
+  if (welcomeSettled && !autoOpenSuppressed && state.settingsReady && state.settings.autoOpenCards && !tether?.active() && !document.querySelector('dialog[open]') && !state.session && !state.busy && cameras.length === 1 && !state.autoOpened.has(cameras[0].id)) {
     state.autoOpened.add(cameras[0].id); void openDevice(cameras[0]);
   } else if (state.session && state.devices.some(d => !previous.has(d.id))) toast('Card connected');
   for (const id of state.autoOpened) if (!state.devices.some(d => d.id === id)) state.autoOpened.delete(id);
@@ -199,7 +358,8 @@ function renderCounts() {
 
 function render(reset = false) {
   renderEditorActions();
-  $('image-export').disabled = !state.session?.items.length || state.deleting || state.copy.running;
+  $('export').disabled = state.busy || state.deleting || !state.session?.items.length;
+  $('image-export').disabled = state.busy || !state.session?.items.length || state.deleting || state.copy.running;
   renderCounts();
   $('original-toggle').hidden = !state.session?.items.some(i=>i.externalEdit) || state.mode==='develop';
   $('original-toggle').textContent = state.showOriginal ? 'Show External edits (\\)' : 'Show originals (\\)';
@@ -213,21 +373,23 @@ function render(reset = false) {
   if (!visible.has(state.anchor)) state.anchor = state.selected;
   survey?.sync(state.mode==='compare');
   $('compare-mode').setAttribute('aria-pressed',String(state.mode==='compare'));
-  const loaded = !!state.session?.items.length;
-  $('empty').hidden = loaded;
+  const loaded = !!state.session?.items.length, test = !!testShot();
+  $('empty').hidden = loaded || test;
   const hasProposals = state.filter === 'external' && (pendingProposals(true).length || state.proposalsLoading || state.proposalWarning);
-  $('no-matches').hidden = !loaded || !!items.length || !!hasProposals;
-  $('review').hidden = !loaded || !items.length || state.mode !== 'review';
+  $('no-matches').hidden = !loaded || !!items.length || !!hasProposals || test;
+  $('review').hidden = !test && (!loaded || !items.length || !photoStage());
   $('grid').hidden = !loaded || !items.length && !hasProposals || state.mode !== 'grid';
   $('grid-size-control').hidden = !loaded || state.mode !== 'grid';
   $('review-mode').setAttribute('aria-pressed', String(state.mode === 'review')); $('grid-mode').setAttribute('aria-pressed', String(state.mode === 'grid'));
   $('review-mode').classList.toggle('active', state.mode === 'review');
   $('grid-mode').classList.toggle('active', state.mode === 'grid');
   $('develop-mode').classList.toggle('active', state.mode === 'develop'); $('develop-mode').setAttribute('aria-pressed', String(state.mode === 'develop'));
+  $('tether-mode').classList.toggle('active', state.studio); $('tether-mode').setAttribute('aria-pressed', String(state.studio));
+  document.body.classList.toggle('tether-active', state.studio);
   const titles = { all: 'Photos', unreviewed: 'Unreviewed', pick: 'Picks', reject: 'Rejects', rated: 'Rated', external: 'External edits', trash: 'Trash' };
   $('view-title').textContent = loaded ? titles[state.filter] : 'Photos';
   $('view-count').textContent = loaded ? `${items.length}${state.marked.size > 1 ? ` · ${state.marked.size} selected` : ''}` : '';
-  const rejects = scopeItems('reject').length, trashed = scopeItems('trash').length, locked = state.busy || state.copy.running || state.deleting;
+  const rejects = scopeItems('reject').length, trashed = scopeItems('trash').length, locked = testBlocksCulling() || state.busy || state.copy.running || state.deleting;
   $('delete-rejects').hidden = !loaded || state.filter !== 'reject' || !rejects;
   $('delete-rejects').disabled = locked;
   $('delete-rejects').querySelector('span').textContent = `Delete ${rejects} reject${rejects === 1 ? '' : 's'}`;
@@ -297,8 +459,12 @@ $('proposal-reject-all').onclick = () => decideProposals(pendingProposals(true).
 function renderSelection() {
   const item = photo();
   developView.sync({ mode: state.mode, session: state.session, photo: item });
+  tether?.selectionChanged();
   $('image-details').hidden = !item; $('inspector-empty').hidden = !!item;
-  if (!item) { state.generation++; loupe.clear(); if (state.fullscreen) void setFullscreen(false); return; }
+  if (!item) {
+    for (const button of document.querySelectorAll('.decision-bar button, #color-labels button')) button.disabled = true;
+    state.generation++; if (testShot()) showTestShot(); else loupe.clear(); if (state.fullscreen) void setFullscreen(false); return;
+  }
   const items = filtered(), index = items.findIndex(i => i.id === item.id);
   // Keeps the photo on screen and those prepared ahead in the direction of travel; cancels obsolete work.
   if(state.mode!=='compare')void api.focus(state.session.id, [item.id, ...loupe.select(items, index)]).catch(() => {});
@@ -315,10 +481,26 @@ function renderSelection() {
   $('detail-kind').textContent = `${item.raw ? 'Camera RAW' : 'Image'} · ${fileSize(item.size)}${item.paired ? ' · paired JPEG' : ''}`;
   renderDecision(item);
   renderColorLabels(item);
+  const locked = !!testBlocksCulling();
+  for (const button of document.querySelectorAll('.decision-bar button, #color-labels button')) button.disabled = locked;
+  if (locked) { $('detail-decision').textContent = testCullMessage; $('flag-overlay').hidden = true; }
   renderFilmstrip(items, index);
-  if (state.mode === 'review') loupe.show(item);
   clearTimeout(metadataTimer);
+  if (testShot()) return showTestShot();
+  if (photoStage()) loupe.show(item);
   metadataTimer = setTimeout(() => loadMetadata(item), 180);
+}
+
+// The frame takes the stage and Details; the filmstrip and selection stay on the session photo underneath.
+function showTestShot() {
+  const shot = testShot(), meta = shot.meta || {};
+  loupe.store(shot.item.id, { kind: 'full', url: shot.url, width: shot.width, height: shot.height, info: { type: 'test' } });
+  loupe.show(shot.item);
+  $('photo-name').textContent = 'Test shot · not saved'; $('preview-source').textContent = 'Test shot · not saved';
+  $('image-details').hidden = false; $('inspector-empty').hidden = true; $('detail-name').textContent = 'Test shot · not saved';
+  $('metadata').dataset.image = shot.item.id;
+  $('metadata').replaceChildren(...[['Exposure', [meta.shutter ? `${meta.shutter} s` : '', meta.aperture, meta.iso ? `ISO ${meta.iso}` : ''].filter(Boolean).join(' · ')], ['Focal length', meta.focalLength], ['Flash', meta.flash], ['Preview', `${shot.width} × ${shot.height}`]]
+    .flatMap(([name, value]) => { const dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = name; dd.textContent = value || '—'; return [dt, dd]; }));
 }
 
 function renderDecision(item) {
@@ -340,7 +522,7 @@ function renderDecision(item) {
 
 api.onPreviewState(status => {
   if(status.state==='invalidated' && state.session?.items.some(i=>i.id===status.id)){refreshPreviews();return;}
-  if (status.id !== state.selected || state.mode !== 'review' || $('review-image').dataset.complete) return;
+  if (status.id !== state.selected || !photoStage() || $('review-image').dataset.complete) return;
   if (status.state === 'queued' || status.state === 'rendering') {
     $('image-loading').hidden = false;
     $('image-loading').textContent = status.state === 'queued' ? 'RAW render queued…' : 'Developing RAW sensor data…';
@@ -369,6 +551,12 @@ function formatCaptureDate(value) {
   return `${Number(match[3])} ${months[Number(match[2]) - 1] || match[2]} ${match[1]}, ${match[4]}`;
 }
 
+// Flash compensation is listed only when it was dialed in.
+function flashText(meta) {
+  const comp = String(meta.flashComp ?? '').trim(), dialed = !!comp && Number.parseFloat(comp) !== 0;
+  return [meta.flash, dialed ? (/ev/i.test(comp) ? comp : `${comp} EV`) : ''].filter(Boolean).join(' · ');
+}
+
 async function loadMetadata(item) {
   const sessionId = state.session.id, imageId = item.id, generation = state.generation;
   if ($('metadata').dataset.image !== imageId) {
@@ -380,7 +568,10 @@ async function loadMetadata(item) {
     if(state.session?.id===sessionId)culling.metadata.set(imageId,metadata);
     if (state.selected !== imageId || state.session.id !== sessionId || state.generation !== generation) return;
     const rows = [['Camera', metadata.camera], ['Lens', metadata.lens], ['Exposure', [metadata.shutter ? `${metadata.shutter} s` : '', metadata.aperture, metadata.iso ? `ISO ${metadata.iso}` : ''].filter(Boolean).join(' · ')],
-      ['Captured', formatCaptureDate(metadata.captured)], ['Autofocus', metadata.focus?.source], ['Sharpness', Number.isFinite(culling.scores.get(imageId)) ? culling.scores.get(imageId).toFixed(1) + ' · preview detail' : api.canAnalyze ? 'Pending analysis' : 'Desktop app required'], ['Preview', metadata.width && metadata.height ? `${metadata.width} × ${metadata.height}` : ''], ['Source', metadata.source], ['Develop', item.externalEdit ? `Edited in ${editorName(item.editedBy)} · open Develop to view` : item.developed ? 'Developed hand-off' : item.adjusted ? 'RAW adjustments' : '']];
+      ['Captured', formatCaptureDate(metadata.captured)], ...(metadata.flash ? [['Flash', flashText(metadata)]] : []), ['Autofocus', metadata.focus?.source], ['Sharpness', Number.isFinite(culling.scores.get(imageId)) ? culling.scores.get(imageId).toFixed(1) + ' · preview detail' : api.canAnalyze ? 'Pending analysis' : 'Desktop app required'], ['Preview', metadata.width && metadata.height ? `${metadata.width} × ${metadata.height}` : ''], ['Source', metadata.source], ['Develop', item.externalEdit ? `Edited in ${editorName(item.editedBy)} · open Develop to view` : item.developed ? 'Developed hand-off' : item.adjusted ? 'RAW adjustments' : '']];
+    // Metadata frozen when a tethered shot was taken; empty fields stay out of the list.
+    const shot = state.session.items.find(i => i.id === imageId)?.captureMetadata;
+    if (shot) rows.push(...[['Creator', shot.creator], ['Copyright', shot.copyright], ['Caption', shot.caption], ['Keywords', shot.keywords?.join(', ')]].filter(([, value]) => value));
     $('metadata').replaceChildren(...rows.flatMap(([name, value]) => {
       const dt = document.createElement('dt'), dd = document.createElement('dd');
       dt.textContent = name; dd.textContent = value || '—'; return [dt, dd];
@@ -393,7 +584,7 @@ async function loadMetadata(item) {
 function renderFilmstrip(items, index) {
   items=stackItems(items);index=items.findIndex(i=>i.id===state.selected);
   const start = Math.max(0, index - 3), nearby = items.slice(start, Math.min(items.length, index + 5));
-  if (state.mode === 'review') void api.visible(state.session.id, nearby.map(i => i.id)).catch(() => {});
+  if (photoStage()) void api.visible(state.session.id, nearby.map(i => i.id)).catch(() => {});
   const nodes = nearby.map((item, i) => {
     let button = filmNodes.get(item.id);
     if (!button || button.dataset.revision !== String(state.previewRevision)) {
@@ -458,7 +649,7 @@ function renderGrid() {
   const last = Math.min(items.length, (Math.ceil((viewport.scrollTop + viewport.clientHeight) / rowHeight) + 1) * columns);
   const retained = new Set();
   for (let i = first; i < last; i++) {
-    const item = items[i], signature = `${burstSignature(item)}:${item.id}:${item.flag}:${item.rating}:${item.color}:${item.adjusted}:${item.developed}:${item.externalEdit}:${item.editedBy}:${item.developRevision}:${state.previewRevision}`;
+    const item = items[i], signature = `${burstSignature(item)}:${item.id}:${item.flag}:${item.rating}:${item.color}:${item.adjusted}:${item.developed}:${item.externalEdit}:${item.editedBy}:${item.developRevision}:${item.contentRev || 0}:${state.previewRevision}`;
     retained.add(item.id);
     let node = gridNodes.get(item.id);
     if (!node || node.dataset.signature !== signature) {
@@ -558,6 +749,7 @@ window.addEventListener('pointercancel', event => { if (event.pointerId === marq
 $('grid').addEventListener('lostpointercapture', event => { if (event.pointerId === marquee?.pointer) endMarquee(); });
 
 function select(id, event = {}) {
+  tether?.navigated();
   const wasMulti = state.marked.size > 1;
   if (event.shiftKey) {
     const items = state.mode==='grid' ? stackItems(filtered()) : filtered(), anchor = items.findIndex(i => i.id === state.anchor), index = items.findIndex(i => i.id === id);
@@ -587,7 +779,17 @@ function navigate(delta, extend = false) {
   const next = items[Math.max(0, Math.min(items.length - 1, index + delta))];
   if (next) select(next.id, { shiftKey: extend });
 }
-function setMode(mode) { if(mode==='compare' && state.mode!=='compare' && !survey.open(selection().map(i=>i.id),filtered()))return toast('Select at least two photos to compare.'); if (mode !== 'review' && state.fullscreen) void setFullscreen(false); loupe.cancelHand(); state.generation++; state.mode = mode; render(); }
+// Grid, Review and Develop leave the Tether workspace; Compare inside it (a pinned reference) keeps it.
+function setMode(mode) {
+  if(state.mode==='compare' && mode!=='compare')survey.unpin();
+  if(mode==='compare' && state.mode!=='compare' && !survey.open(selection().map(i=>i.id),filtered()))return toast('Select at least two photos to compare.');
+  if (!['review','tether'].includes(mode) && state.fullscreen) void setFullscreen(false);
+  loupe.cancelHand(); state.generation++;
+  const studio = mode === 'compare' ? state.studio : mode === 'tether', changed = studio !== state.studio;
+  state.mode = mode; state.studio = studio;
+  render();
+  if (changed) { applyPaneLayout(); tether?.modeChanged(); }
+}
 
 function nextSurvivor(items, ids) {
   let last = -1;
@@ -595,6 +797,7 @@ function nextSurvivor(items, ids) {
   return items.slice(last + 1).find(i => !ids.has(i.id)) ?? items.slice(0, last).reverse().find(i => !ids.has(i.id));
 }
 async function decide(patch) {
+  if (guardStageCull()) return;
   const targets = state.mode==='compare' ? (photo()?[photo()]:[]) : selection();
   if (!targets.length) return;
   const sessionId = state.session.id;
@@ -639,7 +842,7 @@ api.onSettings(() => { if (!document.querySelector('dialog[open]')) commands.exe
 document.body.classList.toggle('platform-mac', api.platform === 'darwin');
 if (api.platform === 'darwin') document.querySelectorAll('#help-dialog kbd').forEach(key => { key.textContent = key.textContent.replaceAll('Ctrl', '⌘').replaceAll('Alt', '⌥'); });
 $('open-folder').onclick = openFolder; $('empty-open').onclick = openFolder;
-$('review-mode').onclick = () => setMode('review'); $('grid-mode').onclick = () => setMode('grid'); $('develop-mode').onclick = () => setMode('develop');
+$('review-mode').onclick = () => setMode('review'); $('grid-mode').onclick = () => setMode('grid'); $('develop-mode').onclick = () => setMode('develop'); $('tether-mode').onclick = () => setMode('tether');
 $('search').oninput = event => { state.query = event.target.value.toLowerCase(); $('grid').scrollTop = 0; render(true); };
 document.querySelectorAll('.filter').forEach(button => { button.onclick = () => {
   state.filter = button.dataset.filter; if (state.filter === 'external') setMode('grid'); $('grid').scrollTop = 0; render(true);
@@ -665,7 +868,7 @@ for (const id of ['review-dock', 'filmstrip-hotspot']) {
   $(id).addEventListener('focusin', showDock); $(id).addEventListener('focusout', () => hideDock());
 }
 function applyFullscreen(value) {
-  if (value && photo() && state.mode !== 'review') setMode('review');
+  if (value && photo() && !photoStage()) setMode('review');
   const changed = state.fullscreen !== value;
   state.fullscreen = value; document.body.classList.toggle('fullscreen-review', value);
   $('fullscreen').innerHTML = value ? fullscreenIcons.exit : fullscreenIcons.enter;
@@ -678,7 +881,7 @@ function applyFullscreen(value) {
 }
 async function setFullscreen(value = !state.fullscreen) {
   if (value && !photo()) return;
-  if (value && state.mode !== 'review') setMode('review');
+  if (value && !photoStage()) setMode('review');
   const request = ++fullscreenRequest, previous = state.fullscreen;
   fullscreenPending++;
   applyFullscreen(value);
@@ -697,9 +900,9 @@ api.onFullscreenToggle(() => hideDeletePrompt());
 api.onFullscreenToggle(() => { if (!document.querySelector('dialog[open]')) void setFullscreen(); });
 $('shortcuts').onclick = () => openHelp();
 $('export').onclick = () => {
+  if (state.busy) return;
   $('export-results').hidden = true;
-  const count = state.session.items.filter(i => i.edited).length;
-  $('export-xmp').disabled = count === 0;
+  $('export-xmp').disabled = !state.session.items.some(xmpEligible);
   renderCopyOptions(); void updateNamePreview();
   $('export-dialog').showModal();
 };
@@ -715,7 +918,7 @@ function renderCopyOptions() {
   $('copy-destination-path').textContent = state.copy.destination || 'Choose folder…';
   $('copy-cancel').hidden = !state.copy.running;
   $('copy-reveal').hidden = !state.copy.copiedTo || state.copy.running;
-  $('export-xmp').disabled = state.copy.running || !state.session?.items.some(i => i.edited);
+  $('export-xmp').disabled = state.copy.running || !state.session?.items.some(xmpEligible);
   $('export-json').disabled = state.copy.running;
   $('copy-preset').disabled = state.copy.running;
   $('copy-settings').disabled = state.copy.running;
@@ -768,6 +971,8 @@ $('copy-reveal').onclick = () => { if (state.copy.copiedTo) void api.revealDesti
 $('export-dialog').addEventListener('cancel', event => { if (state.copy.running) { event.preventDefault(); toast('Cancel the copy first'); } });
 document.querySelectorAll('.close-dialog').forEach(b => { b.onclick = () => { if (b.closest('dialog').id === 'export-dialog' && state.copy.running) return toast('Cancel the copy first'); b.closest('dialog').close(); }; });
 $('export-xmp').onclick = async () => {
+  if (workspaceBusy()) return;
+  setBusy(true);
   $('export-xmp').disabled = true;
   try {
     const result = await api.exportXmp(state.session.id, readSettings());
@@ -775,28 +980,34 @@ $('export-xmp').onclick = async () => {
     $('metadata-results').textContent = `${result.written} written · ${result.failures.length} failed\n` + result.failures.map(f => `${f.name}: ${f.reason}`).join('\n');
     toast(`${result.written} XMP sidecars written${result.failures.length ? `; ${result.failures.length} failed` : ''}`);
   } catch (e) { toast(e.message); }
-  finally { $('export-xmp').disabled = false; }
+  finally { $('export-xmp').disabled = false; setBusy(false); }
 };
 $('export-json').onclick = async () => {
+  if (workspaceBusy()) return;
+  setBusy(true);
   try { const file = await api.exportManifest(state.session.id); if (file) toast('Decisions manifest saved.'); }
   catch (e) { toast(e.message); }
+  finally { setBusy(false); }
 };
 $('grid').onscroll = requestGrid;
 new ResizeObserver(requestGrid).observe($('grid'));
 const commandActions = {
+  'check-updates': () => updater.check(true),
   'focus-overlay': event => {if(!event.repeat)return toggleFocus();}, 'focus-zoom': () => zoomFocus(), 'burst-stack': event => {if(!event.repeat)toggleBurst();}, 'burst-keep': () => promptKeepSharpest(),
-  'view-compare': () => setMode(state.mode==='compare'?'review':'compare'), 'develop-split': () => developView.toggleSplit(),
+  'view-compare': () => setMode(state.mode==='compare'?stageMode():'compare'), 'develop-split': () => developView.toggleSplit(),
   settings: () => openSettings(), open: () => openFolder(), export: () => imageExport.open(), 'copy-picks': () => $('export').click(), 'configure-editors': () => openSettings('editors'),
   ...Object.fromEntries(PhotoCullCommands.table.filter(c=>c.button).map(c=>[c.id,()=>$(c.button).click()])),
   'fullscreen-system': () => setFullscreen(), 'fullscreen-key': () => setFullscreen(), fullscreen: () => setFullscreen(),
-  'switch-view': () => setMode(state.mode === 'review' ? 'grid' : 'review'), edit: () => developView.openBatch(), original: () => toggleOriginal(),
-  escape: () => { if(state.mode==='compare'){setMode('review');return;}if (state.marked.size > 1) { resetSelection(); render(); } else if (state.fullscreen) return setFullscreen(false); else if (state.mode === 'review' && loupe.zoomed) loupe.fit(); },
+  'switch-view': () => setMode(photoStage() ? 'grid' : 'review'), edit: () => $('edit-external').click(), original: () => toggleOriginal(),
+  escape: () => { if(state.mode==='compare'){setMode(stageMode());return;}if (state.marked.size > 1) { resetSelection(); render(); } else if (state.fullscreen) return setFullscreen(false); else if (photoStage() && loupe.zoomed) loupe.fit(); },
   undo: () => history('undo'), redo: () => history('redo'), 'select-all': () => { state.marked = new Set(filtered().map(i => i.id)); render(); },
   delete: () => state.filter === 'trash' ? showDeletePrompt(deleteMode()) : moveToTrash(), 'delete-permanent': () => showDeletePrompt('permanent'), restore: () => restoreFromTrash(),
   sources: () => togglePane('sources'), details: () => togglePane('details'),
   'review-space': () => { if (photo()) setMode('review'); }, 'review-zoom': () => { if (photo()) { setMode('review'); loupe.zoomIn(); } },
-  'view-grid': () => setMode('grid'), 'view-review': () => setMode('review'), 'view-develop': () => setMode('develop'), help: () => openHelp(),
+  'view-grid': () => setMode('grid'), 'view-review': () => setMode('review'), 'view-develop': () => setMode('develop'), 'view-tether': () => setMode('tether'), help: () => openHelp(),
+  'wb-pick': () => state.mode === 'develop' ? developView.toggleWhiteBalancePick() : tether?.toggleWhiteBalancePick(),
   'develop-copy': () => developView.copy(), 'develop-paste': () => developView.paste(), clipping: () => developView.toggleClipping(), before: () => developView.toggleBefore(),
+  ...Object.fromEntries(PhotoCullCommands.table.filter(c=>c.id.startsWith('tether-')).map(c=>[c.id,event=>tether?.command(c.id,event)])),
   palette: () => openPalette(), 'go-photo': () => openPalette('> '), backup: () => openBackup(), 'treat-card': () => treatCard(), about: () => openSettings('about'), welcome: () => showWelcome(), diagnostics: () => copyDiagnostics(), logs: () => api.openLogs(),
 };
 for (let n=0;n<=8;n++) commandActions['color-alt-'+n] = () => decide({ color: n ? String(n) : '' });
@@ -808,12 +1019,17 @@ for (const [id,action] of Object.entries({'zoom-in':'zoom-in','zoom-out':'zoom-o
 let recentCommands = [], panKey = null;
 // The server offers culling only: no Develop, external editors, export, camera cards or local files.
 const DESKTOP_COMMANDS = new Set(['export', 'edit', 'configure-editors', 'view-develop', 'backup', 'treat-card', 'diagnostics', 'logs']);
-function offered(command) { return !api.server || !DESKTOP_COMMANDS.has(command.id) && command.context.some(mode => mode !== 'develop'); }
+function offered(command) {
+  if (command.desktopOnly) return api.desktop;
+  return !api.server || !DESKTOP_COMMANDS.has(command.id) && !command.desktop && command.context.some(mode => mode !== 'develop');
+}
+// Live View owns the keyboard while expanded; plain Review gains the tether-only keys while a shoot runs.
+function commandContext() { return tether?.stageExpanded() ? 'stage' : state.mode === 'review' && tether?.reviewTools() ? ['review', 'tether-review'] : state.mode; }
 const commands = PhotoCullCommands.create({ platform: api.platform, actions: Object.fromEntries(Object.entries(commandActions).map(([id,run]) => [id,event => {
   if(id==='pan'){if(!event.key)return loupe.handleKey(event,'toggle');panKey=event.code || event.key;}
   try { return Promise.resolve(run(event)).catch(error=>toast(error.message)); } catch(error) { toast(error.message); }
-}])), context: () => state.mode, custom: () => state.settings.shortcuts || {},
-  enabled: command => offered(command) && (!command.when || state.filter===command.when) && (!['burst-stack','burst-keep'].includes(command.id) || !!culling.byId.get(state.selected)) && (command.id!=='burst-keep' || !!bestIn(culling.byId.get(state.selected))) && (!/^(flag-|rating-|color-|navigate-|extend-|delete|restore|select-all)/.test(command.id) || !!photo()) && (command.id!=='go-photo'||state.session?.items.some(item=>!item.trashed)) && (command.id!=='copy-picks'||!$('export').disabled) && (command.id!=='treat-card'||canTreatCard()) && (!command.button||!$(command.button).matches(':disabled')) && (!['zoom-in','zoom-out','fit','zoom-toggle','pan','review-zoom'].includes(command.id) || !!photo()),
+}])), context: commandContext, custom: () => state.settings.shortcuts || {},
+  enabled: command => offered(command) && (!command.id.startsWith('tether-') || !!tether?.enabled(command.id)) && (!command.when || state.filter===command.when) && (!['burst-stack','burst-keep'].includes(command.id) || !!culling.byId.get(state.selected)) && (command.id!=='burst-keep' || !!bestIn(culling.byId.get(state.selected))) && (!/^(flag-|rating-|color-|navigate-|extend-|delete|restore|select-all)/.test(command.id) || !!photo()) && (command.id!=='go-photo'||state.session?.items.some(item=>!item.trashed)) && (command.id!=='copy-picks'||!$('export').disabled) && (command.id!=='treat-card'||canTreatCard()) && (!command.button||!$(command.button).matches(':disabled')) && (!['zoom-in','zoom-out','fit','zoom-toggle','pan','review-zoom'].includes(command.id) || !!photo()) && (command.id!=='wb-pick' || (state.mode==='develop' ? developView.canPickWhiteBalance() : !!tether?.canPickWhiteBalance())),
   onRun: command => { if(command.id!=='palette'){ recentCommands=[command.id,...recentCommands.filter(id=>id!==command.id)].slice(0,12); try{localStorage.setItem('photocull-recent-commands',JSON.stringify(recentCommands));}catch{} } } });
 try { recentCommands=JSON.parse(localStorage.getItem('photocull-recent-commands')||'[]').filter(id=>commands.commands.some(c=>c.id===id)).slice(0,12); } catch {}
 document.addEventListener('keydown', event => {
@@ -872,13 +1088,51 @@ function removeFromSession(ids) {
   $('folder-detail').textContent = `${state.session.items.length} photos`;
   $('export').disabled = !state.session.items.length;
 }
+// Tethered captures arrive as library deltas; a remap moves a provisional JPEG id onto its RAW pair.
+const nameOrder = new Intl.Collator(undefined, { numeric: true });
+function applyTetherDelta(delta) {
+  if (state.session?.id !== delta.session) return;
+  const remap = new Map((delta.remap || []).map(r => [r.from, r.to])), removed = new Set(delta.removedIds || []);
+  const move = id => remap.get(id) ?? id, upserted = new Set((delta.upserts || []).map(i => i.id));
+  for (const id of [...removed, ...remap.keys()]) if (!upserted.has(id)) { gridNodes.get(id)?.remove(); gridNodes.delete(id); filmNodes.delete(id); }
+  const before = filtered(), gone = new Set([...removed].filter(id => !upserted.has(id) && !remap.has(id)));
+  if (gone.has(state.selected)) { state.selected = nextSurvivor(before, gone)?.id ?? null; resetSelection(); }
+  state.selected = move(state.selected); state.anchor = move(state.anchor); state.marked = new Set([...state.marked].map(move).filter(id => !gone.has(id)));
+  for (const map of [culling.metadata, culling.scores]) for (const [from, to] of remap) if (map.has(from)) { if (!map.has(to)) map.set(to, map.get(from)); map.delete(from); }
+  survey.remap(remap);
+  let refresh = false;
+  const items = state.session.items.filter(i => !removed.has(i.id) && !remap.has(i.id) || upserted.has(i.id)), byId = new Map(items.map(i => [i.id, i]));
+  for (const patch of delta.upserts || []) {
+    const item = byId.get(patch.id);
+    if (!item) { items.push({ ...patch }); continue; }
+    if ((item.contentRev || 0) !== (patch.contentRev || 0)) { refresh = true; gridNodes.get(item.id)?.remove(); gridNodes.delete(item.id); filmNodes.delete(item.id); }
+    Object.assign(item, patch);
+  }
+  state.session.items = items.sort((a, b) => nameOrder.compare(a.name, b.name));
+  regroupBursts();
+  $('folder-detail').textContent = `${items.length} photos`; $('export').disabled = !items.length || state.deleting;
+  if (refresh) loupe.invalidate();
+  render();
+  for (const patch of delta.upserts || []) void cullingMetadata(patch.id, delta.session).then(() => { if (state.session?.id === delta.session) { regroupBursts(); render(); } }).catch(() => {});
+}
+function replaceTetherLibrary(session) {
+  if (state.session?.id !== session.id) return;
+  const ids = new Set(session.items.map(i => i.id));
+  for (const id of [...gridNodes.keys()]) if (!ids.has(id)) { gridNodes.get(id).remove(); gridNodes.delete(id); filmNodes.delete(id); }
+  state.session.items = session.items; state.session.warnings = session.warnings ?? state.session.warnings;
+  if (!ids.has(state.selected)) { state.selected = filtered()[0]?.id ?? null; resetSelection(); }
+  regroupBursts(); $('folder-detail').textContent = `${session.items.length} photos`; $('export').disabled = !session.items.length;
+  loupe.invalidate(); render();
+}
 async function moveToTrash() {
+  if (guardStageCull()) return;
   const item = photo(), count = selection().length;
   if (!item || item.trashed || state.deleting) return;
   await decide({ trashed: true });
   toast(`Moved ${count > 1 ? plural(count, 'photo') : item.name} to Trash · ${api.platform === 'darwin' ? '⌘' : 'Ctrl+'}Z to undo`);
 }
 async function restoreFromTrash() {
+  if (guardStageCull()) return;
   const item = photo(), count = selection().length;
   if (!item?.trashed || state.deleting) return;
   await decide({ trashed: false });
@@ -886,6 +1140,7 @@ async function restoreFromTrash() {
 }
 $('trash-restore').onclick = () => void restoreFromTrash();
 function showDeletePrompt(mode) {
+  if (guardStageCull()) return;
   const item = photo();
   if (!item || state.deleting || state.copy.running || state.busy) return;
   if (!trashAvailable()) mode = 'permanent';
@@ -899,6 +1154,7 @@ function hideDeletePrompt() { deletePrompt = null; $('delete-prompt').hidden = t
 async function confirmDeletePrompt() {
   if (!deletePrompt) return;
   const { ids, mode, session, view } = deletePrompt; hideDeletePrompt();
+  if (guardStageCull()) return;
   const visible = new Set(filtered().map(i => i.id));
   if (state.session?.id !== session || viewKey() !== view || !sameIds(ids) || !ids.every(id => visible.has(id)) || document.querySelector('dialog[open]')) return;
   await deletePhotos(ids, mode);
@@ -927,6 +1183,7 @@ function scopeItems(scope) {
 $('delete-rejects').onclick = () => openDeleteDialog('reject');
 $('empty-trash').onclick = () => openDeleteDialog('trash');
 function openDeleteDialog(scope) {
+  if (guardStageCull()) return;
   const rejects = scopeItems(scope);
   if (!rejects.length) return;
   deleteScope = scope;
@@ -975,7 +1232,7 @@ function renderColorLabels(item) {
 }
 document.addEventListener('keyup', event => {
   const active = document.activeElement;
-  if (state.mode !== 'review' || document.querySelector('dialog[open]') || active?.matches('input, textarea, select') || active?.isContentEditable) { loupe.cancelHand(); return; }
+  if (!photoStage() || document.querySelector('dialog[open]') || active?.matches('input, textarea, select') || active?.isContentEditable) { loupe.cancelHand(); return; }
   if (panKey && (event.code || event.key) === panKey) { panKey=null; if (loupe.handleKeyUp({ key: ' ' })) event.preventDefault(); }
 });
 window.addEventListener('blur', () => loupe.cancelHand());
@@ -993,6 +1250,7 @@ function syncSettings(value) {
   buildNaming('copy', value.naming);
   if (state.session) { gridNodes.clear(); $('grid-content').replaceChildren(); render(); }
   receiveDevices({ devices: state.devices, error: state.deviceError });
+  tether?.settingsChanged();
 }
 $('color-filter').onchange = () => { state.colorFilter = $('color-filter').value; render(true); };
 function setSettingsTab(name) {
@@ -1055,6 +1313,7 @@ async function saveCopyDefaults() {
 }
 function fillSettings(value) {
   fillEditors(value);
+  $('settings-auto-updates').checked = value.autoCheckUpdates !== false;
   $('default-recipe').value = value.defaultRecipe || 'neutral';
   $('focus-preference').checked=!!value.focusOverlay;$('burst-gap').value=value.burstGap || 1;
   $('auto-advance').checked = value.autoAdvance; $('recursive').checked = value.recursive; $('auto-open-cards').checked = value.autoOpenCards; $('zoom-click-center').checked = value.zoomClickCenter;
@@ -1075,10 +1334,11 @@ function fillSettings(value) {
   }));
   fillWorkspaceSettings(value);
   buildNaming('settings', value.naming);
-  $('metadata-results').hidden = true; $('export-xmp').disabled = !state.session?.items.some(i => i.edited); $('export-json').disabled = !state.session;
+  $('metadata-results').hidden = true; $('export-xmp').disabled = !state.session?.items.some(xmpEligible); $('export-json').disabled = !state.session;
 }
 function readSettings() {
   const value = clone(settingsDraft);
+  if (api.desktop) value.autoCheckUpdates = $('settings-auto-updates').checked;
   readEditors(value); value.defaultRecipe = $('default-recipe').value;
   value.focusOverlay=$('focus-preference').checked;value.burstGap=Number($('burst-gap').value);
   value.autoAdvance = $('auto-advance').checked; value.recursive = $('recursive').checked; value.autoOpenCards = $('auto-open-cards').checked; value.zoomClickCenter = $('zoom-click-center').checked;
@@ -1169,7 +1429,12 @@ $('copy-preset').onchange = async () => {
 };
 $('export-dialog').addEventListener('close', () => { $('copy-progress').hidden = true; $('copy-status').textContent = ''; });
 const imageExport = PhotoCullExport.init({ api, state, selection, buildNaming, readNaming, toast, updateItems: developView.host.updateItems });
-void api.settings().then(syncSettings).catch(error => toast(error.message));
+void api.settings().then(value => {
+  syncSettings(value);
+  if (updater) setTimeout(() => {
+    if (state.settings.autoCheckUpdates !== false) void updater.check(false);
+  }, 4000);
+}).catch(error => toast(error.message));
 
 // Browser mode lets smoke tests open a folder without a native dialog.
 if (api.platform === 'web') window.loadTestFolder = async (folder, recursive) => loadSession(await api.openPath(folder, recursive));
@@ -1187,7 +1452,7 @@ $('detail-result-edit').onclick = async () => { $('detail-result-edit').disabled
 // External editor preferences and shared actions (all selection views).
 function editorName(id) { return state.settings.editors?.find(e=>e.id===id)?.name || (id==='dehancer' ? 'Dehancer' : 'External editor'); }
 function renderEditorActions() {
-  const editor = state.settings.editors?.find(e=>e.id===state.settings.defaultEditor), busy = state.busy || state.copy.running || state.deleting || !!developView.batch || !!developView.editing;
+  const editor = state.settings.editors?.find(e=>e.id===state.settings.defaultEditor), busy = workspaceBusy();
   $('edit-external').textContent = editor ? `Edit in ${editor.name}…` : 'Edit in…';
   $('edit-external').disabled = busy || !state.session || !selection().some(i=>i.raw && !i.trashed);
   developView.batchButton.textContent = $('edit-external').textContent;developView.batchButton.disabled=$('edit-external').disabled;
@@ -1228,17 +1493,18 @@ document.addEventListener('pointerdown',e=>{for(const m of menus)if(!m.menu.hidd
 bindMenu($('external-editor-menu'),$('external-editor-list'));
 bindMenu($('develop-recipe-menu-button'),$('develop-recipe-menu'));
 $('handoff-cleanup').onclick=async()=>{
+  if (workspaceBusy()) return;
+  setBusy(true);
   try {
     const session=state.session.id, usage=await api.handoffUsage(session);
     if(!usage.count)return toast(usage.failures.length ? usage.failures.map(f=>f.error).join(' · ') : 'No hand-off files to clean up.');
     if(await developView.ask(`Delete ${usage.count} hand-off file(s), ${fileSize(usage.bytes)}?\n${usage.entries.map(r=>r.path).join('\n')}`, [['delete','Delete hand-off files'],['cancel','Cancel']])!=='delete')return;
     if(usage.unexported && await developView.ask(`${usage.unexported} external edit(s) have not been exported. Deleting these hand-off files permanently loses those edits.`,[['delete','Delete unexported edits'],['cancel','Keep files']])!=='delete')return;
-    developView.host.setBusy(true);
     const result=await api.handoffClean(session,usage.token,!!usage.unexported);
     developView.host.updateItems(session,result.items);handoffUsageKey='';render();
     toast(`${result.deleted.length} hand-off file(s) deleted${result.failures.length ? ' · '+result.failures.map(f=>f.error).join(' · ') : ''}`);
   } catch(e){toast(e.message);}
-  finally { developView.host.setBusy(false); }
+  finally { setBusy(false); }
 };
 function readEditorRow(row) {
   const input=k=>row.querySelector(`[data-editor-field="${k}"]`), previous=settingsDraft.editors.find(e=>e.id===row.dataset.editorId);
@@ -1308,7 +1574,7 @@ function openPalette(query='') {if(document.querySelector('dialog[open]'))return
 function drawPalette() {
   const query=$('command-query').value,findPhoto=query.startsWith('>');
   paletteRows=findPhoto?(state.session?.items||[]).filter(item=>!item.trashed&&PhotoCullCommands.fuzzy(query.slice(1),item.name)).slice(0,60).map(item=>({id:'photo-'+item.id,title:item.name,category:'Photo',run:()=>{state.filter='all';state.query='';state.colorFilter='';$('search').value='';$('color-filter').value='';state.selected=item.id;resetSelection();render(true);}})):
-    [...commands.search(query,recentCommands).filter(offered).map(command=>({...command,disabled:!command.context.includes(state.mode)||!command.enabled(),run:()=>commands.execute(command.id)})),
+    [...commands.search(query,recentCommands).filter(offered).map(command=>({...command,disabled:!PhotoCullCommands.active(command,commandContext())||!command.enabled(),run:()=>commands.execute(command.id)})),
      ...(api.server?[]:state.settings.editors||[]).map(e=>({id:'edit-with-'+e.id,title:`Edit in ${e.name}…`,category:'Files',disabled:$('edit-external').disabled,run:()=>developView.openBatch(e.id)})).filter(row=>PhotoCullCommands.fuzzy(query,row.title+' '+row.category)>0)].slice(0,60);
   paletteIndex=Math.min(paletteIndex,Math.max(0,paletteRows.length-1));
   $('command-results').replaceChildren(...paletteRows.map((row,index)=>{
@@ -1364,8 +1630,40 @@ $('bundle-path-map').oninput=clearBundlePreview;
 $('bundle-export').onclick=async()=>{try{const file=await api.bundleExport({excludePaths:$('bundle-exclude-paths').checked});$('bundle-changes').textContent=file?`Saved ${file}`:'Export canceled.';}catch(e){$('bundle-changes').textContent=e.message;}};
 $('bundle-preview').onclick=async()=>{clearBundlePreview();try{const result=await api.bundlePreview(bundleInput,{pathMap:JSON.parse($('bundle-path-map').value)});bundleToken=result.token;$('bundle-changes').textContent=`Preferences changed: ${result.changes.join(', ')||'none'}\nUser recipes: ${result.recipes.before} → ${result.recipes.after}\nMetadata presets: ${result.presets.before} → ${result.presets.after}\n${result.warnings.join('\n')}\n\nPreference values (before / after):\n${JSON.stringify(result.details,null,2)}\nRecipe changes: ${JSON.stringify(result.recipeChanges)}\nPreset changes: ${JSON.stringify(result.presetChanges)}`;$('bundle-apply').disabled=false;}catch(e){$('bundle-changes').textContent=e.message;}};
 $('bundle-apply').onclick=async()=>{if(!bundleToken)return;$('bundle-apply').disabled=true;try{const result=await api.bundleApply(bundleToken);syncSettings(result.settings);settingsDraft=clone(result.settings);settingsBase=clone(result.settings);const recipes=await api.recipes();$('default-recipe').replaceChildren(...recipes.recipes.map(r=>option(r.id,r.name)));fillSettings(settingsDraft);$('bundle-changes').textContent=`Imported. Previous settings backed up to ${result.backup}`;clearBundlePreview();}catch(e){$('bundle-changes').textContent=e.message;}};
-function fillWorkspaceSettings(value) {drawKeyboard();$('card-folders').value=(value.cardFolders||['DCIM']).join('\n');$('manual-cards').value=(value.manualCards||[]).join('\n');$('backup-template').value=value.backupTemplate||'{date}-{card}';}
-function readWorkspaceSettings(value) {value.cardFolders=$('card-folders').value.split('\n').map(s=>s.trim()).filter(Boolean);value.manualCards=$('manual-cards').value.split('\n').map(s=>s.trim()).filter(Boolean);value.backupTemplate=$('backup-template').value.trim();}
+// Defaults for the next tethered session; a running shoot keeps its own copy in its ledger.
+const tetherTab=workspaceButton('Tether',()=>setSettingsTab('tether'));tetherTab.dataset.settingsTab='tether';$('settings-dialog').querySelector('nav').append(tetherTab);
+const tetherPage=workspaceNode('section',null,{'data-settings-page':'tether',hidden:''});
+tetherPage.innerHTML='<h3>Tethered capture</h3><p id="settings-tether-note" class="subtle small">These defaults apply to the next tethered session. The Tether workspace edits the running shoot.</p>'
+  +'<div class="field-row"><label for="settings-tether-layout">Capture folder</label><select id="settings-tether-layout"><option value="single">Single folder</option><option value="session">Session layout (Capture, Selects, Output)</option></select></div>'
+  +'<div class="field-row"><label for="settings-tether-naming">File name</label><input id="settings-tether-naming" maxlength="180" spellcheck="false" aria-describedby="settings-tether-naming-sample"></div><p id="settings-tether-naming-sample" class="subtle small tabular"></p>'
+  +'<div class="field-row"><label for="settings-tether-counter-start">Counter starts at</label><input id="settings-tether-counter-start" type="number" min="0" max="999999999" step="1" class="tabular"></div>'
+  +'<div class="field-row"><label for="settings-tether-counter-step">Counter step</label><input id="settings-tether-counter-step" type="number" min="-1000" max="1000" step="1" class="tabular"></div>'
+  +'<div class="field-row"><label for="settings-tether-adjustments">Next capture adjustments</label><select id="settings-tether-adjustments"><option value="last">Copy from last capture</option><option value="primary">Copy from Primary</option><option value="default">Default recipe</option><option value="recipe">Recipe</option></select></div>'
+  +'<div class="field-row"><label for="settings-tether-follow">Show new captures</label><select id="settings-tether-follow"><option value="whenReady">When Ready</option><option value="immediately">Immediately</option><option value="off">Off</option></select></div>'
+  +'<label class="toggle-row"><input id="settings-tether-autopause" type="checkbox"> Pause following while zoomed in or comparing</label>'
+  +'<label class="toggle-row"><input id="settings-tether-chime" type="checkbox"> Play a sound when a capture arrives</label>'
+  +'<label class="toggle-row"><input id="settings-tether-reconnect" type="checkbox"> Reconnect automatically when the camera returns</label>';
+$('settings-status').before(tetherPage);
+$('settings-tether-naming').oninput=()=>{const value=$('settings-tether-naming').value,check=PhotoCullNaming.validateCaptureTemplate(value);$('settings-tether-naming').setAttribute('aria-invalid',String(!check.valid));
+  $('settings-tether-naming-sample').textContent=check.valid?'Sample '+PhotoCullNaming.renderCaptureName(value,{jobName:state.session?.folder.split(/[\\/]/).filter(Boolean).pop()||'Capture',counter:Number($('settings-tether-counter-start').value)||1,extensions:['.ARW','.JPG']},{preview:true}).filenames.join(' + '):check.error;};
+function fillTetherSettings(value) {
+  const t=value.tether||{},usable=t.version===1;
+  for(const input of tetherPage.querySelectorAll('input, select'))input.disabled=!usable;
+  $('settings-tether-note').textContent=usable?'These defaults apply to the next tethered session. The Tether workspace edits the running shoot.':'These tether settings were saved by a newer PhotoCull and are left unchanged.';
+  if(!usable)return;
+  $('settings-tether-layout').value=t.layout;$('settings-tether-naming').value=t.namingTemplate;$('settings-tether-counter-start').value=t.counterStart;$('settings-tether-counter-step').value=t.counterStep;
+  $('settings-tether-adjustments').value=t.adjustments.mode;$('settings-tether-follow').value=t.follow.mode;$('settings-tether-autopause').checked=t.follow.pauseOnInspect;$('settings-tether-chime').checked=t.chime;$('settings-tether-reconnect').checked=t.autoReconnect;
+  $('settings-tether-naming').oninput();
+}
+function readTetherSettings(value) {
+  if(value.tether?.version!==1)return;
+  const t=value.tether;t.layout=$('settings-tether-layout').value;t.namingTemplate=$('settings-tether-naming').value;
+  t.counterStart=Math.round(Number($('settings-tether-counter-start').value));t.counterStep=Math.round(Number($('settings-tether-counter-step').value));
+  t.adjustments={...t.adjustments,mode:$('settings-tether-adjustments').value};t.follow={...t.follow,mode:$('settings-tether-follow').value,pauseOnInspect:$('settings-tether-autopause').checked};
+  t.chime=$('settings-tether-chime').checked;t.autoReconnect=$('settings-tether-reconnect').checked;
+}
+function fillWorkspaceSettings(value) {drawKeyboard();fillTetherSettings(value);$('card-folders').value=(value.cardFolders||['DCIM']).join('\n');$('manual-cards').value=(value.manualCards||[]).join('\n');$('backup-template').value=value.backupTemplate||'{date}-{card}';}
+function readWorkspaceSettings(value) {readTetherSettings(value);value.cardFolders=$('card-folders').value.split('\n').map(s=>s.trim()).filter(Boolean);value.manualCards=$('manual-cards').value.split('\n').map(s=>s.trim()).filter(Boolean);value.backupTemplate=$('backup-template').value.trim();}
 const welcome=workspaceNode('dialog',null,{id:'welcome-panel','aria-labelledby':'welcome-title',hidden:''});
 welcome.innerHTML='<h2 id="welcome-title">Welcome to PhotoCull</h2><p>Open a photo folder or choose a connected camera card in the sidebar.</p><div id="welcome-keys" class="shortcut-list"></div><div id="welcome-actions" class="copy-actions"></div>';
 document.body.append(welcome);
@@ -1406,7 +1704,7 @@ async function copyDiagnostics() {
 const backupDialog=workspaceNode('dialog',null,{id:'backup-dialog','aria-labelledby':'backup-title'});
 backupDialog.innerHTML='<div class="dialog-header"><h2 id="backup-title">Back up card or folder</h2></div><p class="dialog-lead">Copies every regular file, including videos and sidecars. Each file is verified with SHA-256. Existing identical copies are verified and skipped. Source files are never formatted or deleted.</p><div class="field-row"><label for="backup-source">Source folder</label><input id="backup-source" readonly><button id="backup-source-choose" class="button">Choose…</button></div><div class="field-row"><label for="backup-destination">Destination</label><input id="backup-destination" readonly placeholder="Choose a backup drive or folder"><button id="backup-destination-choose" class="button">Choose…</button></div><div class="field-row"><label for="backup-folder-template">Folder template</label><input id="backup-folder-template"></div><div class="copy-actions dialog-actions"><button id="backup-check" class="button quiet">Check verified backup</button><button id="backup-cancel" class="button quiet" hidden>Cancel backup</button><button id="backup-close" class="button">Close</button><button id="backup-start" class="button primary">Back up & verify</button></div><progress id="backup-progress" max="1" value="0" hidden></progress><p id="backup-status" role="status" aria-live="polite"></p><pre id="backup-failures"></pre>';
 document.body.append(backupDialog);let backupRunning=false;const cardStatuses=new Map();
-function openBackup(source=state.session?.deviceRoot||state.session?.folder||'') {if(document.querySelector('dialog[open]'))return;$('backup-source').value=source;$('backup-folder-template').value=state.settings.backupTemplate||'{date}-{card}';$('backup-status').textContent='';$('backup-failures').textContent='';backupDialog.showModal();}
+function openBackup(source=state.session?.deviceRoot||state.session?.folder||'') {if(state.busy || document.querySelector('dialog[open]'))return;$('backup-source').value=source;$('backup-folder-template').value=state.settings.backupTemplate||'{date}-{card}';$('backup-status').textContent='';$('backup-failures').textContent='';backupDialog.showModal();}
 $('backup-source-choose').onclick=async()=>{const folder=await api.pickFolder('Choose a card or folder to back up');if(folder)$('backup-source').value=folder;};
 $('backup-destination-choose').onclick=async()=>{const folder=await api.chooseCopyDestination();if(folder)$('backup-destination').value=folder;};
 function backupStatusText(status) {return status.safe?`All ${status.total} files backed up and verified — safe to format`:`${status.verified||0} of ${status.total} files verified · ${status.missing.length} file(s) need backup or verification`;}
@@ -1450,7 +1748,7 @@ async function zoomFocus() {
   const id=state.selected;await cullingMetadata(id);if(id!==state.selected)return;
   const focus=focusOf(id);if(!focus)return toast('This photo has no recorded AF coordinates.');
   if(state.mode==='compare')survey.zoomFocus(focus);
-  else {if(state.mode!=='review')setMode('review');loupe.view.set({mode:'ratio',percent:100},{centerOn:focus,animate:true});}
+  else {if(!photoStage())setMode('review');loupe.view.set({mode:'ratio',percent:100},{centerOn:focus,animate:true});}
 }
 function regroupBursts() {
   culling.bursts=PhotoCullCulling.groupBursts((state.session?.items || []).filter(item=>!item.trashed).map(item=>({id:item.id,...culling.metadata.get(item.id)})),state.settings.burstGap || 1);
@@ -1476,7 +1774,7 @@ function renderCulling() {
   $('burst-context').hidden=!available;$('burst-context').textContent=available?`${burst.ids.indexOf(state.selected)+1}/${burst.ids.length} in burst${bestIn(burst)===state.selected?' · sharpest':''}`:'';
   $('burst-stack').hidden=$('burst-keep').hidden=!available;
   $('burst-stack').textContent=available && culling.expanded.has(burst.id)?'Collapse burst':'Expand burst';
-  $('burst-keep').disabled=!bestIn(burst) || state.busy || state.deleting || !!state.pendingSaves;
+  $('burst-keep').disabled=testBlocksCulling() || !bestIn(burst) || state.busy || state.deleting || !!state.pendingSaves;
   burstMenu.stack.textContent=$('burst-stack').textContent;burstMenu.keep.disabled=$('burst-keep').disabled;
   applyFocus();
 }
@@ -1513,6 +1811,7 @@ async function analyzeCulling() {
   }finally{if(epoch===culling.epoch)culling.running=false;}
 }
 function promptKeepSharpest() {
+  if (guardStageCull()) return;
   const burst=culling.byId.get(state.selected),best=bestIn(burst);if(!best || state.busy || state.deleting || state.pendingSaves)return;
   burstPrompt={session:state.session.id,ids:[...burst.ids],best};
   const items=burst.ids.map(id=>state.session.items.find(i=>i.id===id)),changes=items.filter(i=>i.flag!==(i.id===best?'pick':'reject'));
@@ -1532,5 +1831,43 @@ $('burst-confirm').onclick=async()=>{
 survey=PhotoCullSurvey.create({api,session:()=>state.session?.id,revision:()=>`${state.previewRevision}:${state.showOriginal}`,items:filtered,item:id=>state.session?.items.find(i=>i.id===id),url:imageUrl,metadata:cullingMetadata,focus:focusOf,overlay:()=>!!state.settings.focusOverlay,
   activate:id=>{if(state.selected!==id){state.selected=id;renderSelection();}},
   decide:async(id,patch)=>{if(state.busy || state.deleting)return;const session=state.session.id;try{const result=await api.decide(session,id,patch);if(state.session?.id===session){Object.assign(state.session.items.find(i=>i.id===id),result);render();}}catch(error){toast(error.message);}}
+});
+const narrowLayout=()=>matchMedia('(max-width: 900px)').matches;
+const inspectorShown=()=>narrowLayout()?document.body.classList.contains('mobile-details'):layoutPrefs.details;
+tether=PhotoCullTether.create({api,toast,
+  settings:()=>state.settings,saveSettings:async patch=>{state.settings=await api.settings(patch);return state.settings;},
+  session:()=>state.session,mode:()=>state.mode,photo,item:id=>state.session?.items.find(i=>i.id===id),original:()=>state.showOriginal,imageUrl:(item,kind)=>imageUrl(item,kind),
+  loadSession,applyDelta:applyTetherDelta,replaceLibrary:replaceTetherLibrary,survey:()=>survey,flushDevelop:()=>developView.flush(),
+  visible:id=>filtered().some(i=>i.id===id),
+  showAll:()=>{state.filter='all';state.colorFilter='';$('color-filter').value='';state.query='';$('search').value='';render();},
+  show:(id,{review=false}={})=>{if(review && !['review','compare','tether'].includes(state.mode))setMode(stageMode());select(id);},
+  activate:id=>{if(state.selected!==id){state.selected=id;resetSelection();renderSelection();}},
+  inspecting:()=>photoStage() && loupe.zoomed || state.mode==='compare' && !survey.pinned(),
+  blocked:()=>!!deletePrompt || !!document.querySelector('dialog[open]') || state.busy || state.deleting,
+  pin:id=>{if(!survey.pinReference(id))return false;if(state.fullscreen)void setFullscreen(false);loupe.cancelHand();state.generation++;state.mode='compare';render();return true;},
+  unpin:()=>{survey.unpin();if(state.mode==='compare'){state.mode=stageMode();render();}tether.render();},
+  studio:()=>state.studio,enterStudio:()=>{if(!state.studio)setMode('tether');},
+  revealDock:()=>{if(narrowLayout()?!document.body.classList.contains('mobile-sources'):!layoutPrefs.dock)togglePane('sources');},inspectorVisible:inspectorShown,
+  reviewView:loupe.view,reviewViewport:$('image-viewport'),stageChanged:()=>{loupe.cancelHand();render();},
+  updateItems:(session,items)=>developView.host.updateItems(session,items),
+  showTestShot:frame=>{
+    const old=state.testShot;
+    if(frame && deletePrompt)hideDeletePrompt();
+    if(frame && old?.url===frame.url){old.meta=frame.meta;render();return;}
+    if(old){loupe.reps.delete(old.item.id);loupe.dims.delete(old.item.id);}
+    state.testShot=frame?{...frame,item:{id:`tether-test-${frame.seq}`,name:'Test shot',raw:false,testShot:true,url:frame.url}}:null;
+    if(old && loupe.item?.id===old.item.id)$('review-image').dataset.stamp='';
+    loupe.cancelHand();render();},
+  // A developed frame replaces the camera preview as this photo's preview-size rendition.
+  displayedReview:()=>loupe.item?.id===photo()?.id && loupe.shown ? { image:loupe.el.image, rep:loupe.shown } : null,
+  showDeveloped:(id,{url,width,height,wb})=>{
+    const item=photo();if(!photoStage() || item?.id!==id || loupe.item?.id!==id)return false;
+    loupe.reps.get(id)?.delete('preview');loupe.store(id,{kind:'preview',url,width,height,wb,info:{type:'developed'}});
+    loupe.display(item,loupe.reps.get(id).get('preview'));$('preview-source').textContent='Developed RAW';return true;}});
+Object.assign(survey.host,{
+  unpinned:message=>{toast(message);queueMicrotask(()=>{if(state.mode==='compare' && !survey.pinned()){state.mode=stageMode();render();}tether.render();});},
+  unpin:()=>{survey.unpin();if(state.mode==='compare'){state.mode=stageMode();render();}tether.render();},
+  replaceReference:()=>{const id=state.selected;if(id && id!==survey.pinned()?.reference && survey.pinReference(id)){render();tether.render();}},
+  candidateChosen:()=>tether.navigated(),
 });
 window.addEventListener('pagehide',cancelCulling);

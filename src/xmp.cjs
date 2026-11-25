@@ -1,7 +1,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
-const { normalizeSettings } = require('./preferences.cjs');
+const { normalizeSettings, text } = require('./preferences.cjs');
 const { DOMParser, XMLSerializer } = require('@xmldom/xmldom');
 
 const RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
@@ -35,6 +35,33 @@ function property(doc, name, namespace = XMP) {
   return '';
 }
 
+// A frozen capture snapshot replaces the active preset's descriptive fields for that photo. Blank
+// fields write nothing, so existing values survive and a later global preset cannot fill them.
+function normalizeCaptureMetadata(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid capture metadata.');
+  if (input.keywords !== undefined && (!Array.isArray(input.keywords) || input.keywords.length > 100)) throw new Error('Use at most 100 keywords.');
+  if (input.presetId !== undefined && input.presetId !== null && (typeof input.presetId !== 'string' || !/^[A-Za-z0-9._-]{1,80}$/.test(input.presetId))) throw new Error('Invalid metadata preset.');
+  return { creator: text(input.creator ?? '', 1024), copyright: text(input.copyright ?? '', 1024), caption: text(input.caption ?? '', 8192),
+    keywords: [...new Set((input.keywords || []).map(k => text(k, 128)).filter(Boolean))], presetId: input.presetId ?? null };
+}
+function captureSettings(settings, item) {
+  const config = normalizeSettings(settings);
+  if (!item?.captureMetadata) return config;
+  const { creator, copyright, caption, keywords } = normalizeCaptureMetadata(item.captureMetadata);
+  return { ...config, metadata: { ...config.metadata, creator, copyright, caption, title: '', keywords } };
+}
+function descriptive(doc) {
+  const values = name => Array.from(doc.getElementsByTagNameNS(DC, name)).flatMap(el => {
+    const items = Array.from(el.getElementsByTagNameNS(RDF, 'li'));
+    return items.length ? items.map(li => li.textContent) : [el.textContent];
+  }).concat(Array.from(doc.getElementsByTagNameNS(RDF, 'Description')).filter(d => d.hasAttributeNS(DC, name)).map(d => d.getAttributeNS(DC, name))).filter(Boolean);
+  const result = {};
+  for (const [key, name] of [['creator', 'creator'], ['copyright', 'rights'], ['title', 'title'], ['caption', 'description']]) { const value = values(name)[0]; if (value) result[key] = value; }
+  const keywords = [...new Set(values('subject'))];
+  if (keywords.length) result.keywords = keywords;
+  return Object.keys(result).length ? result : null;
+}
+
 function readXmp(xml, settings, { portable = false } = {}) {
   const doc = parse(xml), rawRating = property(doc, 'Rating'), label = property(doc, 'Label');
   const rating = Number(rawRating);
@@ -55,6 +82,13 @@ function readXmp(xml, settings, { portable = false } = {}) {
     if (Number.isInteger(savedRating) && savedRating >= 0 && savedRating <= 5) result.rating = savedRating;
   }
   result.modified = Date.parse(property(doc, 'modified', PHOTOCULL)) || 0;
+  const metadata = descriptive(doc);
+  if (metadata) result.metadata = metadata;
+  const capture = property(doc, 'captureMetadata', PHOTOCULL);
+  if (capture) {
+    try { const value = JSON.parse(capture); if (value?.version === 1) result.captureMetadata = normalizeCaptureMetadata(value.metadata); }
+    catch { result.warning = 'Invalid PhotoCull capture metadata in XMP; decisions were still imported.'; }
+  }
   const state = property(doc, 'develop', PHOTOCULL);
   if (state) {
     try {
@@ -159,7 +193,7 @@ function patchProperties(xml, owned, description) {
 }
 
 function updateXmp(xml, decision, settings) {
-  const config = normalizeSettings(settings), metadata = config.metadata;
+  const config = captureSettings(settings, decision), metadata = config.metadata;
   const base = '<?xpacket begin="\uFEFF" id="W5M0MpCehiHzreSzNTczkc9d"?>\n' +
     `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="${RDF}"><rdf:Description rdf:about=""/></rdf:RDF></x:xmpmeta>\n<?xpacket end="w"?>`;
   const original = parse(xml || base), oldLabel = property(original, 'Label');
@@ -218,6 +252,7 @@ function updateXmp(xml, decision, settings) {
   scalar(PHOTOCULL, 'photocull', 'standardRating', metadata.writeRatings ? property(doc, 'Rating') : property(original, 'Rating'));
   scalar(PHOTOCULL, 'photocull', 'standardLabel', metadata.writeLabels ? property(doc, 'Label') : oldLabel);
   scalar(PHOTOCULL, 'photocull', 'modified', new Date(decision.modified || Date.now()).toISOString());
+  if (decision.captureMetadata) scalar(PHOTOCULL, 'photocull', 'captureMetadata', JSON.stringify({ version: 1, metadata: normalizeCaptureMetadata(decision.captureMetadata) }));
   if (Object.hasOwn(decision, 'develop')) scalar(PHOTOCULL, 'photocull', 'develop', JSON.stringify({ version: 1, state: decision.develop ? { ...portableDevelop(decision.develop, decision.path, decision.photoRoot), edited: !!decision.develop.editedBy } : null }));
   desc.setAttributeNS(XMLNS, 'xmlns:rdf', RDF);
   return patchProperties(xml || base, owned, desc);
@@ -285,4 +320,4 @@ async function writableSidecar(file) {
   if (stat) await fs.access(file, fs.constants.W_OK);
 }
 const shouldWriteSidecars = (settings, removable) => settings.writeSidecars !== 'never' && (settings.writeSidecars === 'always' || !removable);
-module.exports = { readXmp, updateXmp, writeXmp, atomicWrite, sidecarPaths, portableDevelop, resolveDevelop, portablePath, shouldWriteSidecars, PHOTOCULL };
+module.exports = { normalizeCaptureMetadata, captureSettings, readXmp, updateXmp, writeXmp, atomicWrite, sidecarPaths, portableDevelop, resolveDevelop, portablePath, shouldWriteSidecars, PHOTOCULL };

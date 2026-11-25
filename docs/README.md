@@ -8,7 +8,10 @@ Start with the [project README](../README.md) for installation, quick start and 
 - [Commands, settings and card backup](workspace.md): shortcuts, settings transfer, Welcome, diagnostics and verified backups.
 - [External editors](external-editors.md): launch arguments, save detection, destinations and cleanup safeguards.
 - [Recipes and finished-image export](recipes-export.md): recipe files, presets, codec options, worker cap and measurements.
-- [macOS](macos.md): native build setup, first-launch Gatekeeper steps and unverified behavior.
+- [macOS](macos.md): native build setup, first-launch Gatekeeper steps, tethered capture prerequisites and unverified behavior.
+- [Tethered capture specification](tether-c1-spec.md): Capture One-style tethered workflow, naming, Next Capture Adjustments, overlays, Live View and wire contracts.
+- [Sony α7 III & α7C II USB tethering on macOS](sony-ptp-macos-spec.md): ImageCaptureCore transport, SDI 200/300 wire protocol, property tables and hardware qualification checklist.
+- [Sony α7C II Wi-Fi tethering on macOS](sony-ptpip-wifi-spec.md): PTP/IP 1.0 transport, SSDP discovery, Access Authentication SSH tunnel and loopback tests.
 
 ## Contributing and validation
 

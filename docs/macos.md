@@ -39,6 +39,16 @@ Allow removable-volume access when macOS requests it. Camera cards mounted under
 - `Ctrl+Cmd+F`, `F` or `F11` toggles native fullscreen. Zoom, culling and export use the same workflow as Windows. `Del`/`⌫` first moves a photo to PhotoCull’s in-app Trash. Deleting from that view or using Shift+Delete opens a disk-deletion prompt; `Enter` confirms.
 - Settings, sessions and caches remain under `~/Library/Application Support/PhotoCull/`, so existing data carries over from the previous app. Open Settings → Open settings folder for the exact location.
 
+## Tethered capture (Sony α7 III & α7C II)
+
+PhotoCull includes a macOS USB tethering engine over Apple `ImageCaptureCore` and Sony’s PTP/SDIO protocol for the **Sony α7 III (`ILCE-7M3`, SDI 200)** and **Sony α7C II (`ILCE-7CM2`, SDI 300)**, plus wireless **PTP/IP over Wi-Fi** (TCP 15740, with OpenSSH forwarding to camera-side `localhost:15740` when Access Authentication is enabled) for the **Sony α7C II**.
+
+- **α7 III (USB only):** turn **Ctrl w/ Smartphone** off, set **MENU → Setup → USB Connection → PC Remote**, and choose **Setup → PC Remote Settings → Still Img. Save Dest.** (`PC Only` or `PC+Camera`) and **RAW+J PC Save Img** before connecting.
+- **α7C II (USB):** disconnect any smartphone session, set **MENU → Setup → USB → USB Connection Mode → PC Remote** (or **Sel. When Connect → Remote Shoot**), and check **MENU → Network → Cnct./PC Remote → Remote Shoot Setting** (`Destination Only` or `Dest.+Camera`, `RAW+J Save Image`, `Save Image Size → Original`).
+- **α7C II (Wi-Fi):** join the studio network (**Network → Wi-Fi → Access Point Set.**) or use **PC Remote Function → Wi-Fi Direct Info.** (`192.168.122.1`), set **PC Remote Function → PC Remote → On**, and use **Access Authen. Info** (SSH username, password and SHA-256 fingerprint) or **Pairing** when Access Authentication is Off.
+- **Permissions and signing:** `src-tauri/build.rs` compiles the Objective-C `ImageCaptureCore` bridge on macOS and links `ImageCaptureCore` and `Foundation`. The bundle includes `NSCameraUsageDescription` and `NSLocalNetworkUsageDescription` (`src-tauri/Info.plist`) plus `com.apple.security.personal-information.photos-library` (`assets/entitlements.mac.plist`). On macOS 15+, allow PhotoCull under **System Settings → Privacy & Security → Local Network**. Quit other apps that may hold the camera (Capture One, Imaging Edge, Photos) before connecting.
+- See [Tethered capture](tether-c1-spec.md), [Sony USB tethering on macOS](sony-ptp-macos-spec.md) and [Sony α7C II Wi-Fi tethering on macOS](sony-ptpip-wifi-spec.md) for the full feature contract and hardware-qualification checklists.
+
 ## Validation limits
 
-**Native Tauri launch on a Mac has not been verified yet.** Permissions, native menu shortcuts, fullscreen, removable-card discovery, bundled module loading and deletion still need native validation. Browser-mode smoke tests exercise the shared renderer and backend in Chromium; they do not drive WKWebView or verify native shell behavior.
+**Native Tauri launch and physical camera tethering on a Mac have not been verified yet.** Permissions, native menu shortcuts, fullscreen, removable-card discovery, bundled module loading, deletion, `ImageCaptureCore` Objective-C compilation/linking, and sustained USB or Wi-Fi capture/Live View on real α7 III and α7C II hardware still need native validation on Apple Silicon macOS. Offline protocol, PTP/IP loopback, Wi-Fi SSDP/XML/SSH, transfer, sidecar, overlay and browser UI smoke tests run on Linux and verify the non-hardware layers.

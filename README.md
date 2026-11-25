@@ -51,7 +51,17 @@ The desktop bundle includes its Node runtime and image tools; Node and Rust are 
 - JPEG, JPEG XL, TIFF, PNG, AVIF and WebP export; sizing, output sharpening, color spaces, metadata/location controls, filename templates and saved export presets. AVIF remains comparatively slow. Export runs at half the logical core count, rounded down, with a minimum of one and maximum of three simultaneous photos.
 - Generated previews are converted and tagged as sRGB; the system webview handles display color management. Original upright JPEG previews may pass through with their existing profile.
 
-See the [workflow reference](docs/workflow.md) for zoom gestures, preview limits, naming, deletion and export options, and [recipes and export](docs/recipes-export.md) for formats and measured limits. Production display previews still use sharp/libvips; the [Rust preview investigation](docs/rust-display-previews.md) is an experiment, not a shipped replacement.
+### Tethered capture (macOS · Sony α7 III & α7C II)
+
+- Dedicated **Tether** workspace alongside Grid, Review and Develop: camera controls, shot location, naming and next-capture adjustments sit in the left dock, studio review aids sit in a slim bar above the photo, and the live histogram, navigator and EXIF stay visible on the right.
+- USB tethering for the **Sony α7 III** and **Sony α7C II**, plus wireless Wi-Fi tethering (studio Wi-Fi or Wi-Fi Direct, with Access Authentication SSH or pairing) for the **Sony α7C II**. Native Mac and physical camera verification are still pending.
+- Single capture folder or four-folder Session (`Capture` / `Selects` / `Output` / `Trash`) layout, named shot subfolders, live free space and shot estimate, and collision-free saving that never overwrites an existing file.
+- **Next Capture Naming** (`{Name}`, `{Counter:4}`, `{CameraCounter}`, `{Date}`, `{Time}`, `{ISO}`, `{Shutter}`, `{Aperture}`, `{FocalLength}`, `{Camera}`, `{Subfolder}`, `{Original}`) with a live filename preview and editable counter/step controls.
+- **Next Capture Adjustments & Metadata**: carry RAW settings from the last capture, current primary photo, default or a chosen recipe (whole recipe or selected WB, Light, Curve, Detail & Color, Optics and Orientation groups), plus snapshotted metadata and initial pick, star or color tags as frames arrive.
+- **Camera controls & Live View**: shutter (`T`), pause (`Shift+T`), AF-On, camera settings with read-only lock reasons, and a dockable Live View stage (`L`) with 1:1 focus loupe, manual focus steps, focus peaking, live histogram and zebra warnings.
+- **Studio review aids**: Grid & Guides (Thirds, Golden Ratio, Golden Spiral, Crosshair, Custom), Aspect Ratio mattes, Reference Overlay (`O`, move/scale/opacity), Focus Mask (`M`), Exposure Warning (`J`), Follow New Captures with Auto-Pause and Jump to Latest (`Y`), and **Pin Reference Shot** in Compare.
+
+See the [workflow reference](docs/workflow.md) for zoom gestures, preview limits, naming, deletion and export options, [tethered capture](docs/tether-c1-spec.md), [Sony USB tethering](docs/sony-ptp-macos-spec.md) and [Sony α7C II Wi-Fi tethering](docs/sony-ptpip-wifi-spec.md) for architecture and setup, and [recipes and export](docs/recipes-export.md) for formats and measured limits. Production display previews still use sharp/libvips; the [Rust preview investigation](docs/rust-display-previews.md) is an experiment, not a shipped replacement.
 
 ## Keyboard shortcuts
 

@@ -23,6 +23,7 @@ async function validate(input,{pathMap={}}={}) {
     return target+value.slice(match.length).replace(/[\\/]+/g,separator);
   };
   const source=structuredClone(input.preferences);
+  if(source.shortcuts && typeof source.shortcuts==='object' && !Array.isArray(source.shortcuts)) source.shortcuts=require('./renderer/commands.js').migrateCustom(source.shortcuts);
   source.handoffFolder=map(source.handoffFolder);
   source.manualCards=(source.manualCards||[]).map(map);
   source.editors=(source.editors||[]).map(editor=>({...editor,path:map(editor.path)}));
@@ -42,6 +43,12 @@ async function validate(input,{pathMap={}}={}) {
     return {id:p.id,name:p.name.trim(),metadata:v.metadata,colors:v.colors,naming:v.naming,folders:v.folders};
   });
   if(![...BUILTINS,...presets].some(p=>p.id===preferences.activePreset))throw new Error('Active metadata preset is missing from the bundle.');
+  // Tether defaults reference recipes and presets by ID; the bundle carries no shoot journals, counters or pins.
+  const tether=preferences.tether;
+  if(tether?.version===1){
+    if(tether.adjustments.recipeId&&![...BUILTIN_RECIPES,...recipes].some(r=>r.id===tether.adjustments.recipeId)){warnings.push('Tether recipe is missing from the bundle; Default is used.');tether.adjustments.recipeId=null;if(tether.adjustments.mode==='recipe')tether.adjustments.mode='default';}
+    if(tether.metadataPresetId&&![...BUILTINS,...presets].some(p=>p.id===tether.metadataPresetId)){warnings.push('Tether metadata preset is missing from the bundle; None is used.');tether.metadataPresetId=null;}
+  }
   return {preferences,recipes,presets,warnings};
 }
 class SettingsBundles {

@@ -1,7 +1,7 @@
 {
   "name": "photocull",
   "productName": "PhotoCull",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "private": true,
   "description": "Local photo culling, editable RAW development, external-editor hand-off and image export",
   "scripts": {
@@ -12,7 +12,7 @@
     "test:ui": "node scripts/ui-smoke.cjs",
     "benchmark": "node scripts/benchmark.cjs",
     "stage": "node scripts/stage-backend.cjs",
-    "build": "node scripts/stage-backend.cjs && tauri build --config src-tauri/tauri.bundle.conf.json",
+    "build": "node scripts/build-app.cjs",
     "perf:audit": "node scripts/performance-audit.cjs",
     "tauri": "tauri",
     "notices": "node scripts/notices.cjs"

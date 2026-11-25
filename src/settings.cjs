@@ -3,6 +3,7 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { atomicWrite } = require('./xmp.cjs');
 const { DEFAULTS, BUILTINS, normalizeSettings, clone, text } = require('./preferences.cjs');
+const { migrateCustom } = require('./renderer/commands.js');
 class SettingsStore {
   constructor(dataDir) {
     this.folder = path.join(dataDir, 'settings'); this.file = path.join(this.folder, 'settings.json');
@@ -15,6 +16,7 @@ class SettingsStore {
       if (!Object.hasOwn(input, 'copyMetadata') && input.metadata?.creator) input.copyMetadata = true;
       // WebP was always lossless before quality-based encoding was introduced.
       if (input.exportOptions?.format === 'webp' && !Object.hasOwn(input.exportOptions, 'webpLossless')) input.exportOptions.webpLossless = true;
+      if (input.shortcuts !== undefined) input.shortcuts = migrateCustom(input.shortcuts);
       return normalizeSettings(input);
     };
     await fs.mkdir(this.presetsFolder, { recursive: true });

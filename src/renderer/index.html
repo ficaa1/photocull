@@ -14,8 +14,13 @@
       <div class="split-button source-actions"><button id="open-folder" class="button quiet" title="Open folder (Ctrl/Cmd+O)"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg><span>Open folder</span></button><button id="source-menu-button" class="button quiet split-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="source-menu" aria-label="More source actions" title="Back up or treat folder as card"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button><div id="source-menu" class="menu" role="menu" aria-label="Source actions" hidden></div></div>
       <div id="breadcrumb" class="breadcrumb"></div>
     </div>
-    <div class="view-switch" role="group" aria-label="View mode"><button type="button" id="grid-mode" title="Contact sheet (G)" aria-label="Grid (contact sheet)"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span>Grid</span></button><button type="button" id="review-mode" class="active" title="Review (E)" aria-label="Review"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8" cy="9" r="1"/><path d="m3 17 5-5 4 4 4-5 5 6"/></svg><span>Review</span></button><button type="button" id="develop-mode" title="Develop (D)" aria-label="Develop" aria-pressed="false"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9m4 0h3M4 17h3m4 0h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg><span>Develop</span></button></div>
+    <div class="view-switch" role="group" aria-label="View mode"><button type="button" id="grid-mode" title="Contact sheet (G)" aria-label="Grid (contact sheet)"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span>Grid</span></button><button type="button" id="review-mode" class="active" title="Review (E)" aria-label="Review"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8" cy="9" r="1"/><path d="m3 17 5-5 4 4 4-5 5 6"/></svg><span>Review</span></button><button type="button" id="develop-mode" title="Develop (D)" aria-label="Develop" aria-pressed="false"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9m4 0h3M4 17h3m4 0h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg><span>Develop</span></button><button type="button" id="tether-mode" title="Tether workspace" aria-label="Tether" aria-pressed="false"><span class="tether-mode-icon"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 8.5A1.5 1.5 0 0 1 4 7h2.2l1.4-2h4.8l1.4 2h1.7A1.5 1.5 0 0 1 17 8.5v7a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5Z"/><circle cx="9.75" cy="12" r="2.75"/><path d="M17 11h2.5a1.5 1.5 0 0 1 1.5 1.5V20"/></svg><span id="tether-mode-dot" class="tether-mode-dot" hidden></span></span><span>Tether</span></button></div>
     <div class="topbar-end">
+      <div id="update-banner" hidden>
+        <span id="update-banner-text"></span>
+        <button id="update-banner-install" type="button">Install</button>
+        <button id="update-banner-dismiss" type="button" aria-label="Dismiss update" title="Dismiss update">×</button>
+      </div>
       <button id="export" class="button" title="Copy picks to a folder" disabled><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg><span>Copy picks</span></button>
       <div class="split-button editor-actions"><button id="edit-external" class="button" type="button" title="Edit in default editor (Ctrl/Cmd+E)" disabled>Edit in…</button><button id="external-editor-menu" class="button split-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="external-editor-list" aria-label="Choose external editor" title="Edit in another app"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button><div id="external-editor-list" class="menu menu-end" role="menu" aria-label="External editors" hidden></div></div>
       <button id="image-export" class="button primary" type="button" title="Export finished images (Ctrl/Cmd+Shift+E)" disabled>Export…</button>
@@ -31,6 +36,10 @@
         <div id="device-list"></div>
         <p id="device-status" class="subtle small" role="status"></p>
       </div>
+      <section id="tether-sidebar-section" class="tether-sidebar" aria-labelledby="tether-sidebar-label">
+        <div class="sidebar-label tether-sidebar-label"><span id="tether-sidebar-label">Tether</span><span id="tether-battery" class="tether-battery tabular" hidden></span></div>
+        <div class="tether-sidebar-row"><span id="tether-status-pill" class="tether-pill" data-state="offline" role="status">Offline</span><button id="tether-sidebar-start" class="button quiet" type="button">Start…</button></div>
+      </section>
       <nav class="filters" aria-label="Filter photos">
         <button class="filter active" data-filter="all"><span><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>All photos</span><b id="count-all">0</b></button>
         <button class="filter" data-filter="unreviewed"><span><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/></svg>Unreviewed</span><b id="count-unreviewed">0</b></button>
@@ -48,6 +57,89 @@
         <button id="shortcuts" class="text-button" title="Keyboard shortcuts" aria-label="Keyboard shortcuts">?</button>
       </div>
     </aside>
+    <aside id="tether-dock" class="sidebar tether-panel tether-dock" aria-label="Tether tools">
+      <header class="tether-dock-header">
+        <div class="tether-dock-title"><h2>Tether</h2><span id="tether-dock-status" class="tether-pill" data-state="offline">Offline</span><button id="tether-dock-start" class="button quiet" type="button">Start session…</button><button id="tether-stop" class="button quiet" type="button" title="End the tethered session; the folder stays open" hidden>Stop session</button></div>
+        <p id="tether-panel-note" class="subtle small"></p>
+      </header>
+      <details class="tether-tool" id="tether-tool-camera" open><summary>Camera</summary><div class="tether-tool-body">
+        <div class="tether-device-head"><span class="tether-label" id="tether-device-label">Cameras</span><button id="tether-discover" class="icon-button tether-icon-button" type="button" title="Look for USB cameras again" aria-label="Refresh cameras"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.6-4.5L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.6 4.5L20 16"/><path d="M20 20v-4h-4"/></svg></button></div>
+        <ul id="tether-device" class="tether-devices" aria-labelledby="tether-device-label"></ul>
+        <p id="tether-device-empty" class="subtle small tether-device-empty">No cameras found yet.</p>
+        <div class="tether-row tether-wifi-actions"><button id="tether-wifi-discover" class="button quiet" type="button" title="Listen for α7C II cameras on this network for a few seconds"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0"/><path d="M12 19.5h.01"/><path d="M2 9a14.5 14.5 0 0 1 20 0"/></svg><span>Find Wi-Fi cameras</span></button><button id="tether-wifi-add" class="button quiet" type="button" aria-expanded="false" aria-controls="tether-wifi-form">Add by IP…</button></div>
+        <form id="tether-wifi-form" class="tether-wifi-form" hidden aria-labelledby="tether-wifi-title" autocomplete="off" novalidate>
+          <p id="tether-wifi-title" class="tether-wifi-title">Add Wi-Fi camera</p>
+          <div class="field-row"><label for="tether-wifi-ip">IP address</label><input id="tether-wifi-ip" class="tabular" inputmode="decimal" maxlength="15" spellcheck="false" autocomplete="off" placeholder="192.168.122.1" aria-describedby="tether-wifi-ip-hint"></div>
+          <p id="tether-wifi-ip-hint" class="subtle small">α7C II Wi-Fi Direct usually answers at 192.168.122.1. On a studio network, use the address the camera shows.</p>
+          <div class="field-row"><label for="tether-wifi-auth">Access</label><select id="tether-wifi-auth"><option value="auto">Auto (detect)</option><option value="ssh">SSH (Authen. On)</option><option value="plain">Plaintext (Pairing)</option></select></div>
+          <div id="tether-wifi-ssh-fields" class="tether-wifi-ssh" hidden>
+            <div class="field-row"><label for="tether-wifi-user">Username</label><input id="tether-wifi-user" maxlength="64" autocomplete="off" spellcheck="false" autocapitalize="off"></div>
+            <div class="field-row"><label for="tether-wifi-password">Password</label><input id="tether-wifi-password" type="password" maxlength="128" autocomplete="off"></div>
+            <p class="subtle small">From Network Option → Access Authen. Info on the camera. Never saved to disk.</p>
+          </div>
+          <p id="tether-wifi-plain-note" class="tether-warning" hidden>Plaintext sends camera traffic unencrypted on this network. On the camera, open PC Remote Function → Pairing and approve PhotoCull when asked.</p>
+          <div id="tether-wifi-fingerprint" class="tether-fingerprint" hidden role="alert">
+            <p id="tether-wifi-fingerprint-title" class="tether-fingerprint-title">Check the camera’s key</p>
+            <code id="tether-wifi-fingerprint-value" class="tether-fingerprint-value"></code>
+            <p id="tether-wifi-fingerprint-help" class="small">Compare it with MENU → Network → Network Option → Access Authen. Info on the camera. Connect only if they match.</p>
+            <div class="tether-row"><button id="tether-wifi-trust-cancel" class="button quiet" type="button">Cancel</button><button id="tether-wifi-trust" class="button" type="button">Trust &amp; Connect</button></div>
+          </div>
+          <div class="tether-row tether-wifi-submit"><button id="tether-wifi-cancel" class="button quiet" type="button">Cancel</button><button id="tether-wifi-connect" class="button" type="submit">Connect Wi-Fi</button></div>
+          <p id="tether-wifi-status" class="subtle small" role="status" aria-live="polite"></p>
+        </form>
+        <dl id="tether-camera-status" class="tether-status tether-online"><dt>Model</dt><dd id="tether-camera-model">—</dd><dt>Link</dt><dd id="tether-camera-usb">—</dd><dt>Battery</dt><dd id="tether-camera-battery" class="tabular">—</dd><dt>Save to</dt><dd><span id="tether-camera-destination" class="tether-badge-dest">—</span></dd></dl>
+        <p id="tether-destination-warning" class="tether-warning" hidden>Camera Only: choose a destination that sends files to this computer.</p>
+        <div class="tether-row tether-online"><button id="tether-reconnect" class="button quiet" type="button">Reconnect</button><button id="tether-disconnect" class="button quiet" type="button">Disconnect</button></div>
+        <div class="tether-capture-row"><button id="tether-capture" class="button primary tether-capture" type="button" aria-describedby="tether-capture-reason"><span class="tether-capture-label">Capture <kbd>T</kbd></span><span class="tether-recycle tabular"></span></button><button id="tether-composition-toggle" class="button toggle tether-test-toggle" type="button" aria-pressed="false" title="Test Shot Mode: preview shots here without saving them">Test Shot</button></div>
+        <p id="tether-capture-reason" class="subtle small tether-reason" aria-live="polite"></p>
+        <div class="tether-row tether-shoot-row"><button id="tether-af" class="button" type="button" aria-describedby="tether-capture-reason" title="Hold for autofocus (AF-On)">AF-On</button><button id="tether-live-toggle" class="button toggle" type="button" aria-pressed="false" title="Live View (L)">Live View <kbd>L</kbd></button><button id="tether-pause" class="button toggle" type="button" aria-pressed="false" title="Pause tether (Shift+T)">Pause</button><button id="tether-fel" class="button toggle" type="button" aria-pressed="false" hidden>FEL</button></div>
+        <div id="tether-lcd" class="tether-lcd tabular" aria-label="Exposure"><span data-lcd="program" title="Exposure mode">—</span><span data-lcd="shutter" title="Shutter speed">—</span><span data-lcd="aperture" title="Aperture">—</span><span data-lcd="iso" title="ISO">ISO —</span><span data-lcd="evComp" title="Exposure compensation">±0</span></div>
+        <p id="tether-sync-warning" class="tether-warning tether-sync-warning" role="status" hidden></p>
+        <div id="tether-properties" class="tether-properties"></div>
+        <div id="tether-offline" class="tether-offline">
+          <p id="tether-offline-title" class="tether-offline-title">No camera connected</p>
+          <div class="tether-checklist-tabs" role="tablist" aria-label="Camera setup"><button id="tether-check-a7m3" type="button" role="tab" aria-selected="true" aria-controls="tether-checklist">α7 III · USB</button><button id="tether-check-a7c2" type="button" role="tab" aria-selected="false" aria-controls="tether-checklist">α7C II · USB</button><button id="tether-check-a7c2-wifi" type="button" role="tab" aria-selected="false" aria-controls="tether-checklist">α7C II · Wi-Fi</button></div>
+          <div id="tether-checklist" class="tether-checklist-panel" role="tabpanel"><p id="tether-checklist-note" class="tether-checklist-note small" hidden></p><ol id="tether-checklist-steps" class="tether-checklist small"></ol><div id="tether-checklist-studio" class="tether-checklist-studio" hidden><p class="tether-checklist-subhead small">Studio strobes</p><ul id="tether-checklist-studio-steps" class="tether-checklist small"></ul></div></div>
+        </div>
+      </div></details>
+      <details class="tether-tool" id="tether-tool-flash"><summary>Studio Flash &amp; Strobe Guards</summary><div class="tether-tool-body tether-flash">
+        <div class="tether-flash-field"><label for="tether-flash-sync">Max sync speed</label><select id="tether-flash-sync" class="tabular"><option value="0">Off</option><option value="160">1/160</option><option value="200">1/200 (MS300V safe)</option><option value="250">1/250 (α7 III max)</option><option value="320">1/320</option><option value="500">1/500</option></select></div>
+        <div class="tether-flash-field"><label for="tether-flash-recycle">Recycle cooldown</label><select id="tether-flash-recycle" class="tabular"><option value="0">Off</option><option value="500">0.5 s</option><option value="1000">1.0 s</option><option value="1500">1.5 s</option><option value="2000">2.0 s</option></select></div>
+        <label class="toggle-row"><input type="checkbox" id="tether-flash-misfire"> Flash misfire alert</label>
+        <label class="toggle-row tether-flash-sub"><input type="checkbox" id="tether-flash-misfire-chime"> Warning tone</label>
+        <p class="subtle small">The cooldown holds only the Capture button; the camera’s shutter always fires. Misfire alerts compare each frame with the last three.</p>
+      </div></details>
+        <details class="tether-tool" id="tether-tool-location" open><summary>Next Capture Location</summary><div class="tether-tool-body">
+          <p class="tether-location"><span id="tether-location-path" class="tether-path">No session</span><span id="tether-shot-chip" class="chip" hidden></span></p>
+          <div class="tether-row"><button id="tether-choose-folder" class="button quiet" type="button">Choose folder…</button><button id="tether-new-shot" class="button quiet" type="button">New shot…</button></div>
+          <form id="tether-new-shot-form" class="tether-new-shot" hidden><label for="tether-new-shot-name">Shot name</label><input id="tether-new-shot-name" maxlength="80" autocomplete="off"><label class="toggle-row"><input type="checkbox" id="tether-new-shot-activate" checked> Set as Capture Folder</label><div class="tether-row"><button type="submit" class="button">Create</button><button type="button" id="tether-new-shot-cancel" class="button quiet">Cancel</button></div></form>
+          <div class="field-row"><label for="tether-recent-shots">Recent shots</label><select id="tether-recent-shots"></select></div>
+          <div class="tether-disk" id="tether-disk"><div class="tether-disk-bar"><div id="tether-disk-fill"></div></div><p id="tether-disk-text" class="small tabular"></p></div>
+        </div></details>
+        <details class="tether-tool" id="tether-tool-naming" open><summary>Next Capture Naming</summary><div class="tether-tool-body">
+          <div class="field-row"><label for="tether-job-name">Name</label><input id="tether-job-name" maxlength="80" autocomplete="off"></div>
+          <div class="field-row"><label for="tether-format">Format</label><input id="tether-format" maxlength="200" autocomplete="off" spellcheck="false" aria-describedby="tether-sample"></div>
+          <div id="tether-tokens" class="tether-tokens" role="group" aria-label="Insert token"></div>
+          <p id="tether-sample" class="tether-sample small" aria-live="polite"></p>
+          <div class="tether-counter"><label for="tether-counter-next">Next</label><input id="tether-counter-next" type="number" step="1" class="tabular"><label for="tether-counter-step">Step</label><input id="tether-counter-step" type="number" step="1" class="tabular"></div>
+          <div class="tether-row"><button id="tether-counter-minus" class="button quiet" type="button" aria-label="Decrease counter">−</button><button id="tether-counter-plus" class="button quiet" type="button" aria-label="Increase counter">+</button><button id="tether-counter-reset" class="button quiet" type="button">Reset</button></div>
+        </div></details>
+        <details class="tether-tool" id="tether-tool-adjustments"><summary>Next Capture Adjustments &amp; Metadata</summary><div class="tether-tool-body">
+          <div class="field-row"><label for="tether-adjust-mode">Adjustments</label><select id="tether-adjust-mode"><option value="last">Copy from Last</option><option value="primary">Copy from Primary</option><option value="default">Default</option><option value="recipe">Specific Recipe</option></select></div>
+          <p id="tether-adjust-source" class="subtle small"></p>
+          <div id="tether-recipe-row" class="field-row"><label for="tether-recipe">Recipe</label><select id="tether-recipe"></select></div>
+          <label class="toggle-row" id="tether-entire-row"><input type="checkbox" id="tether-entire"> Use entire recipe</label>
+          <fieldset id="tether-groups" class="tether-groups"><legend>Copy</legend></fieldset>
+          <label class="toggle-row"><input type="checkbox" id="tether-developed"> Show developed preview</label>
+          <div class="field-row"><label for="tether-metadata">Metadata</label><select id="tether-metadata"></select></div>
+          <div class="field-row"><label for="tether-initial-pick">Flag</label><select id="tether-initial-pick"><option value="">Unchanged</option><option value="true">Pick</option><option value="false">No flag</option></select></div>
+          <div class="field-row"><label for="tether-initial-rating">Rating</label><select id="tether-initial-rating"><option value="">Unchanged</option><option value="0">None</option><option value="1">★</option><option value="2">★★</option><option value="3">★★★</option><option value="4">★★★★</option><option value="5">★★★★★</option></select></div>
+          <div class="field-row"><label for="tether-initial-color">Color</label><select id="tether-initial-color"></select></div>
+        </div></details>
+      <details class="tether-tool" id="tether-tool-issues" open hidden><summary>Issues &amp; Recovery</summary><div class="tether-tool-body">
+        <div id="tether-issues" class="tether-issues" aria-live="polite"></div>
+      </div></details>
+    </aside>
     <main class="main">
       <div class="toolbar">
         <div class="view-heading"><h1 id="view-title">Photos</h1><span id="view-count" class="view-count"></span><div class="view-actions"><button id="original-toggle" class="button quiet" type="button" hidden aria-pressed="false">Show originals (\)</button><button id="burst-stack" class="button quiet" title="Expand / collapse current burst (S)" hidden>Stack</button><button id="burst-keep" class="button quiet" hidden>Keep sharpest</button><button id="delete-rejects" class="button danger-quiet" hidden><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg><span>Delete rejects</span></button><button id="trash-restore" class="button" hidden title="Restore (R)"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg><span>Restore</span></button><button id="empty-trash" class="button danger-quiet" hidden><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg><span>Empty trash</span></button></div></div>
@@ -57,6 +149,50 @@
           <select id="color-filter" aria-label="Filter color"><option value="">All colors</option></select><label class="search-field" title="Search filenames"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.2-4.2"/></svg><input id="search" type="search" aria-label="Search filenames" placeholder="Search"></label>
         </div>
       </div>
+      <section id="tether-stage-bar" class="tether-stage-bar" aria-label="Studio aids and follow"><div class="tether-stage-group" role="group" aria-label="Studio aids"><button id="tether-stage-live" class="button quiet toggle" type="button" aria-pressed="false" title="Live View (L)"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="m16 10 5-3v10l-5-3"/></svg><span>Live View</span></button><button id="tether-stage-composition" class="button quiet toggle" type="button" aria-pressed="false" title="Test Shot Mode: preview shots without saving them"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2l1.5-2h6l1.5 2h2A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5Z" stroke-dasharray="2.5 2"/><circle cx="12" cy="13" r="3.2"/></svg><span>Test shot</span></button><span class="toolbar-divider" aria-hidden="true"></span><button id="tether-stage-guides" class="button quiet toggle" type="button" aria-pressed="false" title="Composition guides"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="M9 4v16M15 4v16M3 9.3h18M3 14.7h18"/></svg><span>Guides</span></button><button id="tether-stage-aspect" class="button quiet toggle" type="button" aria-pressed="false" title="Aspect ratio mask"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v15h15"/><path d="M3 6h15v15"/></svg><span>Aspect</span></button><button id="tether-stage-overlay" class="button quiet toggle" type="button" aria-pressed="false" title="Overlay image (O)"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5Z"/><path d="m3 13 9 5 9-5"/></svg><span>Overlay</span></button><button id="tether-stage-mask" class="button quiet toggle" type="button" aria-pressed="false" title="Focus mask (M)"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M9 9h.01M12 9h.01M15 9h.01M9 12h.01M12 12h.01M15 12h.01M9 15h.01M12 15h.01M15 15h.01"/></svg><span>Focus mask</span></button><button id="tether-stage-warning" class="button quiet toggle" type="button" aria-pressed="false" title="Exposure warning (J)"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="m3 12 8-8M5 20 21 4M12 20l9-9"/></svg><span>Warning</span></button><button id="tether-wb-pick" class="button quiet toggle" type="button" aria-pressed="false" title="White balance eyedropper: click a neutral gray or white area of a RAW photo"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m14.5 6.5 3 3"/><path d="M16.2 3.8a2.1 2.1 0 0 1 3 3l-2 2-3-3Z"/><path d="m14.2 5.8-9 9-1 4 4-1 9-9"/></svg><span>WB</span></button><span class="toolbar-divider" aria-hidden="true"></span><button id="tether-pin" class="button quiet toggle" type="button" aria-pressed="false" title="Pin the selected photo as the reference and compare each new capture with it"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6l-1 6.5 3 3V14H7v-1.5l3-3Z"/><path d="M12 14v7"/></svg><span>Pin reference</span></button><button id="tether-aids-popover-btn" class="button quiet tether-aids-button" type="button" aria-expanded="false" aria-controls="tether-aids-drawer" title="Configure composition and review aids"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9m4 0h3M4 17h3m4 0h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg><span>Configure aids</span><svg class="icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg></button></div><div class="tether-stage-group tether-stage-end" role="group" aria-label="Follow new captures"><label class="tether-follow-field"><span>Follow</span><select id="tether-follow-mode" title="Show new captures"><option value="whenReady">When Ready</option><option value="immediately">Immediately</option><option value="off">Off</option></select></label><button id="tether-follow-pause" class="button quiet toggle tether-icon-toggle" type="button" aria-pressed="false" aria-label="Pause following" title="Pause following new captures"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6v12M15 6v12"/></svg></button><button id="tether-chime" class="button quiet toggle tether-icon-toggle" type="button" aria-pressed="false" aria-label="Capture chime" title="Play a chime when a capture arrives"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15Z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg></button><span id="tether-telemetry" class="tether-telemetry tabular" aria-live="off"></span></div></section>
+      <div id="tether-stage-alerts" class="tether-stage-alerts" hidden>
+        <div id="tether-composition-banner" class="tether-alert tether-alert-test" role="status" hidden><span class="tether-alert-text">Test Shot Mode — shots preview here without saving or advancing counter</span><span id="tether-composition-meta" class="tether-alert-meta tabular"></span><button id="tether-composition-discard" class="button quiet" type="button" disabled>Discard</button><button id="tether-composition-keep" class="button" type="button" disabled>Keep shot</button></div>
+        <p id="tether-stage-sync-warning" class="tether-alert tether-alert-warn" hidden></p>
+        <div id="tether-misfire-pill" class="tether-alert tether-alert-danger" role="alert" hidden><strong>Possible flash misfire</strong><span id="tether-misfire-detail" class="tether-alert-meta"></span><button id="tether-misfire-dismiss" class="icon-button" type="button" aria-label="Dismiss misfire warning" title="Dismiss">×</button></div>
+      </div>
+      <section id="tether-aids-drawer" class="tether-aids-drawer tether-panel" hidden tabindex="-1" aria-labelledby="tether-aids-title">
+        <div class="tether-drawer-header"><h2 id="tether-aids-title">Composition &amp; Review Aids</h2><button id="tether-aids-close" class="icon-button" type="button" aria-label="Close aids" title="Close (Esc)">×</button></div>
+        <div class="tether-drawer-body">
+          <fieldset class="tether-aid"><legend><label class="toggle-row"><input type="checkbox" id="tether-grid-shown"> Grid</label></legend>
+            <div class="field-row"><label for="tether-grid-type">Type</label><select id="tether-grid-type"><option value="thirds">Rule of thirds</option><option value="goldenRatio">Golden ratio</option><option value="goldenSpiral">Golden spiral</option><option value="crosshair">Crosshair</option><option value="custom">Custom</option></select></div>
+            <div class="tether-pair" id="tether-grid-custom"><label>Columns<input id="tether-grid-cols" type="number" min="1" max="128" step="1"></label><label>Rows<input id="tether-grid-rows" type="number" min="1" max="128" step="1"></label></div>
+            <div class="tether-pair" id="tether-grid-spiral"><label class="toggle-row"><input type="checkbox" id="tether-grid-mirror"> Mirror</label><label class="toggle-row"><input type="checkbox" id="tether-grid-clockwise"> Clockwise</label></div>
+            <div class="tether-pair"><label>Color<input id="tether-grid-color" type="color"></label><label>Opacity<input id="tether-grid-opacity" type="range" min="0" max="1" step="0.05"></label></div>
+            <div class="tether-row"><button id="tether-guide-x" class="button quiet" type="button">+ Vertical guide</button><button id="tether-guide-y" class="button quiet" type="button">+ Horizontal guide</button></div>
+            <ul id="tether-guides" class="tether-guides"></ul>
+          </fieldset>
+          <fieldset class="tether-aid"><legend><label class="toggle-row"><input type="checkbox" id="tether-aspect-shown"> Aspect mask</label></legend>
+            <div class="tether-pair"><label>Ratio<select id="tether-aspect-ratio"><option>2:3</option><option>4:5</option><option>1:1</option><option>16:9</option><option>8:10</option><option>5:7</option></select></label><label>Orientation<select id="tether-aspect-orientation"><option value="portrait">Portrait</option><option value="landscape">Landscape</option></select></label></div>
+            <div class="field-row"><label for="tether-aspect-matte">Matte</label><input id="tether-aspect-matte" type="range" min="0" max="1" step="0.05"></div>
+          </fieldset>
+          <fieldset class="tether-aid"><legend><label class="toggle-row"><input type="checkbox" id="tether-overlay-shown"> Overlay image <kbd>O</kbd></label></legend>
+            <p id="tether-overlay-name" class="subtle small">No overlay image</p>
+            <div class="tether-row"><button id="tether-overlay-file" class="button quiet" type="button">Choose file…</button><button id="tether-overlay-photo" class="button quiet" type="button">Use selected photo</button></div>
+            <input id="tether-overlay-input" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+            <div class="tether-pair"><label>Opacity<input id="tether-overlay-opacity" type="range" min="0" max="1" step="0.05"></label><label>Scale<input id="tether-overlay-scale" type="range" min="0.1" max="4" step="0.05"></label></div>
+            <div class="tether-pair"><label>X<input id="tether-overlay-x" type="number" min="-1" max="1" step="0.01" class="tabular"></label><label>Y<input id="tether-overlay-y" type="number" min="-1" max="1" step="0.01" class="tabular"></label></div>
+            <label class="toggle-row"><input type="checkbox" id="tether-overlay-crop"> Follow crop</label>
+            <div class="tether-row"><button id="tether-overlay-move" class="button toggle" type="button" aria-pressed="false">Move</button><button id="tether-overlay-clear" class="button quiet" type="button">Clear</button></div>
+          </fieldset>
+          <fieldset class="tether-aid"><legend><label class="toggle-row"><input type="checkbox" id="tether-mask-shown"> Focus mask <kbd>M</kbd></label></legend>
+            <div class="tether-pair"><label>Color<input id="tether-mask-color" type="color"></label><label>Opacity<input id="tether-mask-opacity" type="range" min="0" max="1" step="0.05"></label></div>
+            <div class="field-row"><label for="tether-mask-threshold">Threshold</label><input id="tether-mask-threshold" type="range" min="0.005" max="0.2" step="0.005"></div>
+          </fieldset>
+          <fieldset class="tether-aid"><legend><label class="toggle-row"><input type="checkbox" id="tether-warning-shown"> Exposure warning <kbd>J</kbd></label></legend>
+            <div class="tether-pair"><label>Highlights ≥<input id="tether-warning-high" type="number" min="1" max="255" step="1" class="tabular"></label><label>Shadows ≤<input id="tether-warning-low" type="number" min="0" max="254" step="1" class="tabular"></label></div>
+            <label class="toggle-row"><input type="checkbox" id="tether-warning-shadows"> Show shadows</label>
+          </fieldset>
+          <fieldset class="tether-aid"><legend>Viewer</legend>
+            <label class="toggle-row"><input type="checkbox" id="tether-autopause"> Pause following while inspecting</label>
+          </fieldset>
+        </div>
+        <p id="tether-composition-status" class="subtle small tether-drawer-status" role="status"></p>
+      </section>
       <div id="empty" class="empty-state">
         <div class="empty-symbol"><svg class="brand-symbol" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m9.5 3.4 6 10.4M18.2 5.4l-6 10.4m8.6-4.4h-12m6.9 9.2-6-10.4M5.8 18.6l6-10.4m-8.6 4.4h12"/></svg></div><p class="empty-title">Open a folder or a camera card to start culling</p><button id="empty-open" class="button primary"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg><span>Open folder</span></button><p class="empty-hint">Ctrl/Cmd+O opens a folder · Ctrl/Cmd+K finds any command</p>
       </div>
@@ -75,6 +211,7 @@
           <div id="flag-overlay" class="flag-overlay" hidden></div>
           <div id="swipe-hint" class="swipe-hint" hidden aria-hidden="true"></div>
           <div id="navigator-overlay" class="navigator-overlay" hidden></div>
+          <p id="overlay-status" class="chip overlay-status" role="status" hidden></p>
         </div>
         <div id="review-dock" class="review-dock">
         <div class="decision-bar">
@@ -89,10 +226,40 @@
       <!-- Develop view: contents owned by develop.js. -->
       <section id="develop" class="develop" hidden aria-label="Develop RAW"></section>
       <!-- End Develop view. -->
+      <section id="tether-live-stage" class="tether-live-stage" hidden aria-label="Live View">
+        <div class="tether-live-bar top">
+          <span id="tether-live-status" class="chip" role="status">Live View off</span><span id="tether-live-fps" class="chip tabular"></span>
+          <span class="tether-live-spacer"></span>
+          <button id="tether-live-dock" class="button quiet" type="button" aria-pressed="false" title="Dock Live View beside the photo">Dock</button>
+          <button id="tether-live-close" class="button quiet" type="button" title="Close Live View (L)">Close</button>
+          <button id="tether-live-capture" class="button primary" type="button" title="Capture (T)" aria-describedby="tether-capture-reason"><span class="tether-capture-label">Capture</span><span class="tether-recycle tabular"></span></button>
+        </div>
+        <div id="tether-live-viewport" class="tether-live-viewport" tabindex="0" aria-label="Live View image. Drag to pan at 1:1."><canvas id="tether-live-canvas"></canvas><p id="tether-live-empty" class="tether-live-empty">Waiting for frames…</p></div>
+        <div class="tether-live-bar bottom">
+          <div class="tether-live-group" role="group" aria-label="Loupe"><button id="tether-live-loupe" class="button toggle" type="button" aria-pressed="false" title="1:1 loupe">1:1</button><button id="tether-live-reset" class="button quiet" type="button" title="Center the loupe">Reset</button></div>
+          <div class="tether-live-group tether-focus-steps" role="group" aria-label="Focus">
+            <button class="button quiet" type="button" data-focus="near" data-size="3" aria-label="Focus nearer, large step">&lt;&lt;&lt;</button><button class="button quiet" type="button" data-focus="near" data-size="2" aria-label="Focus nearer, medium step">&lt;&lt;</button><button class="button quiet" type="button" data-focus="near" data-size="1" aria-label="Focus nearer, small step">&lt;</button>
+            <button class="button" type="button" data-focus="af" aria-label="Autofocus">AF</button>
+            <button class="button quiet" type="button" data-focus="far" data-size="1" aria-label="Focus farther, small step">&gt;</button><button class="button quiet" type="button" data-focus="far" data-size="2" aria-label="Focus farther, medium step">&gt;&gt;</button><button class="button quiet" type="button" data-focus="far" data-size="3" aria-label="Focus farther, large step">&gt;&gt;&gt;</button>
+          </div>
+          <div class="tether-live-group" role="group" aria-label="Focus peaking"><button id="tether-live-peaking" class="button toggle" type="button" aria-pressed="false">Peaking</button><input id="tether-peaking-color" type="color" value="#ffff00" aria-label="Peaking color"><input id="tether-peaking-sensitivity" type="range" min="0" max="1" step="0.05" aria-label="Peaking sensitivity"></div>
+          <button id="tether-live-zebra" class="button toggle" type="button" aria-pressed="false" title="Exposure warning zebras (J)">Zebra</button>
+          <canvas id="tether-live-histogram" class="tether-live-histogram" width="128" height="40" role="img" aria-label="Live histogram"></canvas>
+          <button id="tether-live-histogram-toggle" class="button toggle" type="button" aria-pressed="false">Histogram</button>
+          <div class="tether-live-group" role="group" aria-label="Composition"><button id="tether-live-guides" class="button toggle" type="button" aria-pressed="false">Guides</button><button id="tether-live-aspect" class="button toggle" type="button" aria-pressed="false">Aspect</button><button id="tether-live-overlay" class="button toggle" type="button" aria-pressed="false" title="Overlay image (O)">Overlay</button></div>
+        </div>
+      </section>
+      <button id="tether-arrival-pill" class="tether-arrival-pill" type="button" hidden></button>
       <section id="grid" class="grid-viewport" hidden aria-label="Photo grid"><div id="grid-content" class="grid-content"></div><section id="external-proposals" class="external-proposals" hidden aria-label="Proposed external edits"><div class="proposal-heading"><h2>Proposed matches <span id="proposal-count"></span></h2><div class="proposal-actions"><button id="proposal-accept-all" class="button" type="button">Accept all</button><button id="proposal-reject-all" class="button quiet" type="button">Reject all</button></div></div><p id="proposal-status" class="subtle small" role="status"></p><div id="proposal-list" class="proposal-list"></div></section></section>
       <footer class="statusbar"><span id="save-status"><span class="status-dot"></span> Ready</span><span id="preview-status"></span><label id="grid-size-control" class="grid-size-control" title="Thumbnail size" hidden><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8" cy="9" r="1"/><path d="m3 17 5-5 4 4 4-5 5 6"/></svg><input id="grid-size" type="range" min="160" max="320" step="5" value="205" aria-label="Thumbnail size"></label></footer>
     </main>
     <aside id="inspector" class="inspector">
+      <section id="tether-inspector-histogram-panel" class="tether-histogram-panel" aria-labelledby="tether-histogram-label">
+        <div class="sidebar-label tether-histogram-label"><span id="tether-histogram-label">Histogram</span><span id="tether-histogram-source" class="tabular"></span></div>
+        <canvas id="tether-inspector-histogram" class="tether-inspector-histogram" width="224" height="72" role="img" aria-label="RGB and luma histogram"></canvas>
+        <p id="tether-histogram-clip" class="small tabular tether-histogram-clip"></p>
+        <div class="inspector-divider"></div>
+      </section>
       <section id="navigator-panel" class="navigator-panel" hidden aria-label="Navigator">
         <div class="sidebar-label navigator-label"><span>Navigator</span><span id="navigator-zoom"></span></div>
         <div id="navigator-dock"><div id="navigator" class="navigator" title="Click or drag to move the zoomed view"><img id="navigator-image" alt="" draggable="false"><div id="navigator-view" class="navigator-view"></div></div></div>
@@ -112,6 +279,7 @@
         <div id="detail-decision" class="detail-decision">Unreviewed</div>
 
       </div>
+
 
     </aside>
   </div>
@@ -204,6 +372,16 @@
       <label class="toggle-row desktop-only"><input type="checkbox" id="default-jpeg"> Copy companion JPEGs</label>
       <label class="toggle-row desktop-only"><input type="checkbox" id="default-xmp"> Include XMP</label>
       <label class="toggle-row desktop-only" title="Writes metadata inside exported copies"><input type="checkbox" id="default-metadata"> Embed metadata in copies</label>
+      <div id="settings-updates" hidden>
+        <h3>Updates</h3>
+        <label class="toggle-row"><input id="settings-auto-updates" type="checkbox" checked> Automatically check for updates</label>
+        <div class="copy-actions">
+          <button id="settings-check-updates" class="button quiet" type="button">Check for updates</button>
+          <button id="settings-install-update" class="button" type="button" hidden>Install &amp; restart</button>
+        </div>
+        <p id="settings-update-status" class="subtle small" role="status"></p>
+        <progress id="settings-update-progress" aria-label="Update installation progress" hidden max="100" value="0"></progress>
+      </div>
     </section>
     <section data-settings-page="metadata" hidden>
       <div class="field-row preset-row"><label for="metadata-preset">Preset</label><select id="metadata-preset"></select><button id="preset-delete" class="text-button" title="Delete preset" aria-label="Delete preset">−</button></div>
@@ -231,6 +409,20 @@
     <pre id="delete-results" hidden></pre>
   </dialog>
   <div id="delete-prompt" class="delete-prompt" role="alertdialog" aria-live="assertive" hidden><span id="delete-prompt-text"></span><span class="delete-prompt-keys"><kbd>Enter</kbd> delete · any other key cancels</span><span class="delete-prompt-buttons"><button id="delete-prompt-cancel" class="button" type="button">Cancel</button><button id="delete-prompt-confirm" class="button danger" type="button">Delete</button></span></div>
+  <dialog id="tether-start-dialog" aria-labelledby="tether-start-title">
+    <div class="dialog-header"><h2 id="tether-start-title">Start tethered session</h2><button class="close-dialog" aria-label="Close">×</button></div>
+    <fieldset class="tether-start-group"><legend>Capture into</legend>
+      <label class="toggle-row"><input type="radio" name="tether-start-root" value="open" id="tether-start-open"> Use open folder<span id="tether-start-open-path" class="subtle small tether-path"></span></label>
+      <label class="toggle-row"><input type="radio" name="tether-start-root" value="choose" id="tether-start-choose" checked> Choose folder…</label>
+    </fieldset>
+    <fieldset class="tether-start-group"><legend>Layout</legend>
+      <label class="toggle-row"><input type="radio" name="tether-start-layout" value="single" checked> Single folder</label>
+      <label class="toggle-row"><input type="radio" name="tether-start-layout" value="session"> Session folders (captures go in Capture)</label>
+    </fieldset>
+    <label class="toggle-row"><input type="checkbox" id="tether-start-shots" checked> Include shot subfolders</label>
+    <p id="tether-start-status" class="subtle small" role="status"></p>
+    <div class="copy-actions dialog-actions"><button id="tether-start-cancel" class="button" type="button">Cancel</button><button id="tether-start-confirm" class="button primary" type="button">Start</button></div>
+  </dialog>
   <div id="toast" role="status" hidden></div>
   <script src="bridge.js"></script>
   <script src="naming.js"></script>
@@ -242,6 +434,8 @@
   <script src="export.js"></script>
   <script src="histogram.js"></script>
   <script src="develop.js"></script>
+  <script src="overlays.js"></script>
+  <script src="tether.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -14,7 +14,8 @@
     subscribers.get(name).add(callback);
     return () => subscribers.get(name).delete(callback);
   };
-  const EVENTS = ['backup-progress','edit-shortcut', 'open-folder-shortcut', 'settings-shortcut', 'fullscreen-toggle', 'fullscreen-changed', 'devices-changed', 'copy-progress', 'sidecar-warning', 'preview-state', 'develop-progress', 'export-progress', 'lens-database-progress', 'prepare-progress'];
+  const EVENTS = ['backup-progress','edit-shortcut', 'open-folder-shortcut', 'settings-shortcut', 'fullscreen-toggle', 'fullscreen-changed', 'devices-changed', 'copy-progress', 'sidecar-warning', 'preview-state', 'develop-progress', 'export-progress', 'lens-database-progress', 'prepare-progress',
+    'update-progress', 'check-updates-shortcut', 'tether-connection', 'tether-properties', 'tether-config-changed', 'tether-transfer', 'tether-library-delta', 'tether-live-state', 'tether-issue', 'tether-composition'];
 
   let backend, imageBase, platform, host, shell;
   if (tauri) {
@@ -45,7 +46,7 @@
       // Signed out (password changed or cookie cleared): back to the sign-in page.
       if (server && response.status === 403) { location.reload(); throw new Error('Signed out.'); }
       const reply = await response.json();
-      if (!reply.ok) throw new Error(reply.error);
+      if (!reply.ok) throw Object.assign(new Error(reply.error), reply.errorDetail ? { detail: reply.errorDetail } : {});
       return reply.value;
     };
     const events = new EventSource(server ? '/events' : `/events?t=${token}`);
@@ -102,8 +103,40 @@
     return { ...header, blob: new Blob([new Uint8Array(buffer, 4 + length)], { type: 'image/jpeg' }) };
   };
 
+  // Tether replies may be {ok,value|error}; failures become an Error with code, retryable, field and currentRev.
+  const tetherFailure = (detail, fallback) => Object.assign(new Error(detail?.message || fallback || 'Tethering request failed.'),
+    { code: detail?.code || null, retryable: !!detail?.retryable, field: detail?.field ?? null, currentRev: detail?.currentRev ?? null, fingerprint: typeof detail?.fingerprint === 'string' ? detail.fingerprint : null });
+  const taggedDetail = text => {
+    const start = typeof text === 'string' ? text.indexOf('{') : -1; if (start < 0) return null;
+    try { const value = JSON.parse(text.slice(start)), detail = value?.error && typeof value.error === 'object' ? value.error : value; return typeof detail?.code === 'string' ? detail : null; } catch { return null; }
+  };
+  const asTetherError = error => {
+    if (error instanceof Error && 'retryable' in error) return error;
+    const text = typeof error === 'string' ? error : error?.message;
+    const detail = error?.detail || (typeof error?.code === 'string' ? error : null) || taggedDetail(text);
+    return tetherFailure(detail, detail ? undefined : text);
+  };
+  const unwrapTether = value => {
+    if (!value || typeof value !== 'object' || typeof value.ok !== 'boolean' || !('value' in value || 'error' in value)) return value;
+    if (value.ok) return value.value;
+    throw typeof value.error === 'object' ? tetherFailure(value.error) : tetherFailure(taggedDetail(value.error), value.error);
+  };
+  const tetherCall = async run => { let result; try { result = await run(); } catch (error) { throw asTetherError(error); } return unwrapTether(result); };
+  const tetherNode = (method, ...params) => tetherCall(() => backend(method, ...params));
+  const tetherShell = (command, args, binary) => tetherCall(async () => {
+    if (!tauri) throw tetherFailure({ code: 'UNSUPPORTED', message: 'Tethering needs the PhotoCull desktop app.' });
+    const reply = await shell(command, args);
+    return binary ? binary(reply) : reply;
+  });
+  const bytes = reply => reply instanceof ArrayBuffer ? reply : ArrayBuffer.isView(reply) ? reply.buffer.slice(reply.byteOffset, reply.byteOffset + reply.byteLength) : new Uint8Array(reply).buffer;
+
   const api = {
     platform,
+    desktop: !!tauri,
+    checkForUpdates: () => tauri ? shell('update_check') : Promise.resolve({ status: 'unsupported' }),
+    installUpdate: expectedVersion => tauri ? shell('update_install', expectedVersion ? { expectedVersion } : {}) : Promise.reject(new Error('Updates are only available in the desktop app.')),
+    onUpdateProgress: callback => subscribe('update-progress', callback),
+    onCheckUpdates: callback => subscribe('check-updates-shortcut', callback),
     appInfo: () => backend('app-info'),
     openProjectLink: url => tauri ? shell('open_project_link', { url }) : window.open(url, '_blank', 'noopener,noreferrer'),
     workspaceInfo: () => backend('workspace-info'),
@@ -177,6 +210,39 @@
       lastSession: () => backend('last-session'),
       onPrepare: callback => subscribe('prepare-progress', callback),
     },
+    canTether: !!tauri,
+    tetherState: session => tetherNode('tether-state', session),
+    tetherLibrary: (shootId, session) => tetherNode('tether-library', shootId, session),
+    tetherConfig: (shootId, configRev, patch) => tetherNode('tether-config', shootId, configRev, patch),
+    tetherCounter: (shootId, configRev, op, value) => tetherNode('tether-counter', shootId, configRev, op, value),
+    tetherNamePreview: (shootId, input) => tetherNode('tether-name-preview', shootId, input),
+    tetherPrimary: (shootId, session, input) => tetherNode('tether-primary', shootId, session, input),
+    tetherOpen: ({ session = null, useOpenFolder = false, layout = 'single', includeShots = true } = {}) => tetherShell('tether_open', { session, useOpenFolder, layout, includeShots }),
+    tetherLocation: args => tetherShell('tether_location', args),
+    tetherDevices: () => tetherShell('tether_devices', {}),
+    tetherDiscoverWifi: () => tetherShell('tether_discover_wifi', {}),
+    tetherAddWifi: args => tetherShell('tether_add_wifi', args),
+    tetherConnect: (shootId, deviceId) => tetherShell('tether_connect', { shootId, deviceId }),
+    tetherControl: (shootId, epoch, op, extra = {}) => tetherShell('tether_control', { shootId, epoch, op, ...extra }),
+    tetherSetProperty: (shootId, epoch, key, value, expectedPropRev) => tetherShell('tether_set_property', { shootId, epoch, key, value, expectedPropRev }),
+    tetherTrigger: (shootId, epoch, requestId, primarySeq) => tetherShell('tether_trigger', { shootId, epoch, requestId, primarySeq }),
+    tetherFocus: args => tetherShell('tether_focus', args),
+    tetherLive: (shootId, epoch, enabled) => tetherShell('tether_live', { shootId, epoch, enabled }),
+    tetherLiveFrame: (shootId, epoch, streamId, afterSeq) => tetherShell('tether_live_frame', { shootId, epoch, streamId, afterSeq }, reply => unpackFrame(bytes(reply))),
+    tetherReviewFrame: ({ session, id, kind = 'preview', original = false, contentRev = 0 }) => tetherShell('tether_review_frame', { session, id, kind, original, contentRev }, reply => unpackFrame(bytes(reply))),
+    tetherCompositionFrame: (shootId, testSeq, previewRev = 0) => tetherShell('tether_composition_frame', { shootId, testSeq, previewRev }, reply => unpackFrame(bytes(reply))),
+    tetherOverlayPick: args => tetherShell('tether_overlay_pick', args),
+    tetherOverlayImage: (shootId, assetId) => tetherShell('tether_overlay_image', { shootId, assetId }, reply => new Blob([bytes(reply)], { type: 'image/png' })),
+    tetherRecover: args => tetherShell('tether_recover', args),
+    tetherPresented: (shootId, exposureId, ordinal, quality) => tetherShell('tether_presented', { shootId, exposureId, ordinal, quality }),
+    onTetherConnection: callback => subscribe('tether-connection', callback),
+    onTetherProperties: callback => subscribe('tether-properties', callback),
+    onTetherConfig: callback => subscribe('tether-config-changed', callback),
+    onTetherTransfer: callback => subscribe('tether-transfer', callback),
+    onTetherLibrary: callback => subscribe('tether-library-delta', callback),
+    onTetherLive: callback => subscribe('tether-live-state', callback),
+    onTetherIssue: callback => subscribe('tether-issue', callback),
+    onTetherComposition: callback => subscribe('tether-composition', callback),
     imageUrl: (session, id, kind, params = '') => `${imageBase.prefix}/${session}/${id}/${kind}?${imageBase.query}${params}`,
     onEdit: callback => subscribe('edit-shortcut', callback),
     onOpenFolder: callback => subscribe('open-folder-shortcut', callback),

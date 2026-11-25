@@ -13,7 +13,29 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::oneshot;
 
-type Reply = Result<Value, String>;
+/// A failed backend call: the message and Node's optional structured `errorDetail`.
+#[derive(Debug, Clone)]
+pub struct Failure {
+    pub message: String,
+    pub detail: Option<Value>,
+}
+
+impl From<String> for Failure {
+    fn from(message: String) -> Self {
+        Failure {
+            message,
+            detail: None,
+        }
+    }
+}
+
+impl From<&str> for Failure {
+    fn from(message: &str) -> Self {
+        Failure::from(message.to_string())
+    }
+}
+
+type Reply = Result<Value, Failure>;
 
 pub struct Backend {
     stdin: Mutex<Option<ChildStdin>>,
@@ -108,11 +130,14 @@ impl Backend {
                     let reply = if message.get("ok").and_then(Value::as_bool) == Some(true) {
                         Ok(message.get("value").cloned().unwrap_or(Value::Null))
                     } else {
-                        Err(message
-                            .get("error")
-                            .and_then(Value::as_str)
-                            .unwrap_or("Backend request failed.")
-                            .to_string())
+                        Err(Failure {
+                            message: message
+                                .get("error")
+                                .and_then(Value::as_str)
+                                .unwrap_or("Backend request failed.")
+                                .to_string(),
+                            detail: message.get("errorDetail").cloned(),
+                        })
                     };
                     if let Some(tx) = reader_pending.lock().unwrap().remove(&id) {
                         let _ = tx.send(reply);
@@ -145,7 +170,14 @@ impl Backend {
         })
     }
 
-    pub async fn call(&self, method: &str, params: Value) -> Reply {
+    pub async fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+        self.call_detail(method, params)
+            .await
+            .map_err(|failure| failure.message)
+    }
+
+    /// Like `call`, keeping Node's structured error detail.
+    pub async fn call_detail(&self, method: &str, params: Value) -> Reply {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         self.pending.lock().unwrap().insert(id, tx);

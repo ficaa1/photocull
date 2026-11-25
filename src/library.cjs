@@ -3,7 +3,7 @@ const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const { mapLimit } = require('./queue.cjs');
 const { DEFAULTS } = require('./preferences.cjs');
-const { readXmp, writeXmp, atomicWrite, sidecarPaths, portableDevelop, resolveDevelop, shouldWriteSidecars } = require('./xmp.cjs');
+const { readXmp, writeXmp, atomicWrite, sidecarPaths, portableDevelop, resolveDevelop, shouldWriteSidecars, normalizeCaptureMetadata } = require('./xmp.cjs');
 const { developState, checkSettings } = require('./develop.cjs');
 
 const RAW = new Set(['.arw', '.cr2', '.cr3', '.nef', '.nrw', '.dng', '.raf', '.orf', '.rw2', '.pef', '.srw', '.3fr', '.fff', '.iiq', '.rwl']);
@@ -16,45 +16,93 @@ const decision = (d = {}) => ({ flag: ['none', 'pick', 'reject'].includes(d.flag
   color: d.color === '' || /^[1-8]$/.test(d.color) ? d.color : null,
   // In PhotoCull's own Trash: hidden from the other views, still on disk.
   trashed: d.trashed === true });
+// Structured failures carry a stable code for the tether bridge; `message` stays readable.
+const coded = (code, message, extra = {}) => Object.assign(new Error(message), { code, detail: { code, message, retryable: false, ...extra } });
+const inside = (parent, child) => { const rel = path.relative(parent, child); return rel === '' || !rel.startsWith('..' + path.sep) && rel !== '..' && !path.isAbsolute(rel); };
 
-function groupFiles(files) {
+// Excluded files were proven to belong to a different exposure and always stand alone. An entry
+// names the file it saw (`dev:ino`), so a different file later saved under that path pairs normally;
+// a file whose identity is unknown stays excluded.
+function exclusionMap(entries = []) {
+  const map = new Map();
+  for (const entry of entries) {
+    if (typeof entry === 'string') map.set(entry, null);
+    else if (typeof entry?.path === 'string') map.set(entry.path, typeof entry.fileId === 'string' ? entry.fileId : null);
+  }
+  return map;
+}
+function excluded(file, exclude, fileId) {
+  if (!exclude?.has(file)) return false;
+  const id = exclude instanceof Map ? exclude.get(file) : null;
+  return !id || !fileId || id === fileId;
+}
+
+// Pair only a RAW with a JPEG of the same stem, in the same directory.
+function groupKey(file, exclude, fileId) {
+  const ext = path.extname(file).toLowerCase();
+  if (!(RAW.has(ext) || JPEG.has(ext)) || excluded(file, exclude, fileId)) return file;
+  const dir = process.platform === 'win32' ? path.dirname(file).toLowerCase() : path.dirname(file);
+  return path.join(dir, path.basename(file, path.extname(file)).toLowerCase());
+}
+
+function groupFiles(files, { exclude } = {}) {
   const groups = new Map();
   for (const f of files) {
-    const ext = path.extname(f.path).toLowerCase();
-    // Pair only a RAW with a JPEG of the same stem, in the same directory.
-    const pairable = RAW.has(ext) || JPEG.has(ext);
-    const stem = path.basename(f.path, path.extname(f.path)).toLowerCase();
-    const dir = process.platform === 'win32' ? path.dirname(f.path).toLowerCase() : path.dirname(f.path);
-    const key = pairable ? path.join(dir, stem) : f.path;
+    const key = groupKey(f.path, exclude, f.fileId);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(f);
   }
   const records = [];
-  for (const group of groups.values()) {
+  for (const [key, group] of groups) {
     const raws = group.filter(f => RAW.has(path.extname(f.path).toLowerCase()));
     const jpgs = group.filter(f => JPEG.has(path.extname(f.path).toLowerCase()));
     const paired = raws.length === 1 && jpgs.length === 1 && group.length === 2;
     for (const f of paired ? raws : group) {
       const raw = RAW.has(path.extname(f.path).toLowerCase());
       const companion = paired ? jpgs[0] : null;
-      records.push({ ...f, id: hash(f.path).slice(0, 24), raw,
+      records.push({ ...f, id: hash(f.path).slice(0, 24), raw, group: key,
         companion: companion?.path ?? null, companionSize: companion?.size, companionMtimeMs: companion?.mtimeMs,
         fingerprint: `${f.size}:${f.mtimeMs}:${companion?.size ?? ''}:${companion?.mtimeMs ?? ''}`,
         sidecar: sidecarPaths(f.path)[0], sidecars: sidecarPaths(f.path), modified: 0,
         flag: 'none', rating: 0, color: null, edited: false, source: raw ? 'Embedded RAW preview' : 'Original image' });
     }
   }
-  return records.sort((a, b) => filenameOrder.compare(a.name, b.name) || a.path.localeCompare(b.path));
+  return records.sort(itemOrder);
+}
+const itemOrder = (a, b) => filenameOrder.compare(a.name, b.name) || a.path.localeCompare(b.path);
+function insertSorted(items, item) {
+  let low = 0, high = items.length;
+  while (low < high) { const mid = (low + high) >> 1; if (itemOrder(items[mid], item) <= 0) low = mid + 1; else high = mid; }
+  items.splice(low, 0, item);
+}
+function captureMetadata(value) { try { return value ? normalizeCaptureMetadata(value) : undefined; } catch { return undefined; } }
+const captureState = c => ({ exposureId: typeof c.exposureId === 'string' ? c.exposureId : undefined, ordinal: Number.isSafeInteger(c.ordinal) ? c.ordinal : undefined,
+  contentRev: Number.isSafeInteger(c.contentRev) && c.contentRev > 0 ? c.contentRev : 0, captureMetadata: captureMetadata(c.captureMetadata), captureDevelop: c.captureDevelop === true });
+const restore = (item, cached, folder) => Object.assign(item, decision(cached), { modified: cached.modified || 0, edited: cached.edited ?? (cached.flag !== 'none' || cached.rating > 0), develop: developState(resolveDevelop(cached.develop, item.path, folder)), ...captureState(cached) });
+// Session JSON fields that tie a photo to a tethered exposure.
+const captureFields = i => ({ ...(i.exposureId ? { exposureId: i.exposureId, ordinal: i.ordinal } : {}), ...(i.contentRev ? { contentRev: i.contentRev } : {}),
+  ...(i.captureMetadata ? { captureMetadata: i.captureMetadata } : {}), ...(i.captureDevelop ? { captureDevelop: true } : {}) });
+function indexItem(s, item) {
+  s.byPath.set(item.path, item.id);
+  if (item.companion) s.byPath.set(item.companion, item.id);
+  if (!s.byGroup.has(item.group)) s.byGroup.set(item.group, new Set());
+  s.byGroup.get(item.group).add(item.id);
+}
+function unindexItem(s, item) {
+  for (const file of [item.path, item.companion]) if (file && s.byPath.get(file) === item.id) s.byPath.delete(file);
+  s.byGroup.get(item.group)?.delete(item.id);
+  if (!s.byGroup.get(item.group)?.size) s.byGroup.delete(item.group);
 }
 
 const developSummary = develop => ({ developed: !!develop?.tiff && !develop?.missing, externalEdit: !!develop?.editedBy && !develop?.missing, editedBy: develop?.editedBy ?? null, tiff: develop?.tiff ?? null, handoffLinked: !!develop?.handoffs.some(r => r.path === develop.tiff && r.linked), handoffMissing: !!develop?.missing, developRevision: develop?.revision ?? 0, recipe: develop?.recipe ?? null, adjusted: !!develop?.settings });
 
 class Library {
-  constructor(dataDir, { settings = () => DEFAULTS, recipeSettings = () => null, onWarning = () => {}, keepSessions = 1, linkedHandoffs = () => new Set() } = {}) {
+  constructor(dataDir, { settings = () => DEFAULTS, recipeSettings = () => null, onWarning = () => {}, keepSessions = 1, linkedHandoffs = () => new Set(), pairingExclusions = () => [], captureExposure = () => null } = {}) {
     // The desktop app has one open folder. The server keeps several, one per
     // folder, with a stable id so every browser shares it.
     this.keepSessions = keepSessions;
-    this.settings = settings; this.recipeSettings = recipeSettings; this.onWarning = onWarning; this.linkedHandoffs = linkedHandoffs;
+    this.settings = settings; this.recipeSettings = recipeSettings; this.onWarning = onWarning; this.linkedHandoffs = linkedHandoffs; this.pairingExclusions = pairingExclusions; this.captureExposure = captureExposure;
+    this.ingests = Promise.resolve();
     this.dataDir = dataDir;
     this.sessions = new Map();
     this.writes = Promise.resolve();
@@ -89,7 +137,7 @@ class Library {
       try { const s = await fs.stat(f.path); return { ...f, size: s.size, mtimeMs: s.mtimeMs, fileId: `${s.dev}:${s.ino}` }; }
       catch (e) { warnings.push(`${f.name}: ${e.message}`); return null; }
     });
-    const items = groupFiles(stats.filter(Boolean));
+    const items = groupFiles(stats.filter(Boolean), { exclude: exclusionMap(this.pairingExclusions(folder)) });
     let imported = false; const unsynced = [];
     const store = path.join(this.dataDir, 'sessions', hash(folder + ':' + recursive) + '.json');
     const previous = this.keepSessions > 1 ? [...this.sessions.values()].find(s => s.store === store) : null;
@@ -98,9 +146,14 @@ class Library {
     try { saved = JSON.parse(await fs.readFile(store, 'utf8')).decisions ?? {}; }
     catch (e) { if (e.code !== 'ENOENT') warnings.push('Saved session could not be read; existing XMP will be used.'); }
     await mapLimit(items, 8, async item => {
-      const cached = saved[item.id];
-      const valid = cached?.fingerprint === item.fingerprint;
-      if (valid) Object.assign(item, decision(cached), { modified: cached.modified || 0, edited: cached.edited ?? (cached.flag !== 'none' || cached.rating > 0), develop: developState(resolveDevelop(cached.develop, item.path, folder)) });
+      let cached = saved[item.id], valid = cached?.fingerprint === item.fingerprint;
+      // A RAW published after its JPEG but before the session save still owns the JPEG's capture decisions.
+      const provisional = !valid && item.companion ? saved[hash(item.companion).slice(0, 24)] : null;
+      if (provisional?.exposureId && provisional.fingerprint === `${item.companionSize}:${item.companionMtimeMs}::`) { cached = { ...provisional, contentRev: (provisional.contentRev || 0) + 1 }; valid = true; }
+      // Likewise a RAW saved alone keeps its decisions once the tether proves the new JPEG is the same exposure.
+      else if (!valid && item.companion && cached?.exposureId && cached.fingerprint === `${item.size}:${item.mtimeMs}::`
+        && this.captureExposure({ path: item.companion, size: item.companionSize }) === cached.exposureId) { cached = { ...cached, contentRev: (cached.contentRev || 0) + 1 }; valid = true; }
+      if (valid) restore(item, cached, folder);
       const sidecars = [], existingSidecars = [];
       for (const file of item.sidecars) {
         try {
@@ -127,6 +180,7 @@ class Library {
         if (!valid || winner.modified > item.modified) {
           const state = winner.state;
           Object.assign(item, decision({ ...item, ...state }), { modified: winner.modified });
+          if (state.captureMetadata) item.captureMetadata = state.captureMetadata;
           imported = true;
           if (Object.hasOwn(state, 'develop')) {
             const resolved = resolveDevelop(state.develop, item.path, folder);
@@ -134,12 +188,14 @@ class Library {
           }
         }
       }
-      if (valid && item.modified > (sidecars[0]?.modified || 0) && (item.edited || item.develop)) unsynced.push(item);
+      if (valid && item.modified > (sidecars[0]?.modified || 0) && (item.edited || item.develop || item.captureMetadata)) unsynced.push(item);
       if (item.develop?.tiff) item.develop.missing = !await fs.stat(item.develop.tiff).then(s => s.isFile(), () => false);
     });
     if (superseded()) throw new Error('Folder scan was superseded.');
     const root = await fs.stat(folder);
-    const session = { id: previous?.id ?? randomUUID(), folder, folderId: `${root.dev}:${root.ino}`, items, byId: new Map(items.map(item => [item.id,item])), store, warnings, recursive, removable: !!removable, undo: [], redo: [], linkedPaths: this.linkedHandoffs() };
+    const session = { id: previous?.id ?? randomUUID(), folder, folderId: `${root.dev}:${root.ino}`, items, byId: new Map(items.map(item => [item.id,item])), store, warnings, recursive, removable: !!removable, undo: [], redo: [], linkedPaths: this.linkedHandoffs(),
+      rev: 0, aliases: new Map(), byPath: new Map(), byGroup: new Map() };
+    for (const item of items) indexItem(session, item);
     // Image jobs already in flight retain their own file references.
     this.sessions.delete(previous?.id);
     while (this.sessions.size >= this.keepSessions) this.sessions.delete(this.sessions.keys().next().value);
@@ -149,19 +205,24 @@ class Library {
     return this.publicSession(session);
   }
 
+  publicItem({ id, name, size, raw, companion, flag, rating, color, trashed, source, edited, develop, contentRev, exposureId, ordinal, captureMetadata }) {
+    return { id, name, size, raw, paired: !!companion, flag, rating, color, trashed, source, edited, ...developSummary(develop), contentRev: contentRev || 0,
+      ...(exposureId ? { exposureId, ordinal } : {}), ...(captureMetadata ? { captureMetadata } : {}) };
+  }
+
   publicSession(s) {
-    return { id: s.id, folder: s.folder, items: s.items.map(({ id, name, size, raw, companion, flag, rating, color, trashed, source, edited, develop }) =>
-      ({ id, name, size, raw, paired: !!companion, flag, rating, color, trashed, source, edited, ...developSummary(develop) })), warnings: s.warnings, recursive: s.recursive, removable: s.removable };
+    return { id: s.id, folder: s.folder, items: s.items.map(item => this.publicItem(item)), warnings: s.warnings, recursive: s.recursive, removable: s.removable };
   }
 
   get(id) {
     const s = this.sessions.get(id);
-    if (!s) throw new Error('This folder session has closed.');
+    if (!s) throw coded('STALE_SESSION', 'This folder session has closed.');
     return s;
   }
 
+  // A provisional JPEG ID keeps resolving to its RAW after a remap, so edits already in flight land on the right photo.
   item(session, id) {
-    const item = this.get(session).byId.get(id);
+    const s = this.get(session), item = s.byId.get(id) ?? s.byId.get(s.aliases.get(id));
     if (!item) throw new Error('Image is not in this folder session.');
     return item;
   }
@@ -174,7 +235,7 @@ class Library {
     const write = this.writes.catch(() => {}).then(async () => {
       this.pendingSaves.delete(s.id);
       const data = JSON.stringify({ version: 1, folder: s.folder, decisions: Object.fromEntries(s.items.map(i =>
-        [i.id, { ...decision(i), path: path.relative(s.folder, i.path), fingerprint: i.fingerprint, modified: i.modified, edited: i.edited, ...(i.develop ? { develop: portableDevelop(i.develop, i.path, s.folder) } : {}) }])) });
+        [i.id, { ...decision(i), path: path.relative(s.folder, i.path), fingerprint: i.fingerprint, modified: i.modified, edited: i.edited, ...(i.develop ? { develop: portableDevelop(i.develop, i.path, s.folder) } : {}), ...captureFields(i) }])) });
       await fs.mkdir(path.dirname(s.store), { recursive: true });
       await atomicWrite(s.store, data); this.stats.sessionWrites++;
     });
@@ -230,6 +291,167 @@ class Library {
 
   async close() { await this.flushSidecars(); await this.writes; }
 
+  // Opens a folder for tethering without rescanning a session that already covers it. Widening a
+  // nonrecursive session to recursive carries its decisions by verified path and fingerprint,
+  // including ones only ever stored in the session file (writeSidecars: never).
+  async openEmptyOrExisting(folder, recursive = false, { removable = false } = {}) {
+    folder = await fs.realpath(folder);
+    const covering = [...this.sessions.values()].find(s => s.folder === folder && (s.recursive || !recursive));
+    if (covering) return this.publicSession(covering);
+    await this.flushSidecars(); await this.writes.catch(() => {});
+    const opened = await this.scan(folder, recursive, { removable });
+    if (!recursive) return opened;
+    let narrow = {};
+    try { narrow = JSON.parse(await fs.readFile(path.join(this.dataDir, 'sessions', hash(folder + ':false') + '.json'), 'utf8')).decisions ?? {}; } catch {}
+    const s = this.get(opened.id), carried = [];
+    for (const item of s.items) {
+      const cached = narrow[item.id];
+      if (!cached || path.join(folder, cached.path || '') !== item.path || cached.fingerprint !== item.fingerprint || (cached.modified || 0) <= (item.modified || 0)) continue;
+      restore(item, cached, folder); carried.push(item);
+    }
+    if (!carried.length) return opened;
+    await this.save(s);
+    return this.publicSession(s);
+  }
+
+  // Adds one published capture without rescanning: only its directory/stem group is regrouped,
+  // with scan's pairing rules. Calls are serialized so revisions and deltas stay contiguous.
+  ingestCapture(sessionId, payload) {
+    const run = this.ingests.catch(() => {}).then(() => this.ingestNow(sessionId, payload));
+    this.ingests = run;
+    return run;
+  }
+
+  async ingestNow(sessionId, p) {
+    const s = this.get(sessionId);
+    if (!p || typeof p !== 'object' || typeof p.path !== 'string' || !path.isAbsolute(p.path)) throw coded('IO_ERROR', 'Invalid capture path.');
+    const file = path.normalize(p.path), name = path.basename(file), dir = path.dirname(file);
+    if (!SUPPORTED.has(path.extname(name).toLowerCase())) throw coded('UNSUPPORTED', `${name}: unsupported capture file type.`);
+    const root = await fs.stat(s.folder).catch(() => null);
+    if (!root || `${root.dev}:${root.ino}` !== s.folderId) throw coded('DEST_CHANGED', 'The capture folder has changed or is no longer available.');
+    if (await fs.realpath(dir).catch(() => null) !== dir || !inside(s.folder, dir) || !s.recursive && dir !== s.folder) throw coded('DEST_CHANGED', `${name} is outside the open folder.`);
+    const stat = await fs.lstat(file);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw coded('IO_ERROR', `${name} is not a regular file.`);
+    const receipt = p.fileIdentity;
+    if (receipt && (receipt.size !== undefined && receipt.size !== stat.size || receipt.ino !== undefined && String(receipt.ino) !== String(stat.ino) || receipt.dev !== undefined && String(receipt.dev) !== String(stat.dev))) throw coded('DEST_CHANGED', `${name} does not match its published receipt.`);
+    const f = { path: file, name, size: stat.size, mtimeMs: stat.mtimeMs, fileId: `${stat.dev}:${stat.ino}` };
+    const sidecars = [];
+    for (const candidate of sidecarPaths(file)) { const info = await fs.lstat(candidate).catch(() => null); if (info?.isFile()) sidecars.push({ file: candidate, modified: info.mtimeMs }); }
+    if (this.sessions.get(sessionId) !== s) throw coded('STALE_SESSION', 'This folder session has closed.');
+    // Everything below runs without awaiting, so it sees and leaves a consistent session.
+    const delta = this.applyCapture(s, f, p, sidecars), unsaved = s.unsavedCaptures ??= new Map();
+    const changed = delta.upserts.length || delta.remap.length || delta.removedIds.length;
+    // A capture applied in memory whose save failed is not done: its retry saves again and reports it.
+    const result = changed ? delta : unsaved.has(file) ? this.refreshDelta(s, unsaved.get(file)) : delta;
+    if (!changed && !unsaved.has(file)) return result;
+    unsaved.set(file, result);
+    await this.save(s);
+    unsaved.delete(file);
+    return result;
+  }
+
+  applyCapture(s, f, p, sidecars) {
+    const capture = { exposureId: typeof p.exposureId === 'string' ? p.exposureId : undefined, ordinal: Number.isSafeInteger(p.ordinal) ? p.ordinal : undefined };
+    const develop = p.develop ? { recipe: typeof p.develop.recipe === 'string' ? p.develop.recipe : null, settings: checkSettings(p.develop.settings ?? {}) } : null;
+    const metadata = p.captureMetadata ? normalizeCaptureMetadata(p.captureMetadata) : undefined;
+    const upserts = [], remap = [], removedIds = [];
+    const firstArrival = !!capture.exposureId && !s.items.some(i => i.exposureId === capture.exposureId);
+    const applyDevelop = item => {
+      if (!develop || !item.raw || item.captureDevelop) return false;
+      // An explicit Develop edit made before the RAW arrived wins over the frozen patch.
+      if (!item.develop) item.develop = developState(develop);
+      item.captureDevelop = true;
+      return true;
+    };
+    const initialize = item => {
+      const initial = p.initial || {}, patch = {};
+      if (initial.pick === true) patch.flag = 'pick';
+      if (Number.isInteger(initial.rating)) patch.rating = initial.rating;
+      if (initial.color !== null && initial.color !== undefined) patch.color = initial.color;
+      Object.assign(item, decision({ ...item, ...patch }), { edited: Object.keys(patch).length > 0, ...capture, captureMetadata: metadata });
+      applyDevelop(item);
+    };
+    const relevant = item => item.edited || item.captureMetadata || item.develop;
+    let target;
+    const knownId = s.byPath.get(f.path);
+    if (knownId) {
+      // A replayed event: the same file must still be the same file; it is never adopted otherwise.
+      target = s.byId.get(knownId);
+      const own = target.path === f.path ? { size: target.size, mtimeMs: target.mtimeMs, fileId: target.fileId } : { size: target.companionSize, mtimeMs: target.companionMtimeMs };
+      if (own.size !== f.size || own.mtimeMs !== f.mtimeMs || own.fileId && own.fileId !== f.fileId) throw coded('DEST_CHANGED', `${f.name} changed on disk; it was not adopted as a capture.`);
+      let changed = false;
+      if (capture.exposureId && !target.exposureId) {
+        if (!target.edited && !target.modified) initialize(target);
+        else Object.assign(target, capture);
+        changed = true;
+      }
+      if (target.exposureId === capture.exposureId && applyDevelop(target)) changed = true;
+      if (changed) upserts.push(target);
+    } else {
+      const exclude = exclusionMap(this.pairingExclusions(s.folder));
+      if (p.separate === true) exclude.set(f.path, null);
+      const key = groupKey(f.path, exclude, f.fileId);
+      const previous = [...(s.byGroup.get(key) || [])].map(id => s.byId.get(id)).filter(Boolean);
+      const files = previous.flatMap(item => [{ path: item.path, name: item.name, size: item.size, mtimeMs: item.mtimeMs, fileId: item.fileId },
+        ...(item.companion ? [{ path: item.companion, name: path.basename(item.companion), size: item.companionSize, mtimeMs: item.companionMtimeMs }] : [])]);
+      const records = groupFiles([...files, f], { exclude });
+      const before = new Map(previous.map(item => [item.id, item])), after = new Set(records.map(r => r.id)), replaced = new Set();
+      for (const record of records) {
+        const old = before.get(record.id);
+        if (old) {
+          if (old.companion !== record.companion || old.fingerprint !== record.fingerprint) {
+            unindexItem(s, old);
+            Object.assign(old, { companion: record.companion, companionSize: record.companionSize, companionMtimeMs: record.companionMtimeMs, fingerprint: record.fingerprint, group: record.group, contentRev: (old.contentRev || 0) + 1 });
+            indexItem(s, old); upserts.push(old);
+          }
+          if (old.path === f.path || old.companion === f.path) { target = old; if (old.exposureId === capture.exposureId && applyDevelop(old) && !upserts.includes(old)) upserts.push(old); }
+          continue;
+        }
+        const item = record;
+        if (item.path === f.path && sidecars.length) item.sidecar = sidecars.sort((a, b) => b.modified - a.modified)[0].file;
+        // JPEG first: the RAW takes over the provisional row with every decision and reference.
+        const donor = previous.find(old => !after.has(old.id) && item.companion === old.path);
+        if (donor) {
+          Object.assign(item, decision(donor), { modified: donor.modified, edited: donor.edited, develop: donor.develop ?? null, captureMetadata: donor.captureMetadata,
+            exposureId: donor.exposureId ?? capture.exposureId, ordinal: donor.ordinal ?? capture.ordinal, contentRev: (donor.contentRev || 0) + 1, captureDevelop: donor.captureDevelop === true });
+          if (!sidecars.length && item.sidecars.includes(donor.sidecar)) item.sidecar = donor.sidecar;
+          if (item.exposureId === capture.exposureId) applyDevelop(item);
+          this.remapItem(s, donor, item); replaced.add(donor.id); remap.push({ from: donor.id, to: item.id });
+        } else if (item.path === f.path) {
+          item.contentRev = 1;
+          if (capture.exposureId) initialize(item);
+        }
+        s.byId.set(item.id, item); insertSorted(s.items, item); indexItem(s, item); upserts.push(item);
+        if (item.path === f.path || item.companion === f.path) target = item;
+      }
+      for (const old of previous) if (!after.has(old.id) && !replaced.has(old.id)) {
+        unindexItem(s, old); s.byId.delete(old.id); s.items.splice(s.items.indexOf(old), 1); removedIds.push(old.id);
+      }
+    }
+    if (upserts.length || remap.length || removedIds.length) {
+      s.rev = (s.rev || 0) + 1;
+      const touched = upserts.filter(relevant);
+      if (touched.length) this.changed(s, touched);
+    }
+    const roles = Array.isArray(p.expectedRoles) ? p.expectedRoles : [];
+    return { session: s.id, shootId: p.shootId ?? null, rev: s.rev || 0, exposureId: capture.exposureId ?? null, ordinal: capture.ordinal ?? null, itemId: target?.id ?? null,
+      upserts: upserts.map(item => this.publicItem(item)), removedIds, remap, firstArrival: firstArrival && upserts.includes(target),
+      pairState: target?.companion ? 'paired' : p.separate ? 'separate' : roles.includes('raw') && roles.includes('jpeg') ? 'waiting' : 'single' };
+  }
+
+  refreshDelta(s, delta) {
+    const upserts = delta.upserts.map(item => s.byId.get(item.id)).filter(Boolean).map(item => this.publicItem(item));
+    return { ...delta, rev: s.rev || 0, upserts, removedIds: delta.removedIds.filter(id => !s.byId.has(id)) };
+  }
+
+  remapItem(s, from, to) {
+    unindexItem(s, from); s.byId.delete(from.id); s.items.splice(s.items.indexOf(from), 1);
+    s.aliases.set(from.id, to.id);
+    for (const [alias, id] of s.aliases) if (id === from.id) s.aliases.set(alias, to.id);
+    for (const action of [...s.undo, ...s.redo]) for (const entry of action.batch || [action]) if (entry.id === from.id) entry.id = to.id;
+    this.pendingSidecars.delete(s.id + ':' + from.id);
+  }
+
   // Develop state (see develop.cjs). Not part of undo: it is edited in the develop view, not by culling keys.
   developGet(sessionId, imageId) {
     const item = this.item(sessionId, imageId);
@@ -242,7 +464,7 @@ class Library {
     if (!Array.isArray(ids) || !ids.length || ids.length > 100_000) throw new Error('Choose photos to develop.');
     if (recipe !== null && (typeof recipe !== 'string' || recipe.length > 80)) throw new Error('Unknown recipe.');
     settings = settings === null ? null : checkSettings(settings);
-    const items = [...new Set(ids)].map(id => this.item(sessionId, id));
+    const items = [...new Set(ids.map(id => this.item(sessionId, id)))];
     for (const item of items) {
       const missing = item.develop?.missing;
       item.develop = developState({ ...item.develop, recipe, settings, tiff: item.develop?.tiff ?? null, editedBy: item.develop?.editedBy ?? null });
@@ -294,7 +516,7 @@ class Library {
   async decideMany(sessionId, ids, patch) {
     const s = this.get(sessionId);
     if (!Array.isArray(ids) || !ids.length || ids.length > 100_000) throw new Error('Choose photos to edit.');
-    const items = [...new Set(ids)].map(id => this.item(sessionId, id));
+    const items = [...new Set(ids.map(id => this.item(sessionId, id)))];
     const batch = items.map(item => {
       const before = decision(item), after = decision({ ...before, ...patch });
       return { id: item.id, before, after };
@@ -332,7 +554,7 @@ class Library {
     await this.flushSidecars();
     const s = this.get(sessionId);
     // Snapshot decisions so keystrokes during export do not change the current batch.
-    const items = s.items.filter(i => i.edited || i.modified && i.develop).map(i => this.sidecarItem(s, i));
+    const items = s.items.filter(i => i.edited || i.modified && (i.develop || i.captureMetadata)).map(i => this.sidecarItem(s, i));
     const failures = [], paths = new Map();
     // A same-stem second RAW format must never silently overwrite another decision.
     for (const item of s.items) {
@@ -375,7 +597,7 @@ class Library {
       const companion = await lstat(item.companion);
       return !companion || companion.size === item.companionSize && companion.mtimeMs === item.companionMtimeMs;
     };
-    const doomed = [...new Set(ids)].map(id => this.item(sessionId, id));
+    const doomed = [...new Set(ids.map(id => this.item(sessionId, id)))];
     const checked = await mapLimit(doomed, 8, async item => ({ item, ok: await unchanged(item) }));
     const photos = [], skipped = [], deleting = new Set();
     for (const { item, ok } of checked) {
@@ -398,9 +620,10 @@ class Library {
 
   // Drops deleted photos from the session, its undo history and its saved decisions.
   async forget(sessionId, ids) {
-    const s = this.get(sessionId), gone = new Set(ids);
+    const s = this.get(sessionId), gone = new Set(ids.map(id => s.byId.has(id) ? id : s.aliases.get(id) ?? id));
     s.items = s.items.filter(item => !gone.has(item.id));
-    for (const id of gone) s.byId.delete(id);
+    for (const id of gone) { const item = s.byId.get(id); if (item) unindexItem(s, item); s.byId.delete(id); }
+    for (const [from, to] of s.aliases) if (gone.has(to)) s.aliases.delete(from);
     const keep = actions => actions.flatMap(action => {
       if (!action.batch) return gone.has(action.id) ? [] : [action];
       const batch = action.batch.filter(entry => !gone.has(entry.id));
@@ -418,4 +641,4 @@ class Library {
   }
 }
 
-module.exports = { Library, groupFiles, RAW, SUPPORTED, hash };
+module.exports = { Library, groupFiles, groupKey, RAW, JPEG, SUPPORTED, hash, coded, inside };

@@ -5,7 +5,7 @@ const { randomUUID } = require('node:crypto');
 const { normalizeSettings } = require('./preferences.cjs');
 const { renderName, needsCapture } = require('./renderer/naming.js');
 const { MetadataWriter } = require('./metadata-writer.cjs');
-const { updateXmp } = require('./xmp.cjs');
+const { updateXmp, captureSettings } = require('./xmp.cjs');
 
 const canceled = () => Object.assign(new Error('Copy canceled. Completed images are kept.'), { code: 'CANCELED' });
 const inside = (parent, file) => { const relative = path.relative(parent, file); return relative === '' || !relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative); };
@@ -157,7 +157,7 @@ class TransferService {
           for (const file of group.files.filter(file => file.source)) {
             if (signal.aborted) throw canceled();
             progress.file = file.relative; progress.state = 'metadata'; emit(true);
-            await this.metadataWriter.write(path.join(root,file.relative), group.item, options.metadataSettings, signal);
+            await this.metadataWriter.write(path.join(root,file.relative), group.item, captureSettings(options.metadataSettings, group.item), signal);
           }
           progress.state = 'copying';
         }

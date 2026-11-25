@@ -8,6 +8,8 @@ pub mod export_encode;
 mod external;
 mod logs;
 mod sharpness;
+mod tether;
+mod updater;
 
 use backend::Backend;
 use serde::Serialize;
@@ -80,6 +82,12 @@ const RENDERER_METHODS: &[&str] = &[
     "develop-plan",
     "make-folder",
     "export-plan",
+    "tether-state",
+    "tether-library",
+    "tether-config",
+    "tether-counter",
+    "tether-name-preview",
+    "tether-primary",
 ];
 
 #[tauri::command]
@@ -91,11 +99,15 @@ async fn backend(
     if !RENDERER_METHODS.contains(&method.as_str()) {
         return Err(format!("Unknown request: {method}"));
     }
-    let result = state.call(&method, Value::Array(params)).await;
-    if let Err(error) = &result {
-        logs::write(&format!("{method}: {error}"));
-    }
-    result
+    let result = state.call_detail(&method, Value::Array(params)).await;
+    result.map_err(|failure| {
+        logs::write(&format!("{method}: {}", failure.message));
+        // Tether panels read the stable error code from the JSON detail.
+        match failure.detail {
+            Some(detail) if method.starts_with("tether-") => json!({ "error": detail }).to_string(),
+            _ => failure.message,
+        }
+    })
 }
 
 #[tauri::command]
@@ -392,6 +404,7 @@ fn mac_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
         |id: &str, label: &str, _accelerator: &str| MenuItemBuilder::with_id(id, label).build(app);
     let app_menu = SubmenuBuilder::new(app, "PhotoCull")
         .item(&PredefinedMenuItem::about(app, None, None)?)
+        .item(&item("check-updates", "Check for Updates…", "")?)
         .item(&item("settings", "Settings…", "Cmd+,")?)
         .separator()
         .item(&PredefinedMenuItem::services(app, None)?)
@@ -452,7 +465,11 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(updater::UpdateState::default())
         .invoke_handler(tauri::generate_handler![
+            updater::update_check,
+            updater::update_install,
             backend,
             pick_folder,
             pick_editor,
@@ -476,7 +493,25 @@ pub fn run() {
             develop::clean_handoffs,
             develop::export_photos,
             develop::lens_database,
-            develop::download_lens_database
+            develop::download_lens_database,
+            tether::tether_open,
+            tether::tether_location,
+            tether::tether_devices,
+            tether::tether_discover_wifi,
+            tether::tether_add_wifi,
+            tether::tether_connect,
+            tether::tether_control,
+            tether::tether_set_property,
+            tether::tether_trigger,
+            tether::tether_focus,
+            tether::tether_live,
+            tether::tether_live_frame,
+            tether::tether_composition_frame,
+            tether::tether_review_frame,
+            tether::tether_overlay_pick,
+            tether::tether_overlay_image,
+            tether::tether_recover,
+            tether::tether_presented
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -507,6 +542,7 @@ pub fn run() {
                         .app_data_dir()
                         .unwrap_or_else(|_| std::env::temp_dir().join("PhotoCull"))
                 });
+            app.manage(tether::TetherManager::new(handle.clone(), data_dir.clone()));
             app.manage(std::sync::Arc::new(develop::Engine::new(data_dir)));
             #[cfg(target_os = "macos")]
             {
@@ -514,6 +550,7 @@ pub fn run() {
                 app.on_menu_event(|app, event| {
                     let _ = match event.id().as_ref() {
                         "open-folder" => app.emit("open-folder-shortcut", ()),
+                        "check-updates" => app.emit("check-updates-shortcut", ()),
                         "settings" => app.emit("settings-shortcut", ()),
                         "undo" => app.emit("edit-shortcut", "undo"),
                         "redo" => app.emit("edit-shortcut", "redo"),
@@ -530,6 +567,9 @@ pub fn run() {
     app.run(|app, event| {
         if let RunEvent::Exit = event {
             logs::write("PhotoCull shell closing");
+            if let Some(tether) = app.try_state::<tether::TetherManager>() {
+                tether.shutdown();
+            }
             if let Some(backend) = app.try_state::<Backend>() {
                 backend.shutdown();
             }

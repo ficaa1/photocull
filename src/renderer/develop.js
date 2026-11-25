@@ -1,6 +1,6 @@
 /* Develop UI. The host supplies small app hooks; this module owns its DOM and async work. */
-(() => {
-  const L = window.PhotoCullDevelopLogic;
+(root => {
+  const L = root.PhotoCullDevelopLogic;
   const clone = value => structuredClone(value);
   const get = (obj, path) => path.split('.').reduce((v, k) => v?.[k], obj);
   const put = (obj, path, value) => { const [a, b] = path.split('.'); (obj[a] ||= {})[b] = value; };
@@ -19,9 +19,49 @@
     for (const [k,v] of Object.entries(props)) k === 'text' ? el.textContent = v : k === 'class' ? el.className = v : el.setAttribute(k,v);
     el.append(...children); return el;
   }
+  const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
+  const signed = n => n > 0 ? `+${n}` : String(n);
+  const linear = c => { const v = clamp(c, 0, 255) / 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  function frameWhiteBalance(settings, info) {
+    const wb = { ...info.base?.wb, ...settings }, mode = wb.mode || 'asShot';
+    const { temp, tint } = mode === 'asShot' ? info.asShot : wb;
+    return { mode, temp, tint };
+  }
+  // Moves the current white balance so a sampled neutral renders gray: the red/blue log ratio shifts mireds, green against red·blue shifts tint.
+  function solveWhiteBalance(r, g, b, currentTemp = 5500, currentTint = 0) {
+    const [lr, lg, lb] = [r, g, b].map(Number).map(linear), high = Math.max(lr, lg, lb);
+    if (![lr, lg, lb].every(Number.isFinite) || high > 0.98 || high < 0.02 || Math.min(lr, lg, lb) <= 0.001) return { error: 'Click a neutral gray or white surface that is not clipped.' };
+    const temp = Number.isFinite(currentTemp) ? currentTemp : 5500, tint = Number.isFinite(currentTint) ? currentTint : 0;
+    const mired = clamp(1e6 / clamp(temp, 2000, 50000) + Math.log(lr / lb) * 145, 20, 500);
+    return { temp: Math.round(clamp(1e6 / mired, 2000, 50000) / 50) * 50, tint: Math.round(clamp(tint + Math.log(lg / Math.sqrt(lr * lb)) * 115, -150, 150)) || 0 };
+  }
+  // Average RGB of the (2r+1)² patch around a normalized point of an RGBA buffer.
+  function samplePatch(data, width, height, x, y, radius = 2) {
+    if (!(x >= 0 && x <= 1 && y >= 0 && y <= 1) || !width || !height) return null;
+    const cx = clamp(Math.floor(x * width), 0, width - 1), cy = clamp(Math.floor(y * height), 0, height - 1);
+    let r = 0, g = 0, b = 0, n = 0;
+    for (let py = Math.max(0, cy - radius); py <= Math.min(height - 1, cy + radius); py++) for (let px = Math.max(0, cx - radius); px <= Math.min(width - 1, cx + radius); px++) {
+      const i = (py * width + px) * 4; r += data[i]; g += data[i + 1]; b += data[i + 2]; n++;
+    }
+    return { r: r / n, g: g / n, b: b / n };
+  }
+  // Maps a viewport click onto img's pixels, allowing for object-fit letterboxing; pixels may be a decoded copy of the same frame.
+  function sampleImagePatch(img, clientX, clientY, radius = 2, pixels = img) {
+    const box = img.getBoundingClientRect(), width = pixels.naturalWidth, height = pixels.naturalHeight;
+    if (!width || !height || !box.width || !box.height) return null;
+    const fit = getComputedStyle(img).objectFit, contain = Math.min(box.width / width, box.height / height);
+    const scale = fit === 'contain' ? contain : fit === 'scale-down' ? Math.min(1, contain) : null;
+    const w = scale ? width * scale : box.width, h = scale ? height * scale : box.height;
+    const x = (clientX - box.left - (box.width - w) / 2) / w, y = (clientY - box.top - (box.height - h) / 2) / h;
+    if (!(x >= 0 && x <= 1 && y >= 0 && y <= 1)) return null;
+    const size = 2 * radius + 1, canvas = document.createElement('canvas'); canvas.width = canvas.height = size;
+    const sx = clamp(Math.floor(x * width) - radius, 0, Math.max(0, width - size)), sy = clamp(Math.floor(y * height) - radius, 0, Math.max(0, height - size));
+    const ctx = canvas.getContext('2d', { willReadFrequently: true }); ctx.drawImage(pixels, sx, sy, size, size, 0, 0, size, size);
+    return samplePatch(ctx.getImageData(0, 0, size, size).data, size, size, 0.5, 0.5, radius);
+  }
   function button(text, action, props = {}) {
     const b = node('button', { type:'button', class:'button quiet', text, ...props });
-    b.onclick = () => { Promise.resolve().then(action).catch(e => window.PhotoCullDevelop.host.toast(e.message)); }; return b;
+    b.onclick = () => { Promise.resolve().then(action).catch(e => root.PhotoCullDevelop.host.toast(e.message)); }; return b;
   }
   class Develop {
     constructor(host) {
@@ -51,6 +91,8 @@
       this.wipe.addEventListener('pointerup',e=>{if(this.wipe.hasPointerCapture(e.pointerId))this.wipe.releasePointerCapture(e.pointerId);});
       this.wipe.onkeydown=e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();e.stopPropagation();this.setSplit(e.key==='Home'?0:e.key==='End'?100:this.splitPosition+(e.key==='ArrowLeft'?-1:1)*(e.shiftKey?10:1));}};
       new ResizeObserver(()=>this.drawFocus()).observe(this.image);
+      this.frameBox.addEventListener('click',e=>{if(this.wbArmed)this.pickWhiteBalance(e);});
+      document.addEventListener('keydown',e=>{if(e.key==='Escape'&&this.wbArmed&&!document.querySelector('dialog[open], .modal:not([hidden]), [role="dialog"]:not([hidden])')){e.preventDefault();e.stopImmediatePropagation();this.toggleWhiteBalancePick(false);}},true);
       this.notice = node('p',{id:'develop-message',class:'develop-message',role:'status'});
       this.timing = node('span',{id:'develop-timing',class:'develop-timing'});
       this.beforeButton = button('Before / after (\\)', () => this.toggleBefore(), {id:'develop-before','aria-pressed':'false'});
@@ -87,7 +129,8 @@
       const wb = this.group('White balance',true);
       this.wb = node('select',{id:'develop-wb','aria-label':'White balance'}, [['asShot','As shot'],['auto','Auto'],['custom','Custom']].map(([value,text])=>node('option',{value,text})));
       this.wb.onchange = () => this.change('wb.mode',this.wb.value);
-      this.asShot = node('p',{class:'subtle small',id:'develop-as-shot'}); wb.append(this.wb,this.asShot);
+      this.wbPick = button('Pick WB',() => this.toggleWhiteBalancePick(),{id:'develop-wb-pick','aria-pressed':'false',title:'Click a neutral gray or white area of the photo (Esc cancels)'});
+      this.asShot = node('p',{class:'subtle small',id:'develop-as-shot'}); wb.append(node('div',{class:'develop-wb-row'},[this.wb,this.wbPick]),this.asShot);
       this.addSliders(wb,'wb.'); this.addSliders(this.group('Light',true),'light.');
       const curve = this.group('Tone curve',false); curve.append(node('p',{class:'subtle small',text:'Linear point curve · parametric adjustments'})); this.addSliders(curve,'curve.');
       const lens = this.group('Lens',false);
@@ -149,7 +192,7 @@
       document.body.classList.toggle('develop-active',this.active);
       const key=this.active && context.photo ? `${context.session.id}:${context.photo.id}:${!!context.photo.externalEdit}` : '';
       if (key === this.key) return;
-      void this.flush(); this.key=key; const token=++this.token; this.queue.invalidate(); this.info=null; this.resultFrame=null;this.clearWipe(); this.resultPanel.hidden=this.resultToggle.hidden=true; this.controls.disabled=true; this.before=false;
+      void this.flush(); this.toggleWhiteBalancePick(false); this.key=key; const token=++this.token; this.queue.invalidate(); this.info=null; this.resultFrame=null;this.clearWipe(); this.resultPanel.hidden=this.resultToggle.hidden=true; this.controls.disabled=true; this.before=false;
       this.beforeButton.setAttribute('aria-pressed','false'); this.beforeButton.disabled=true; this.releaseFrame(); this.hist=null; this.drawHistogram();
       if (!key) return;
       this.photoTitle.textContent=context.photo.name;
@@ -223,12 +266,16 @@
       this.image.alt=result ? 'External edit' : 'Developed RAW preview';
       this.resultToggle.textContent=this.showResult ? 'RAW develop' : `Edited in ${this.host.editorName(this.saved?.editedBy)}`;
       this.resultToggle.setAttribute('aria-pressed',String(result));
+      this.wbPick.disabled=this.split;
+      this.wbPick.title=this.split?'Exit Split view to pick White Balance':'Click a neutral gray or white area of the photo (Esc cancels)';
       this.queue.request({result,session:this.context.session.id,id:this.context.photo.id,settings:clone(this.before ? this.recipeSettings : this.own),before:this.before});
     }
     async frame(frame,job) {
       const url=URL.createObjectURL(frame.blob), loaded=new Image(); loaded.src=url;
       try { await loaded.decode(); } catch(e) { URL.revokeObjectURL(url); throw e; }
       if (job.epoch!==this.queue.epoch || (job.settled && job.version!==this.queue.version)) { URL.revokeObjectURL(url); return; }
+      this.renderedWb = !job.value.result && !job.value.before ? frameWhiteBalance(job.value.settings?.wb, this.info) : null;
+      this.renderedVersion = job.version;
       const old=this.url; this.url=url; this.image.src=url; this.image.hidden=false;
       this.hist=frame.histogram; this.drawHistogram(); this.message('');
       this.timing.textContent=`${job.value.result ? `Edited in ${this.host.editorName(this.saved?.editedBy)}` : job.value.before ? 'Before · recipe' : 'After'} · ${job.settled ? 'settled' : 'draft'} ${Math.round(frame.renderMs)} ms · load ${Math.round(frame.loadMs)} ms`;
@@ -246,7 +293,7 @@
     setSplit(value) {this.splitPosition=Math.min(100,Math.max(0,value));this.wipe.style.left=`${this.splitPosition}%`;this.wipe.setAttribute('aria-valuenow',String(Math.round(this.splitPosition)));this.wipeImage.style.clipPath=`inset(0 ${100-this.splitPosition}% 0 0)`;}
     toggleSplit() {
       if(!this.info)return;
-      this.split=!this.split;this.before=false;this.beforeButton.setAttribute('aria-pressed','false');this.splitButton.setAttribute('aria-pressed',String(this.split));this.clearWipe();this.queue.invalidate();this.render();
+      this.split=!this.split;this.toggleWhiteBalancePick(false);this.before=false;this.beforeButton.setAttribute('aria-pressed','false');this.splitButton.setAttribute('aria-pressed',String(this.split));this.clearWipe();this.queue.invalidate();this.render();
     }
     clearWipe() {this.wipeEpoch++;this.wipeKey='';this.wipeImage.hidden=this.wipe.hidden=this.wipeBefore.hidden=this.wipeAfter.hidden=true;this.wipeImage.removeAttribute('src');if(this.wipeUrl)URL.revokeObjectURL(this.wipeUrl);this.wipeUrl=null;}
     async updateWipe() {
@@ -262,6 +309,25 @@
         const old=this.wipeUrl;this.wipeUrl=url;this.wipeImage.src=url;this.wipeImage.hidden=this.wipe.hidden=this.wipeBefore.hidden=this.wipeAfter.hidden=false;
         this.wipeBefore.textContent=this.saved?.edited?'RAW develop':'Before · recipe';this.wipeAfter.textContent=this.saved?.edited?'External edit':'After';this.setSplit(this.splitPosition);if(old)URL.revokeObjectURL(old);
       }catch(error){if(epoch===this.wipeEpoch){this.wipeKey='';this.host.toast(`Split preview unavailable: ${error.message}`);}}
+    }
+    canPickWhiteBalance() { return this.active && !!this.info && !this.split; }
+    toggleWhiteBalancePick(on=!this.wbArmed) {
+      on=on && this.canPickWhiteBalance();
+      if(on){if(this.before)this.toggleBefore();if(this.saved?.edited && this.showResult)this.toggleResult();}
+      this.wbArmed=on; this.wbPick.setAttribute('aria-pressed',String(on)); this.image.classList.toggle('is-wb-pick',on);
+    }
+    // Solves against the white balance the shown frame was rendered with.
+    pickWhiteBalance(event) {
+      if(!this.canPickWhiteBalance() || !this.renderedWb || this.renderedVersion!==this.queue.version || !this.maskImage || !this.image.complete || this.image.currentSrc!==this.url || event.target!==this.image)return;
+      const sample=sampleImagePatch(this.image,event.clientX,event.clientY,2,this.maskImage);if(!sample)return;
+      const current=this.renderedWb;
+      const wb=solveWhiteBalance(sample.r,sample.g,sample.b,current.temp,current.tint);
+      if(wb.error){this.host.toast(wb.error);return;}
+      this.toggleWhiteBalancePick(false);
+      if(this.saved?.edited && this.showResult)this.rawAdjustment();
+      this.own.wb={...this.own.wb,mode:'custom',temp:wb.temp,tint:wb.tint};
+      this.queue.invalidate();this.before=false;this.beforeButton.setAttribute('aria-pressed','false');this.updateControls();this.scheduleSave();this.render();
+      this.host.toast(`White balance ${wb.temp} K · Tint ${signed(wb.tint)}`);
     }
     toggleClipping() { this.clipping=!this.clipping; for (const b of [this.low,this.high]) b.setAttribute('aria-pressed',String(this.clipping)); this.drawOverlay(); }
     drawOverlay() {
@@ -295,6 +361,7 @@
     scheduleSave(value={recipe:this.recipe,settings:clone(this.own)}) {
       this.pendingSave={session:this.context.session.id,ids:[this.context.photo.id],value:clone(value)};clearTimeout(this.saveTimer);
       this.saveTimer=setTimeout(()=>void this.flush(),300); this.host.status('Saving develop settings…');
+      this.host.onDraftChange?.({session:this.pendingSave.session,id:this.pendingSave.ids[0],recipe:value.recipe,settings:value.settings});
     }
     flush() {
       clearTimeout(this.saveTimer);const p=this.pendingSave;this.pendingSave=null;
@@ -460,5 +527,6 @@
       }
     }
   }
-  window.PhotoCullDevelop = { init(host) { const instance=new Develop(host);this.host=host;return instance; } };
-})();
+  const api = { init(host) { const instance=new Develop(host);this.host=host;return instance; }, frameWhiteBalance, solveWhiteBalance, samplePatch, sampleImagePatch };
+  if (typeof module === 'object' && module.exports) module.exports = api; else root.PhotoCullDevelop = api;
+})(globalThis);

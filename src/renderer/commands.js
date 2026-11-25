@@ -1,20 +1,22 @@
 // One table owns shortcuts, search, help and keyboard preferences. Mod means
 // Command on macOS and Control elsewhere; both are accepted for shared editing shortcuts.
 (function(root) {
-  const ALL = ['review', 'grid', 'develop', 'compare'];
+  // 'tether' is the studio workspace: Review's photo stage with the capture tools around it.
+  const ALL = ['review', 'grid', 'develop', 'compare', 'tether'], APP = [...ALL, 'stage'], STAGE = ['review', 'tether', 'compare'];
   const table = [];
   const add = (id, title, category, keys, context = ALL, extra = {}) => table.push({ id, title, category, shortcuts: { default: keys, darwin: keys.map(k => k.replaceAll('Mod', 'Meta')), win32: keys.map(k => k.replaceAll('Mod', 'Ctrl')) }, context, ...extra });
-  add('settings', 'Settings', 'Application', ['Mod+,'], ALL, { typing: true, ignoreShift: true, allowModifiers: ['Alt'] });
-  add('open', 'Open folder…', 'Application', ['Mod+O'], ALL, { typing: true, ignoreShift: true, allowModifiers: ['Alt'] });
+  add('settings', 'Settings', 'Application', ['Mod+,'], APP, { typing: true, ignoreShift: true, allowModifiers: ['Alt'] });
+  add('open', 'Open folder…', 'Application', ['Mod+O'], APP, { typing: true, ignoreShift: true, allowModifiers: ['Alt'] });
   add('export', 'Export finished images…', 'Files', ['Mod+Shift+E'], ALL, { typing: true, allowModifiers: ['Alt'] });
   add('fullscreen-key', 'Fullscreen (F11)', 'View', ['F11'], ALL, { typing: true, ignoreShift: true, allowModifiers: ['Ctrl','Meta','Alt'] });
   add('switch-view', 'Switch review / contact sheet', 'View', ['Ctrl+Tab'], ALL, { typing: true, ignoreShift: true, allowModifiers: ['Meta','Alt'] });
   add('edit', 'Edit in external editor…', 'Files', ['Mod+E'], ALL, { allowModifiers: ['Alt'] });
   add('copy-picks', 'Copy picks…', 'Files', []);
   add('configure-editors', 'Configure external editors…', 'Application', []);
+  add('check-updates', 'Check for updates…', 'Application', [], APP, { desktopOnly: true });
   for (const [id, title, button] of [['recipe-reset','Reset photo to recipe','develop-reset'],['recipe-update','Update recipe','develop-recipe-update'],['recipe-duplicate','Duplicate recipe','develop-recipe-duplicate'],['recipe-default','Set recipe as default','develop-recipe-default'],['recipe-delete','Delete recipe','develop-recipe-delete'],['recipe-import','Import recipes…','develop-recipe-import'],['recipe-export','Export recipe…','develop-recipe-export'],['recipes-export','Export user recipes…','develop-recipes-export']])
     add(id, title, 'Develop', [], ['develop'], { button });
-  add('original', 'Show original / external edit', 'View', ['\\'], ['review','grid','compare'], { ignoreShift: true });
+  add('original', 'Show original / external edit', 'View', ['\\'], ['review','tether','grid','compare'], { ignoreShift: true });
   add('escape', 'Clear selection / exit fullscreen / fit', 'View', ['Escape'], ALL, { ignoreShift: true, allowModifiers: ['Ctrl','Meta','Alt'] });
   add('fullscreen', 'Toggle fullscreen', 'View', ['F'], ALL, { ignoreShift: true });
   add('fullscreen-system', 'System fullscreen', 'View', ['Ctrl+Meta+F'], ALL, { typing: true });
@@ -22,11 +24,11 @@
   add('redo', 'Redo', 'Edit', ['Mod+Shift+Z'], ALL, { allowModifiers: ['Alt'] });
   add('select-all', 'Select all visible photos', 'Selection', ['Mod+A'], ALL, { ignoreShift: true, primaryModifier: true, allowModifiers: ['Alt'] });
   for (let n=0;n<=8;n++) add('color-alt-'+n, n ? 'Set color '+n : 'Clear color', 'Labels', ['Alt+'+n], ALL, { ignoreShift: true, allowModifiers: ['Ctrl','Meta'] });
-  add('zoom-in', 'Zoom in', 'Zoom', ['Mod+=','Mod++','Mod+Shift+='], ['review','compare'], { codes: ['Equal','NumpadAdd'], loupe: 'zoom-in' });
-  add('zoom-out', 'Zoom out', 'Zoom', ['Mod+-','Mod+_'], ['review','compare'], { codes: ['Minus','NumpadSubtract'], loupe: 'zoom-out' });
-  add('fit', 'Fit photo', 'Zoom', ['Mod+0','Mod+Shift+0'], ['review','compare'], { codes: ['Digit0','Numpad0'], loupe: 'fit' });
-  add('zoom-toggle', 'Toggle zoom', 'Zoom', ['Z'], ['review','compare'], { ignoreShift: true, loupe: 'toggle' });
-  add('pan', 'Zoom / hold to pan', 'Zoom', ['Space'], ['review','compare'], { ignoreShift: true, loupe: 'space' });
+  add('zoom-in', 'Zoom in', 'Zoom', ['Mod+=','Mod++','Mod+Shift+='], STAGE, { codes: ['Equal','NumpadAdd'], loupe: 'zoom-in' });
+  add('zoom-out', 'Zoom out', 'Zoom', ['Mod+-','Mod+_'], STAGE, { codes: ['Minus','NumpadSubtract'], loupe: 'zoom-out' });
+  add('fit', 'Fit photo', 'Zoom', ['Mod+0','Mod+Shift+0'], STAGE, { codes: ['Digit0','Numpad0'], loupe: 'fit' });
+  add('zoom-toggle', 'Toggle zoom', 'Zoom', ['Z'], STAGE, { ignoreShift: true, loupe: 'toggle' });
+  add('pan', 'Zoom / hold to pan', 'Zoom', ['Space'], STAGE, { ignoreShift: true, loupe: 'space' });
   add('delete', 'Move to PhotoCull Trash / delete in Trash', 'Edit', ['Delete','Backspace']);
   add('delete-permanent', 'Delete permanently…', 'Edit', ['Shift+Delete','Shift+Backspace']);
   add('restore', 'Restore from PhotoCull Trash', 'Edit', ['R'], ALL, { ignoreShift: true, when: 'trash' });
@@ -42,7 +44,8 @@
   add('review-space', 'Open photo in review', 'View', ['Space'], ['grid'], { ignoreShift: true });
   add('review-zoom', 'Open photo zoomed', 'Zoom', ['Z'], ['grid'], { ignoreShift: true });
   for (const [key, mode, title] of [['G','grid','Contact sheet'],['E','review','Review'],['D','develop','Develop']]) add('view-'+mode,title,'View',[key],ALL,{ignoreShift:true});
-  add('help','Keyboard shortcuts / Help','Help',['?'],ALL,{ignoreShift:true});
+  add('view-tether','Tether workspace','View',[]);
+  add('help','Keyboard shortcuts / Help','Help',['?'],APP,{ignoreShift:true});
   add('develop-copy','Copy develop settings','Develop',['Mod+Shift+C'],['develop']);
   add('develop-paste','Paste develop settings','Develop',['Mod+Shift+V'],['develop']);
   add('clipping','Toggle clipping warnings','Develop',['J'],['develop'],{ignoreShift:true});
@@ -54,7 +57,7 @@
   add('burst-keep','Keep sharpest in burst…','Culling',[]);
   add('view-compare','Compare selected photos','View',['C'],ALL,{ignoreShift:true});
   add('develop-split','Split before / after (Shift+backslash)','Develop',['|'],['develop']);
-  add('palette','Command palette','Application',['Mod+K','Mod+Shift+P'],ALL,{typing:true});
+  add('palette','Command palette','Application',['Mod+K','Mod+Shift+P'],APP,{typing:true});
   add('go-photo','Go to photo by name','Navigation',[]);
   add('backup','Back up card or folder…','Files',[]);
   add('treat-card','Treat this folder as a camera card','Files',[]);
@@ -62,6 +65,18 @@
   add('welcome','Welcome / essential keys','Help',[]);
   add('diagnostics','Copy diagnostics','Help',[]);
   add('logs','Open log folder','Help',[]);
+  // Tether. 'stage' is the expanded Live View; 'tether-review' is Review while a tether shoot runs, so J stays free in ordinary Review.
+  const TETHER=APP;
+  add('tether-shutter','Capture with tethered camera','Tether',['T'],TETHER,{desktop:true});
+  add('tether-pause','Pause / resume tether','Tether',['Shift+T'],TETHER,{desktop:true});
+  add('tether-live-view','Live View','Tether',['L'],TETHER,{desktop:true});
+  add('tether-overlay-toggle','Toggle overlay image','Tether',['O'],['review','tether','stage']);
+  add('tether-focus-mask','Toggle focus mask','Tether',['M'],['review','tether']);
+  add('tether-exposure-warning','Toggle exposure warning','Tether',['J'],['tether','tether-review','stage']);
+  add('tether-jump-latest','Jump to latest capture','Tether',['Y'],TETHER);
+  for(const [id,title,desktop] of [['tether-start','Start tethered session…',true],['tether-stop','Stop tethered session',true],['tether-aids','Configure composition and review aids…'],['tether-follow-pause','Pause / resume following new captures'],['tether-pin-reference','Pin reference shot for Compare'],['tether-new-shot','New capture shot folder…',true],['tether-guides-toggle','Toggle composition guides'],['tether-aspect-toggle','Toggle aspect ratio mask'],['tether-af','Autofocus (AF-On)',true],['tether-counter-reset','Reset capture counter',true],['tether-composition','Toggle Test Shot (Composition) Mode',true]])
+    add(id,title,'Tether',[],TETHER,desktop?{desktop:true}:{});
+  add('wb-pick','White balance eyedropper','Develop',[],['develop','tether'],{desktop:true});
   function normalize(binding) {
     if (typeof binding !== 'string' || !binding || binding.length>80) throw new Error('Invalid shortcut.');
     const parts=binding.split('+'), key=parts.pop() || '+', mods=new Set(parts.filter(Boolean).map(p=>({Control:'Ctrl',Command:'Meta',Cmd:'Meta',Option:'Alt'}[p]||p)));
@@ -85,7 +100,9 @@
     if(defaults)for(const mod of command.allowModifiers||[])values=values.flatMap(k=>[k,normalize(mod+'+'+k)]);
     return [...new Set(values)];
   }
-  function overlaps(a,b){return a.context.some(c=>b.context.includes(c));}
+  const scope=c=>c==='tether-review'?'review':c;
+  function overlaps(a,b){return a.context.some(c=>b.context.some(d=>scope(c)===scope(d)));}
+  const active=(command,context)=>[].concat(context).some(c=>command.context.includes(c));
   function conflicts(commands,custom,id,bindings,{defaults=false}={}) {
     const command=commands.find(c=>c.id===id); if(!command)throw new Error('Unknown command.');
     const proposed=bindingVariants(command,bindings,defaults);
@@ -108,18 +125,26 @@
     for(const id of Object.keys(out))if(table.some(c=>c.id===id)&&conflicts(table,out,id,out[id]).length)throw new Error('Shortcut conflict for '+id+'.');
     return out;
   }
+  // Saved shortcuts predate the tether defaults; a key the user already gave another command keeps that command and leaves the tether one unassigned.
+  function migrateCustom(value) {
+    let custom;
+    try{custom=Object.fromEntries(Object.entries(value).map(([id,keys])=>[id,[...new Set(keys.map(normalize))]]));}catch{return validateCustom(value);}
+    for(const id of Object.keys(custom))if(table.some(c=>c.id===id))
+      for(const clash of conflicts(table,custom,id,custom[id]))if(clash.id.startsWith('tether-')&&!Object.hasOwn(custom,clash.id))custom[clash.id]=[];
+    return validateCustom(custom);
+  }
   function fuzzy(query,text) {
     query=query.toLowerCase().trim();text=text.toLowerCase();if(!query)return 1;
     let index=0,score=0,last=-2;for(const char of query){const at=text.indexOf(char,index);if(at<0)return 0;score+=at===last+1?4:1;last=at;index=at+1;}return score+(text.includes(query)?20:0);
   }
   function create({actions,context,custom=()=>({}),enabled=()=>true,onRun=()=>{},platform='web'}) {
     const commands=table.map(row=>({...row,enabled:()=>enabled(row),run:event=>actions[row.id]?.(event)}));
-    return {commands,execute(id,event={}){const c=commands.find(c=>c.id===id);if(!c||!c.context.includes(context())||!c.enabled())return false;const input=typeof event.preventDefault==='function'?event:{...event,preventDefault(){}};const result=c.run(input);onRun(c);return result??true;},
+    return {commands,execute(id,event={}){const c=commands.find(c=>c.id===id);if(!c||!active(c,context())||!c.enabled())return false;const input=typeof event.preventDefault==='function'?event:{...event,preventDefault(){}};const result=c.run(input);onRun(c);return result??true;},
       dispatch(event,{typing=false,button=false}={}){if(event.defaultPrevented)return false;const key=eventKey(event);if(!key)return false;
-        const command=commands.find(c=>c.context.includes(context())&&(!typing||c.typing)&&(!button||!['Space','Enter'].includes(event.key===' '?'Space':event.key))&&c.enabled()&&matches(c,event,custom(),platform));
+        const command=commands.find(c=>active(c,context())&&(!typing||c.typing)&&(!button||!['Space','Enter'].includes(event.key===' '?'Space':event.key))&&c.enabled()&&matches(c,event,custom(),platform));
         if(!command)return false;event.preventDefault();this.execute(command.id,event);return true;},
       search(query,recent=[]){return commands.map(c=>({command:c,score:fuzzy(query,c.title+' '+c.category)+(query?0:Math.max(0,10-recent.indexOf(c.id))*(recent.includes(c.id)?1:0))})).filter(r=>r.score>0).sort((a,b)=>b.score-a.score).map(r=>r.command);}};
   }
-  const api={table,create,normalize,eventKey,shortcuts,conflicts,validateCustom,fuzzy,variants,matches,loupeAction};
+  const api={table,create,normalize,eventKey,shortcuts,conflicts,validateCustom,migrateCustom,fuzzy,variants,matches,loupeAction,active};
   if(typeof module==='object')module.exports=api;else root.PhotoCullCommands=api;
 })(typeof globalThis==='object'?globalThis:this);

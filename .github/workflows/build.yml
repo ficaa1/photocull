@@ -11,12 +11,12 @@ on:
   push:
     branches: [main]
     tags: ['v*']
-    paths: ['src/**', 'src-tauri/**', 'test/**', 'scripts/**', 'package*.json', '.github/workflows/build.yml']
+    paths: ['assets/**', 'src/**', 'src-tauri/**', 'test/**', 'scripts/**', 'package*.json', '.github/workflows/build.yml']
   pull_request:
-    paths: ['src/**', 'src-tauri/**', 'test/**', 'scripts/**', 'package*.json', '.github/workflows/build.yml']
+    paths: ['assets/**', 'src/**', 'src-tauri/**', 'test/**', 'scripts/**', 'package*.json', '.github/workflows/build.yml']
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ startsWith(inputs.release_tag, 'v') && format('refs/tags/{0}', inputs.release_tag) || inputs.release_tag || github.ref }}
+  cancel-in-progress: ${{ !(startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && startsWith(inputs.release_tag, 'v'))) }}
 
 jobs:
   test:
@@ -29,7 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_tag || github.ref }}
+          ref: ${{ startsWith(inputs.release_tag, 'v') && format('refs/tags/{0}', inputs.release_tag) || inputs.release_tag || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -49,6 +49,9 @@ jobs:
   build:
     if: ${{ !github.event.repository.private && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')) }}
     needs: test
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+      SIGNED_BUILD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -57,7 +60,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_tag || github.ref }}
+          ref: ${{ startsWith(inputs.release_tag, 'v') && format('refs/tags/{0}', inputs.release_tag) || inputs.release_tag || github.ref }}
       # The staged sidecar is this exact Node binary, so use the official build.
       - uses: actions/setup-node@v4
         with:
@@ -71,7 +74,39 @@ jobs:
       - run: npm test
       - run: npm run test:ui
       - run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Check release versions and signing
+        if: startsWith(env.RELEASE_TAG, 'v')
+        shell: bash
+        run: |
+          version=${RELEASE_TAG#v}
+          for file in package.json src-tauri/tauri.conf.json; do
+            actual=$(node -p 'require("./" + process.argv[1]).version' "$file")
+            [[ "$actual" == "$version" ]] || { echo "$file has version $actual, expected $version" >&2; exit 1; }
+          done
+          if [[ "${version%%+*}" != *-* && "$SIGNED_BUILD" != true ]]; then
+            echo "A signing key is required for stable releases" >&2
+            exit 1
+          fi
       - run: npm run build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Verify updater artifacts
+        if: env.SIGNED_BUILD == 'true'
+        shell: bash
+        run: |
+          bundle=src-tauri/target/release/bundle
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            files=("$bundle"/macos/PhotoCull.app.tar.gz)
+          else
+            files=("$bundle"/msi/*.msi "$bundle"/nsis/*-setup.exe)
+          fi
+          for file in "${files[@]}"; do
+            test -s "$file" && test -s "$file.sig" || { echo "Missing signed updater for $file" >&2; exit 1; }
+          done
+          tag=$RELEASE_TAG
+          if [[ "$tag" != v* ]]; then tag="v$(node -p 'require("./package.json").version')"; fi
+          node scripts/release-manifest.cjs --verify-only --dir "$bundle" --tag "$tag" --repo "$GITHUB_REPOSITORY"
       # Without a valid bundle signature, macOS calls a downloaded app "damaged".
       - name: Check the ad-hoc signature
         if: runner.os == 'macOS'
@@ -79,11 +114,16 @@ jobs:
           app=src-tauri/target/release/bundle/macos/PhotoCull.app
           codesign --verify --deep --strict --verbose=2 "$app"
           codesign -dv "$app" 2>&1 | grep -q 'Signature=adhoc'
+          codesign -d --entitlements - "$app" | grep -q photos-library
           codesign -d --entitlements - "$app/Contents/MacOS/node" | grep -q allow-jit
       - uses: actions/upload-artifact@v4
         with:
           name: PhotoCull-${{ matrix.os }}
           path: |
+            src-tauri/target/release/bundle/**/*.app.tar.gz
+            src-tauri/target/release/bundle/**/*.app.tar.gz.sig
+            src-tauri/target/release/bundle/**/*.msi.sig
+            src-tauri/target/release/bundle/**/*-setup.exe.sig
             src-tauri/target/release/bundle/**/*.dmg
             src-tauri/target/release/bundle/**/*.msi
             src-tauri/target/release/bundle/**/*-setup.exe
@@ -92,30 +132,71 @@ jobs:
 
   release:
     needs: build
-    if: ${{ !github.event.repository.private && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && startsWith(inputs.release_tag, 'v'))) }}
+    if: ${{ !github.event.repository.private && ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || (github.event_name == 'workflow_dispatch' && startsWith(inputs.release_tag, 'v'))) }}
     runs-on: windows-latest
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+      SIGNED_BUILD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+      SIGNED_ASSETS: |
+        installers/latest.json
+        installers/**/*.app.tar.gz
+        installers/**/*.app.tar.gz.sig
+        installers/**/*.msi.sig
+        installers/**/*-setup.exe.sig
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ startsWith(inputs.release_tag, 'v') && format('refs/tags/{0}', inputs.release_tag) || inputs.release_tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - uses: actions/download-artifact@v4
         with:
           pattern: PhotoCull-*
           path: installers
           merge-multiple: true
-      - name: Release title
-        shell: bash
+      - name: Check release state
         env:
-          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
-        run: echo "RELEASE_NAME=PhotoCull ${RELEASE_TAG#v}" >> "$GITHUB_ENV"
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          published=$(gh api --paginate 'repos/{owner}/{repo}/releases?per_page=100' \
+            --jq '.[] | select(.draft == false) | .tag_name')
+          if grep -Fxq -- "$RELEASE_TAG" <<< "$published"; then
+            echo "Release $RELEASE_TAG is already published" >&2
+            exit 1
+          fi
+          prerelease=false
+          if [[ "${RELEASE_TAG%%+*}" == *-* ]]; then prerelease=true; fi
+          echo "IS_PRERELEASE=$prerelease" >> "$GITHUB_ENV"
+          echo "RELEASE_NAME=PhotoCull ${RELEASE_TAG#v}" >> "$GITHUB_ENV"
+      - name: Generate signed update manifest
+        id: manifest
+        if: env.SIGNED_BUILD == 'true' || hashFiles('installers/**/*.sig') != ''
+        shell: bash
+        run: node scripts/release-manifest.cjs --dir installers --tag "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --out installers/latest.json
+      - name: Require signed stable update
+        if: env.IS_PRERELEASE != 'true'
+        shell: bash
+        run: |
+          [[ "$SIGNED_BUILD" == true ]] && test -s installers/latest.json
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.release_tag || github.ref_name }}
           name: ${{ env.RELEASE_NAME }}
           generate_release_notes: true
-          draft: false
-          prerelease: false
+          draft: true
+          prerelease: ${{ env.IS_PRERELEASE == 'true' }}
           fail_on_unmatched_files: true
           files: |
             installers/**/*.msi
             installers/**/*-setup.exe
             installers/**/*.dmg
+            ${{ steps.manifest.outcome == 'success' && env.SIGNED_ASSETS || '' }}
+      - name: Publish completed draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh release edit "$RELEASE_TAG" --draft=false

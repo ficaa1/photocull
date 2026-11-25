@@ -42,6 +42,7 @@ const { serverConfig, FolderRoots, allowedHost, createAuth, LOGIN_PAGE } = requi
 const { ServerTrash } = require('./server-trash.cjs');
 const { PrepareJobs } = require('./prepare.cjs');
 const { ExternalEdits } = require('./external-edits.cjs');
+const { TetherService } = require('./tether.cjs');
 
 const serverMode = process.argv.includes('--server') || process.env.PHOTOCULL_SERVER === '1';
 const web = serverMode || process.argv.includes('--web');
@@ -52,7 +53,8 @@ console.log = console.info = console.debug = console.error;
 const rendererDir = path.join(__dirname, 'renderer');
 const RENDERER_FILES = new Map([['index.html', 'text/html'], ['styles.css', 'text/css'], ['app.js', 'text/javascript'],
   ['commands.js', 'text/javascript'], ['histogram.js', 'text/javascript'], ['develop.js', 'text/javascript'], ['export.js', 'text/javascript'],
-  ['naming.js', 'text/javascript'], ['image-view.js', 'text/javascript'], ['loupe.js', 'text/javascript'], ['culling.js', 'text/javascript'], ['survey.js', 'text/javascript'], ['bridge.js', 'text/javascript'], ['server.js', 'text/javascript']]);
+  ['naming.js', 'text/javascript'], ['image-view.js', 'text/javascript'], ['loupe.js', 'text/javascript'], ['culling.js', 'text/javascript'], ['survey.js', 'text/javascript'], ['bridge.js', 'text/javascript'], ['server.js', 'text/javascript'],
+  ['tether.js', 'text/javascript'], ['overlays.js', 'text/javascript']]);
 const inside = (parent, child) => { const rel = path.relative(parent, child); return rel === '' || !!rel && !rel.startsWith('..') && !path.isAbsolute(rel); };
 
 function defaultDataDir() {
@@ -88,21 +90,23 @@ async function start() {
 
   const settings = new SettingsStore(dataDir); await settings.init();
   if (config?.previewCacheGB && settings.value.previewCacheGB !== config.previewCacheGB) await settings.update({ previewCacheGB: config.previewCacheGB });
-  let externalEdits;
-  const library = new Library(dataDir, { keepSessions: serverMode ? 8 : 1, linkedHandoffs: () => externalEdits?.linkedPaths || new Set(), settings: () => settings.value, recipeSettings: id => recipes.get(id)?.settings, onWarning: warning => send('sidecar-warning', warning) });
+  let externalEdits, tether;
+  const library = new Library(dataDir, { keepSessions: serverMode ? 8 : 1, linkedHandoffs: () => externalEdits?.linkedPaths || new Set(), pairingExclusions: () => tether?.exclusions() || [], captureExposure: file => tether?.captureExposure(file) ?? null, settings: () => settings.value, recipeSettings: id => recipes.get(id)?.settings, onWarning: warning => send('sidecar-warning', warning) });
   let previews;
   const transfers = new TransferService({ recipeSettings: id => recipes.get(id)?.settings, onProgress: value => send('copy-progress', value), captureDate: item => previews.metadata(item).then(data => data.captured) });
   const backups = new BackupService(dataDir, { onProgress: value => send('backup-progress', value) });
-  const devices = new DeviceMonitor({ discover: async () => { const found=await discoverDevices(settings.value);for(const device of found)device.backup=await backups.snapshot(device.root,'volume:'+device.identity).catch(()=>null);return found; }, onChange: value => send('devices-changed', value),
-    ...(smoke ? { discover: async () => process.env.PHOTOCULL_TEST_DEVICES ? JSON.parse(await fs.readFile(process.env.PHOTOCULL_TEST_DEVICES, 'utf8')) : [] } : {}) });
+  const cards = smoke ? async () => process.env.PHOTOCULL_TEST_DEVICES ? JSON.parse(await fs.readFile(process.env.PHOTOCULL_TEST_DEVICES, 'utf8')) : [] : () => discoverDevices(settings.value);
+  const devices = new DeviceMonitor({ discover: async () => { const found=await cards();if(!smoke)for(const device of found)device.backup=await backups.snapshot(device.root,'volume:'+device.identity).catch(()=>null);return found; }, onChange: value => send('devices-changed', value) });
   const GB = 1024 ** 3;
   previews = new PreviewService(path.join(dataDir, 'previews'), { rendering: settings.value.rawRendering, maxDiskBytes: settings.value.previewCacheGB * GB, onState: status => send('preview-state', status) });
   externalEdits = new ExternalEdits(library, previews.exif, () => settings.value); await externalEdits.init();
 
   const culling = new CullingService(library,previews,() => settings.value);
+  // A card inserted since the last poll still counts, so this asks the system afresh.
   const onCard = async folder => {
     const real = await fs.realpath(folder);
-    return devices.devices.some(device => inside(device.root, real));
+    const within = list => list.some(device => inside(device.root, real));
+    return within(devices.devices) || within(await cards());
   };
   // Copying and deleting must not overlap: a copy could read a photo that a
   // deletion is removing. The shell brackets each deletion with
@@ -111,7 +115,13 @@ async function start() {
   const recipes = new RecipeStore(settings.folder);
   await recipes.init();
   const bundles = new SettingsBundles(settings, recipes);
-  const requireIdle = () => { if(importing || deleting || transfers.active || backups.active)throw new Error('Wait for the current file operation to finish.'); };
+  tether = new TetherService({ dataDir, library, recipes, settings: () => settings.value, presets: () => settings.presets, send, isCard: onCard,
+    dimensions: (session, id) => previews.dimensions(previewPhoto(library.item(session, id))),
+    onDelta: delta => { for (const id of [...delta.upserts.map(i => i.id), ...delta.remap.map(r => r.from)]) previews.invalidatePhoto({ id }); } });
+  await tether.init();
+  const requireIdle = () => { if(importing || deleting || transfers.active || backups.active || tether.busy())throw new Error('Wait for the current file operation to finish.'); };
+  // A bound shoot owns the open Library: another folder, a card or a settings import waits until tethering stops.
+  const requireUntethered = message => { if (tether.active()) throw new Error(message); };
   const backupSource = async source => { if(typeof source !== 'string' || !path.isAbsolute(source))throw new Error('Choose a card or folder.');const real=await fs.realpath(source);if(!(await fs.stat(real)).isDirectory())throw new Error('Choose a folder.');return real; };
   previews.editorName = id => settings.value.editors.find(e=>e.id===id)?.name;
   let importing=false;
@@ -122,7 +132,7 @@ async function start() {
     'workspace-info': () => ({ smoke, welcome: !smoke || process.env.PHOTOCULL_TEST_WELCOME === '1' }),
     'settings-bundle-export': (file,options) => { requireIdle();return bundles.export(file,options); },
     'settings-bundle-preview': (input,options) => { requireIdle();return bundles.preview(input,options); },
-    'settings-bundle-apply': async token => { requireIdle();importing=true;let result;try{result=await bundles.apply(token);}finally{importing=false;}previews.setPolicy(settings.value.rawRendering);await previews.setDiskLimit(settings.value.previewCacheGB * GB);return result; },
+    'settings-bundle-apply': async token => { requireIdle();requireUntethered('Stop tethering before importing settings.');importing=true;let result;try{result=await bundles.apply(token);}finally{importing=false;}previews.setPolicy(settings.value.rawRendering);await previews.setDiskLimit(settings.value.previewCacheGB * GB);return result; },
     'diagnostics': details => diagnostics(dataDir,settings.value,details),
     'log-folder': () => logger.folder,
     'manual-card': async source => { requireIdle();const root=await backupSource(source);await settings.update({manualCards:[...new Set([...settings.value.manualCards,root])]});return devices.refresh(); },
@@ -223,17 +233,19 @@ async function start() {
     'develop-mark': async (session, id, mark) => { const result=await library.developMark(session, id, mark || {}); previews.invalidatePhoto(library.item(session,id)); return result; },
     'scan': async (folder, recursive) => {
       if (typeof folder !== 'string' || !folder) throw new Error('Choose a photo folder.');
+      requireUntethered('Stop tethering before opening another folder.');
       return library.scan(folder, !!recursive, { removable: await onCard(folder) });
     },
     'devices': () => devices.refresh(),
     'open-device': async id => {
+      requireUntethered('Card auto-open is paused while tethering.');
       const device = devices.devices.find(d => d.id === id);
       if (!device) throw new Error('This card is no longer connected.');
       const session = await library.scan(device.photoRoot, true, { removable: true });
       return { ...session, deviceId: device.id, deviceRoot: device.root };
     },
     'test-destination': () => smoke ? process.env.PHOTOCULL_TEST_DESTINATION || null : null,
-    'copy-picks': (session, destination, options) => deleting || backups.active ? Promise.reject(new Error('Wait for the current file operation to finish.')) : transfers.copy(library.get(session), destination, { ...options, metadataSettings: settings.value,
+    'copy-picks': (session, destination, options) => deleting || backups.active || tether.busy() ? Promise.reject(new Error('Wait for the current file operation to finish.')) : transfers.copy(library.get(session), destination, { ...options, metadataSettings: settings.value,
       naming: options?.naming || settings.value.naming, folders: options?.folders || settings.value.folders, embedMetadata: options?.embedMetadata ?? settings.value.copyMetadata }),
     'naming-preview': async (session, naming, id = null, extension = null) => {
       naming = normalizeSettings({ naming }).naming;
@@ -294,13 +306,37 @@ async function start() {
     'deletion-plan': async (session, ids) => {
       if (deleting) throw new Error('Another deletion is already running.');
       if (backups.active || transfers.active) throw new Error('Wait for the copy to finish.');
+      if (tether.busy()) throw new Error('Wait for tethered transfers to finish.');
       deleting = true;
       try { return await library.deletionPlan(session, ids); } catch (error) { deleting = false; throw error; }
     },
     'deletion-end': () => { deleting = false; },
     'forget': (session, ids) => library.forget(session, ids),
+    // Tethering (src/tether.cjs). The renderer may call only these six.
+    'tether-state': session => tether.state(session),
+    'tether-library': (shootId, session) => tether.libraryState(shootId, session),
+    'tether-config': (shootId, configRev, patch) => tether.config(shootId, configRev, patch),
+    'tether-counter': (shootId, configRev, op, value) => tether.counter(shootId, configRev, op, value),
+    'tether-name-preview': (shootId, input) => tether.namePreview(shootId, input ?? {}),
+    'tether-primary': (shootId, session, input) => tether.primary(shootId, session, input),
     'stats': () => ({ ...previews.stats, ...previews.renders.stats, memoryMB: Math.round(previews.memoryBytes / 1024 ** 2), cacheDir: previews.cacheDir }),
   };
+  if (!web) {
+    // Shell-only: never registered for --web or --server, and absent from Rust's renderer allowlist.
+    Object.assign(methods, {
+      'tether-check-destination': root => tether.checkDestination(root),
+      'tether-bind': async (...args) => { requireIdle(); return tether.bind(...args); },
+      'tether-set-location': (...args) => tether.setLocation(...args),
+      'tether-request': (...args) => tether.request(...args),
+      'tether-accept': (...args) => tether.accept(...args),
+      'tether-member': (...args) => tether.member(...args),
+      'tether-reserve': (...args) => tether.reserve(...args),
+      'tether-ingest': (...args) => tether.ingest(...args),
+      'tether-journal': (...args) => tether.journal(...args),
+      'tether-session-frame': (...args) => tether.sessionFrame(...args),
+      'tether-asset': (...args) => tether.asset(...args),
+    });
+  }
   const prepare = new PrepareJobs({ library, previews, culling, photo: (session, id) => previewPhoto(library.item(session, id)), onProgress: value => send('prepare-progress', value) });
   if (serverMode) {
     // The folder a reloaded page returns to, kept across restarts and updates.
@@ -409,7 +445,7 @@ async function start() {
         let body = ''; for await (const chunk of req) { body += chunk; if (body.length > 4 * 1024 ** 2) throw new Error('Request too large.'); }
         const { method, params } = JSON.parse(body);
         let reply;
-        try { reply = { ok: true, value: await call(method, params) ?? null }; } catch (error) { reply = { ok: false, error: error.message }; }
+        try { reply = { ok: true, value: await call(method, params) ?? null }; } catch (error) { reply = { ok: false, error: error.message, ...(error.detail ? { errorDetail: error.detail } : {}) }; }
         res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(reply)); return;
       }
       if (web && route === 'events' && authorized) {
@@ -442,7 +478,7 @@ async function start() {
   let closing = null;
   const shutdown = () => closing ??= (async () => {
     server.close(); prepare.close();
-    await Promise.allSettled([externalEdits.decisions, externalEdits.writes]);
+    await Promise.allSettled([externalEdits.decisions, externalEdits.writes, tether.close()]);
     await Promise.allSettled([library.close(), settings.writes, previews.close(), transfers.close(), backups.close(), devices.close()]);
     process.exit(0);
   })();
@@ -466,7 +502,7 @@ async function start() {
       try { message = JSON.parse(line); } catch { return; }
       let reply;
       try { reply = { id: message.id, ok: true, value: await call(message.method, message.params) ?? null }; }
-      catch (error) { reply = { id: message.id, ok: false, error: error.message }; }
+      catch (error) { reply = { id: message.id, ok: false, error: error.message, ...(error.detail ? { errorDetail: error.detail } : {}) }; }
       process.stdout.write(JSON.stringify(reply) + '\n');
     });
     // The shell closing stdin means it has gone away; finish pending writes and exit.
