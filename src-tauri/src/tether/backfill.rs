@@ -782,6 +782,9 @@ impl Actor {
         object: &CardObject,
         plan: MemberPlan,
     ) -> std::result::Result<std::result::Result<Reading, Outcome>, String> {
+        // Backfill now owns this member's stage file; any late completion falls back to recovered-*.part.
+        self.late_claims
+            .retain(|_, c| c.plan.member_id != plan.member_id);
         let app = self.inner.app.clone();
         let shoot = binding.shoot_id.as_str();
         let failed = |e: TetherError| {
