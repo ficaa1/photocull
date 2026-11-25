@@ -222,6 +222,70 @@ pub enum DrainStep<W> {
     },
 }
 
+/// What a read-only card operation got from the camera.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Stored<T> {
+    Read(T),
+    /// DeviceBusy: nothing was read; the same operation can be tried again later.
+    Busy,
+    /// Refused, gone, or not offered over this connection.
+    Refused,
+}
+
+impl<T> Stored<T> {
+    fn try_map<U>(
+        self,
+        parse: impl FnOnce(T) -> std::result::Result<U, ptp::ProtocolError>,
+    ) -> Result<Stored<U>> {
+        Ok(match self {
+            Stored::Read(value) => Stored::Read(parse(value)?),
+            Stored::Busy => Stored::Busy,
+            Stored::Refused => Stored::Refused,
+        })
+    }
+
+    pub fn limit_busy(self, retries: &mut u32, limit: u32) -> Self {
+        if matches!(self, Stored::Busy) {
+            if *retries < limit {
+                *retries += 1;
+                return Stored::Busy;
+            }
+            *retries = 0;
+            return Stored::Refused;
+        }
+        *retries = 0;
+        self
+    }
+}
+
+fn stored<T>(opcode: u16, code: u16, value: T) -> Result<Stored<T>> {
+    match code {
+        resp::OK => Ok(Stored::Read(value)),
+        resp::DEVICE_BUSY => Ok(Stored::Busy),
+        code if refused(code) => Ok(Stored::Refused),
+        code => Err(SessionError::Response { opcode, code }),
+    }
+}
+
+fn refused(code: u16) -> bool {
+    matches!(
+        code,
+        resp::GENERAL_ERROR
+            | resp::OPERATION_NOT_SUPPORTED
+            | resp::PARAMETER_NOT_SUPPORTED
+            | resp::INVALID_STORAGE_ID
+            | resp::INVALID_OBJECT_HANDLE
+            | resp::ACCESS_DENIED
+            | resp::STORE_NOT_AVAILABLE
+            | resp::INVALID_PARAMETER
+    )
+}
+
+/// Sony's capture-queue and Live View handles are not card objects.
+fn is_pseudo_handle(object: u32) -> bool {
+    object >> 16 == 0xFFFF
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveImage {
     pub jpeg: Vec<u8>,
@@ -1434,6 +1498,115 @@ impl<T: PtpTransport> SonySession<T> {
         Ok(DrainStep::Empty)
     }
 
+    /// One read-only data-in operation the body may refuse, sent once: DeviceBusy is handed back
+    /// so the caller serves live captures before trying again. An operation DeviceInfo does not
+    /// offer is refused without sending anything.
+    fn read_optional(
+        &mut self,
+        opcode: u16,
+        params: &[u32],
+        limit: u64,
+    ) -> Result<Stored<Vec<u8>>> {
+        self.require_ready()?;
+        if !self.device.as_ref().is_some_and(|d| d.supports(opcode)) {
+            return Ok(Stored::Refused);
+        }
+        let mut data = Vec::new();
+        let reply = self.raw(
+            opcode,
+            params,
+            DataPhase::In {
+                sink: &mut data,
+                limit,
+            },
+            self.config.command_timeout,
+        )?;
+        stored(opcode, reply.code, data)
+    }
+
+    /// Storage IDs as listed.
+    pub fn storage_ids(&mut self) -> Result<Stored<Vec<u32>>> {
+        self.read_optional(op::GET_STORAGE_IDS, &[], 1 << 16)?
+            .try_map(|data| ptp::Cursor::new(&data).u32_array())
+    }
+
+    /// Every object on one storage at all folder levels.
+    pub fn object_handles(&mut self, storage_id: u32) -> Result<Stored<Vec<u32>>> {
+        self.read_optional(op::GET_OBJECT_HANDLES, &[storage_id, 0, 0], 4 << 20)?
+            .try_map(|data| ptp::Cursor::new(&data).u32_array())
+    }
+
+    /// ObjectInfo of a stored object; a gone object is refused.
+    pub fn object_info(&mut self, object: u32) -> Result<Stored<ObjectInfo>> {
+        if is_pseudo_handle(object) {
+            return Err(SessionError::InvalidValue(
+                "Card reads take stored objects only.".into(),
+            ));
+        }
+        self.read_optional(op::GET_OBJECT_INFO, &[object], 1 << 16)?
+            .try_map(|data| ObjectInfo::parse(&data))
+    }
+
+    /// Streams a whole stored object into `sink`; the camera keeps it. The capture queue is never
+    /// read here: its objects leave the camera once sent.
+    pub fn read_object<W: Write + Send>(
+        &mut self,
+        object: u32,
+        sink: &mut W,
+        timeout: Duration,
+    ) -> Result<Stored<u64>> {
+        self.read_stored(
+            op::GET_OBJECT,
+            &[object],
+            self.config.max_object_bytes,
+            sink,
+            timeout,
+        )
+    }
+
+    /// Streams up to `len` bytes of a stored object from `offset`, as GetPartialObject allows.
+    pub fn read_object_part<W: Write + Send>(
+        &mut self,
+        object: u32,
+        offset: u32,
+        len: u32,
+        sink: &mut W,
+    ) -> Result<Stored<u64>> {
+        let timeout = self.config.command_timeout;
+        self.read_stored(
+            op::GET_PARTIAL_OBJECT,
+            &[object, offset, len],
+            len as u64,
+            sink,
+            timeout,
+        )
+    }
+
+    fn read_stored<W: Write + Send>(
+        &mut self,
+        opcode: u16,
+        params: &[u32],
+        limit: u64,
+        sink: &mut W,
+        timeout: Duration,
+    ) -> Result<Stored<u64>> {
+        self.require_ready()?;
+        if is_pseudo_handle(params[0]) {
+            return Err(SessionError::InvalidValue(
+                "Card reads take stored objects only.".into(),
+            ));
+        }
+        let reply = self.raw(opcode, params, DataPhase::In { sink, limit }, timeout)?;
+        if reply.code != resp::OK && reply.bytes_in > 0 {
+            // A retry would append another copy of the rejected data to the same sink.
+            return Err(SessionError::Response {
+                opcode,
+                code: reply.code,
+            });
+        }
+        stored(opcode, reply.code, reply.bytes_in)
+    }
+
     pub fn live_view_supported(&self) -> std::result::Result<(), String> {
         match self.value(prop::LIVE_VIEW_STATUS) {
             Some(1) => Ok(()),
@@ -1833,6 +2006,7 @@ pub fn scalar(value: &PropValue) -> Option<i128> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::card;
     use super::super::fixtures::*;
     use super::super::transport::{ExpectedPhase, ScriptedTransport, Step};
     use super::*;
@@ -1864,13 +2038,12 @@ mod tests {
     }
 
     fn m3_handshake(t: &mut ScriptedTransport, payload: Vec<u8>) {
+        m3_handshake_as(t, device_info("ILCE-7M3"), payload);
+    }
+
+    fn m3_handshake_as(t: &mut ScriptedTransport, info: DeviceInfo, payload: Vec<u8>) {
         t.push(Step::Open);
-        expect_in(
-            t,
-            op::GET_DEVICE_INFO,
-            &[],
-            device_info("ILCE-7M3").encode(),
-        );
+        expect_in(t, op::GET_DEVICE_INFO, &[], info.encode());
         expect_in(t, op::SDIO_CONNECT, &[1, 0, 0], ZERO8.to_vec());
         expect_in(t, op::SDIO_CONNECT, &[2, 0, 0], ZERO8.to_vec());
         expect_in(
@@ -2509,6 +2682,507 @@ mod tests {
         assert!(!s.half_release(Some("hold-2")).unwrap());
         assert!(s.half_release(Some("hold-1")).unwrap());
         assert!(!s.half_release(Some("hold-1")).unwrap());
+        s.transport().finish();
+    }
+
+    /// A body that lists its card, with nothing waiting in the capture queue.
+    fn m3_listing_storage_with(extra: &[u16]) -> SonySession<ScriptedTransport> {
+        let mut info = device_info_with_storage("ILCE-7M3");
+        info.operations.extend_from_slice(extra);
+        let idle = with_current(m3_descriptors(), prop::OBJECT_IN_MEMORY, PropValue::U16(0));
+        let mut t = ScriptedTransport::new();
+        m3_handshake_as(
+            &mut t,
+            info,
+            codec::encode_snapshot(&idle, Grammar::SingleList),
+        );
+        let mut s = SonySession::new(t, SessionConfig::default());
+        s.connect().unwrap();
+        s.transport_mut().sent.clear();
+        s
+    }
+
+    fn m3_listing_storage() -> SonySession<ScriptedTransport> {
+        m3_listing_storage_with(&[])
+    }
+
+    fn refuse(t: &mut ScriptedTransport, opcode: u16, params: &[u32], code: u16) {
+        t.expect(
+            opcode,
+            params,
+            ExpectedPhase::In(vec![]),
+            Ok(Reply::code(code)),
+        );
+    }
+
+    /// Card backfill may only read: storage IDs, handles, ObjectInfo and object data.
+    fn assert_read_only(s: &SonySession<ScriptedTransport>) {
+        for sent in &s.transport().sent {
+            assert!(
+                matches!(sent.opcode, 0x1004 | 0x1007 | 0x1008 | 0x1009 | 0x101B)
+                    && sent.out.is_none(),
+                "{:04X} is not a card read",
+                sent.opcode
+            );
+        }
+    }
+
+    /// Runs a scan to its end, checking that no step sends more than one operation.
+    fn scan_to_end(
+        s: &mut SonySession<ScriptedTransport>,
+        scan: &mut card::CardScan,
+    ) -> card::ScanStep {
+        loop {
+            let before = s.transport().sent.len();
+            let step = scan.step(s).unwrap();
+            assert!(
+                s.transport().sent.len() - before <= 1,
+                "one operation per step"
+            );
+            if !matches!(step, card::ScanStep::Working | card::ScanStep::Busy) {
+                return step;
+            }
+        }
+    }
+
+    fn capture_announced(s: &mut SonySession<ScriptedTransport>) {
+        let generation = s.transport().generation();
+        s.transport_mut().schedule(
+            Duration::ZERO,
+            TransportEvent::Ptp {
+                generation,
+                code: ptp::event::SONY_OBJECT_ADDED,
+                params: vec![handle::CAPTURE],
+            },
+        );
+        s.process_events();
+    }
+
+    #[test]
+    fn pc_remote_without_storage_operations_reads_nothing_from_the_card() {
+        let mut s = m3(with_current(
+            m3_descriptors(),
+            prop::OBJECT_IN_MEMORY,
+            PropValue::U16(0),
+        ));
+        let step = card::CardScan::new(None).step(&mut s).unwrap();
+        assert!(matches!(step, card::ScanStep::Unavailable(m) if m.contains("PC Remote")));
+        assert!(
+            s.transport().sent.is_empty(),
+            "no unadvertised operation is sent"
+        );
+        assert_eq!(s.state(), ConnectionState::Ready);
+        s.transport().finish();
+    }
+
+    #[test]
+    fn refused_or_virtual_storage_is_unavailable_and_the_session_stays_live() {
+        let mut s = m3_listing_storage();
+        let t = s.transport_mut();
+        refuse(t, op::GET_STORAGE_IDS, &[], resp::OPERATION_NOT_SUPPORTED);
+        // Only Sony's capture store and an empty slot.
+        refuse(t, op::GET_STORAGE_IDS, &[], resp::DEVICE_BUSY);
+        expect_in(
+            t,
+            op::GET_STORAGE_IDS,
+            &[],
+            handle_list(&[0xFFFF_C001, 0x0002_0000]),
+        );
+        expect_in(t, op::GET_STORAGE_IDS, &[], handle_list(&[0x0001_0001]));
+        refuse(
+            t,
+            op::GET_OBJECT_HANDLES,
+            &[0x0001_0001, 0, 0],
+            resp::STORE_NOT_AVAILABLE,
+        );
+        for expected in ["PC Remote", "PC Remote", "No readable memory card"] {
+            let mut scan = card::CardScan::new(None);
+            match scan_to_end(&mut s, &mut scan) {
+                card::ScanStep::Unavailable(m) => assert!(m.contains(expected), "{m}"),
+                other => panic!("no card is listed: {other:?}"),
+            }
+            assert_eq!(s.state(), ConnectionState::Ready);
+        }
+        assert_read_only(&s);
+        s.transport().finish();
+
+        // A camera that drops off mid-listing is a lost camera, not a missing card.
+        let mut s = m3_listing_storage();
+        s.transport_mut().expect(
+            op::GET_STORAGE_IDS,
+            &[],
+            ExpectedPhase::In(vec![]),
+            Err(TransportError::Removed),
+        );
+        assert!(matches!(
+            card::CardScan::new(None).step(&mut s),
+            Err(SessionError::Removed { .. })
+        ));
+        assert_eq!(s.state(), ConnectionState::Removed);
+    }
+
+    #[test]
+    fn card_scan_reads_one_object_per_step_and_keeps_raw_and_jpeg_since_the_window() {
+        let mut s = m3_listing_storage();
+        let t = s.transport_mut();
+        // The same card listed twice is read once.
+        expect_in(
+            t,
+            op::GET_STORAGE_IDS,
+            &[],
+            handle_list(&[0x0001_0001, 0x0002_0000, 0xFFFF_C001, 0x0001_0001]),
+        );
+        expect_in(
+            t,
+            op::GET_OBJECT_HANDLES,
+            &[0x0001_0001, 0, 0],
+            handle_list(&[7, 2, 3, 4, 5, 6, 1, 0xFFFF_C001, 5]),
+        );
+        let infos = [
+            (7, card_info(0x3801, "DSC00045.JPG", 4000, "")),
+            (6, card_info(0x300B, "C0001.MP4", 9000, "20261125T143100")),
+            (
+                5,
+                card_info(0xB101, "DSC00044.ARW", 9000, "20261125T143020"),
+            ),
+            (
+                4,
+                card_info(0x3801, "DSC00044.JPG", 3000, "20261125T143020"),
+            ),
+            (
+                3,
+                card_info(0x3801, "DSC00043.JPG", 3000, "20261125T140000"),
+            ),
+            (
+                2,
+                card_info(0x3801, "DSC00012.JPG", 3000, "20261124T090000"),
+            ),
+            (1, folder_info("100MSDCF")),
+        ];
+        for (handle, info) in infos {
+            expect_in(t, op::GET_OBJECT_INFO, &[handle], info);
+        }
+        let mut scan = card::CardScan::new(Some("20261125T140000".into()));
+        assert_eq!(scan_to_end(&mut s, &mut scan), card::ScanStep::Done);
+        assert_eq!((scan.storages.clone(), scan.listed), (vec![0x0001_0001], 7));
+        let found: Vec<_> = scan
+            .found
+            .iter()
+            .map(|o| (o.handle, o.info.filename.as_str(), o.kind, o.stamp.as_str()))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (5, "DSC00044.ARW", FileKind::Raw, "20261125T143020"),
+                (4, "DSC00044.JPG", FileKind::Jpeg, "20261125T143020"),
+                (3, "DSC00043.JPG", FileKind::Jpeg, "20261125T140000"),
+            ]
+        );
+        assert_eq!((scan.undated, scan.inspected), (1, 7));
+        assert!(scan.blind(), "an undated photo cannot be placed in time");
+        assert_read_only(&s);
+        s.transport().finish();
+    }
+
+    #[test]
+    fn a_busy_camera_is_asked_again_later_and_an_unlisted_slot_leaves_the_scan_blind() {
+        let mut s = m3_listing_storage();
+        let t = s.transport_mut();
+        expect_in(
+            t,
+            op::GET_STORAGE_IDS,
+            &[],
+            handle_list(&[0x0001_0001, 0x0002_0001]),
+        );
+        refuse(
+            t,
+            op::GET_OBJECT_HANDLES,
+            &[0x0001_0001, 0, 0],
+            resp::DEVICE_BUSY,
+        );
+        expect_in(
+            t,
+            op::GET_OBJECT_HANDLES,
+            &[0x0001_0001, 0, 0],
+            handle_list(&[5]),
+        );
+        refuse(
+            t,
+            op::GET_OBJECT_HANDLES,
+            &[0x0002_0001, 0, 0],
+            resp::ACCESS_DENIED,
+        );
+        refuse(t, op::GET_OBJECT_INFO, &[5], resp::DEVICE_BUSY);
+        expect_in(
+            t,
+            op::GET_OBJECT_INFO,
+            &[5],
+            card_info(0xB101, "DSC00044.ARW", 9000, "20261125T143020"),
+        );
+        let mut scan = card::CardScan::new(Some("20261125T140000".into()));
+        let steps: Vec<_> = (0..6).map(|_| scan.step(&mut s).unwrap()).collect();
+        use card::ScanStep::{Busy, Done, Working};
+        assert_eq!(steps, [Working, Busy, Working, Working, Busy, Done]);
+        assert_eq!(
+            s.transport().sent.len(),
+            6,
+            "a busy answer is not retried in the same step"
+        );
+        assert_eq!(scan.found.iter().map(|o| o.handle).collect::<Vec<_>>(), [5]);
+        assert_eq!((scan.unlisted, scan.inspected), (1, 1));
+        assert!(
+            scan.blind(),
+            "the refused slot may hold photos the scan never saw"
+        );
+        assert_read_only(&s);
+        s.transport().finish();
+    }
+
+    #[test]
+    fn a_new_photo_at_a_low_handle_is_found_behind_older_ones_up_to_the_inventory_cap() {
+        let mut s = m3_listing_storage();
+        let t = s.transport_mut();
+        expect_in(
+            t,
+            op::GET_STORAGE_IDS,
+            &[],
+            handle_list(&[0x0001_0001, 0x0002_0001]),
+        );
+        // A new folder can take handles below every photo already on the card; the second slot
+        // lists one of them again.
+        let total = card::MAX_INVENTORY as u32 + 2;
+        let handles: Vec<u32> = (1..total).collect();
+        expect_in(
+            t,
+            op::GET_OBJECT_HANDLES,
+            &[0x0001_0001, 0, 0],
+            handle_list(&handles),
+        );
+        expect_in(
+            t,
+            op::GET_OBJECT_HANDLES,
+            &[0x0002_0001, 0, 0],
+            handle_list(&[1, 3, total]),
+        );
+        for handle in (3..=total).rev() {
+            let info = if handle == 3 {
+                card_info(0xB101, "DSC00201.ARW", 9000, "20261125T150000")
+            } else {
+                card_info(0xB101, "DSC00001.ARW", 9000, "20261101T090000")
+            };
+            expect_in(t, op::GET_OBJECT_INFO, &[handle], info);
+        }
+        let mut scan = card::CardScan::new(Some("20261125T140000".into()));
+        assert_eq!(scan.step(&mut s).unwrap(), card::ScanStep::Working);
+        assert_eq!(scan.step(&mut s).unwrap(), card::ScanStep::Working);
+        assert_eq!((scan.listed, scan.truncated), (card::MAX_INVENTORY, true));
+        assert_eq!(scan_to_end(&mut s, &mut scan), card::ScanStep::Done);
+        assert_eq!(scan.found.iter().map(|o| o.handle).collect::<Vec<_>>(), [3]);
+        assert_eq!(
+            (scan.listed, scan.inspected, scan.truncated),
+            (card::MAX_INVENTORY, card::MAX_INVENTORY, true)
+        );
+        assert!(scan.blind(), "the two oldest handles were never read");
+        s.transport().finish();
+    }
+
+    #[test]
+    fn card_work_yields_to_a_live_capture_between_transactions() {
+        let mut s = m3_listing_storage_with(&[op::GET_PARTIAL_OBJECT]);
+        let chunk = card::READ_CHUNK;
+        let raw = arw_file(chunk as usize * 2 + 500);
+        let size = raw.len() as u32;
+        let info = card_info(0xB101, "DSC00044.ARW", size, "20261125T143020");
+        let jpegs = [jpeg_file(700), jpeg_file(800)];
+        let t = s.transport_mut();
+        let live = |t: &mut ScriptedTransport, n: usize| {
+            let name = format!("DSC0005{n}.JPG");
+            let len = jpegs[n].len() as u32;
+            t.enqueue_object(
+                object_info(0x3801, &name, len, 50 + n as u32),
+                jpegs[n].clone(),
+            );
+            t.push(Step::CaptureInfo).push(Step::CaptureObject);
+        };
+        let part = |t: &mut ScriptedTransport, offset: u32, len: u32| {
+            let bytes = raw[offset as usize..(offset + len) as usize].to_vec();
+            expect_in(t, op::GET_PARTIAL_OBJECT, &[5, offset, len], bytes);
+        };
+        expect_in(t, op::GET_STORAGE_IDS, &[], handle_list(&[0x0001_0001]));
+        live(t, 0);
+        expect_in(
+            t,
+            op::GET_OBJECT_HANDLES,
+            &[0x0001_0001, 0, 0],
+            handle_list(&[5]),
+        );
+        expect_in(t, op::GET_OBJECT_INFO, &[5], info.clone());
+        part(t, 0, chunk);
+        live(t, 1);
+        part(t, chunk, chunk);
+        part(t, chunk * 2, 500);
+        // A shot announced while the card is busy sends nothing more to the card until the
+        // photo is drained.
+        let preempt =
+            |s: &mut SonySession<ScriptedTransport>,
+             n: usize,
+             step: &mut dyn FnMut(&mut SonySession<ScriptedTransport>) -> bool| {
+                capture_announced(s);
+                let sent = s.transport().sent.len();
+                assert!(step(s), "card work yields");
+                assert_eq!(s.transport().sent.len(), sent);
+                let live = s.drain_one(|_, _| Ok(Vec::new())).unwrap();
+                assert!(
+                    matches!(live, DrainStep::Object(o, b) if o.kind == FileKind::Jpeg && b == jpegs[n])
+                );
+            };
+
+        let mut scan = card::CardScan::new(Some("20261125T140000".into()));
+        assert_eq!(scan.step(&mut s).unwrap(), card::ScanStep::Working);
+        preempt(&mut s, 0, &mut |s| {
+            scan.step(s).unwrap() == card::ScanStep::Yield
+        });
+        assert_eq!(scan_to_end(&mut s, &mut scan), card::ScanStep::Done);
+        let object = scan.found.pop().unwrap();
+        assert_eq!(object.info, ObjectInfo::parse(&info).unwrap());
+
+        let mut read = card::CardRead::new(&s, &object, 512 << 20).unwrap();
+        let mut sink = Vec::new();
+        assert_eq!(read.step(&mut s, &mut sink).unwrap(), card::ReadStep::More);
+        preempt(&mut s, 1, &mut |s| {
+            read.step(s, &mut sink).unwrap() == card::ReadStep::Yield
+        });
+        assert_eq!(read.step(&mut s, &mut sink).unwrap(), card::ReadStep::More);
+        assert_eq!(
+            read.step(&mut s, &mut sink).unwrap(),
+            card::ReadStep::Done {
+                bytes: size as u64,
+                declared: size as u64
+            }
+        );
+        assert_eq!(sink, raw);
+        s.transport().finish();
+    }
+
+    #[test]
+    fn stored_objects_stream_to_the_sink_and_stay_on_the_card() {
+        let mut s = m3_listing_storage();
+        let raw = arw_file(9000);
+        let t = s.transport_mut();
+        expect_in(
+            t,
+            op::GET_OBJECT_INFO,
+            &[5],
+            card_info(0xB101, "DSC00044.ARW", 9000, "20261125T143020"),
+        );
+        expect_in(t, op::GET_OBJECT, &[5], raw.clone());
+        // The camera stops after part of a JPEG it declared at 3000 bytes.
+        let jpeg = jpeg_file(3000);
+        t.expect(
+            op::GET_OBJECT,
+            &[4],
+            ExpectedPhase::In(jpeg[..1200].to_vec()),
+            Ok(Reply::ok(1200)),
+        );
+        refuse(t, op::GET_OBJECT, &[9], resp::INVALID_OBJECT_HANDLE);
+        refuse(t, op::GET_OBJECT_INFO, &[9], resp::INVALID_OBJECT_HANDLE);
+        let object = |handle, info: Vec<u8>| card::CardObject {
+            storage_id: 0x0001_0001,
+            handle,
+            info: ObjectInfo::parse(&info).unwrap(),
+            kind: FileKind::Raw,
+            stamp: String::new(),
+        };
+        let timeout = Duration::from_secs(10);
+        let stored = object(
+            5,
+            card_info(0xB101, "DSC00044.ARW", 9000, "20261125T143020"),
+        );
+        assert_eq!(s.object_info(5).unwrap(), Stored::Read(stored.info.clone()));
+        let mut sink = Vec::new();
+        let mut read = card::CardRead::new(&s, &stored, 512 << 20).unwrap();
+        assert_eq!(
+            read.step(&mut s, &mut sink).unwrap(),
+            card::ReadStep::Done {
+                bytes: 9000,
+                declared: 9000
+            }
+        );
+        assert_eq!(sink, raw);
+        assert!(s.transport().sent.last().unwrap().timeout <= Duration::from_secs(5));
+
+        let short = object(4, card_info(0x3801, "DSC00044.JPG", 3000, ""));
+        let mut sink = Vec::new();
+        let mut read = card::CardRead::new(&s, &short, 512 << 20).unwrap();
+        assert_eq!(
+            read.step(&mut s, &mut sink).unwrap(),
+            card::ReadStep::Done {
+                bytes: 1200,
+                declared: 3000
+            }
+        );
+        assert_eq!(sink, &jpeg[..1200]);
+        let gone = object(9, card_info(0x3801, "DSC00046.JPG", 3000, ""));
+        let mut read = card::CardRead::new(&s, &gone, 512 << 20).unwrap();
+        assert_eq!(
+            read.step(&mut s, &mut Vec::new()).unwrap(),
+            card::ReadStep::Gone
+        );
+        assert_eq!(s.object_info(9).unwrap(), Stored::Refused);
+        // Unknown and oversized objects never reach GetObject.
+        for size in [9001, u32::MAX, 0] {
+            let big = object(6, card_info(0xB101, "DSC00047.ARW", size, ""));
+            assert!(card::CardRead::new(&s, &big, 9000).is_err());
+        }
+        // The capture queue and Live View are never read as card objects.
+        for pseudo in [handle::CAPTURE, handle::LIVE_VIEW] {
+            assert!(s.read_object(pseudo, &mut Vec::new(), timeout).is_err());
+            assert!(s.object_info(pseudo).is_err());
+        }
+        assert!(!s.object_announced());
+        assert_read_only(&s);
+        s.transport().finish();
+    }
+
+    #[test]
+    fn a_body_that_refuses_partial_reads_is_read_whole() {
+        let mut s = m3_listing_storage_with(&[op::GET_PARTIAL_OBJECT]);
+        let raw = arw_file(9000);
+        let t = s.transport_mut();
+        refuse(t, op::GET_PARTIAL_OBJECT, &[5, 0, 9000], resp::DEVICE_BUSY);
+        refuse(
+            t,
+            op::GET_PARTIAL_OBJECT,
+            &[5, 0, 9000],
+            resp::OPERATION_NOT_SUPPORTED,
+        );
+        refuse(t, op::GET_OBJECT, &[5], resp::DEVICE_BUSY);
+        expect_in(t, op::GET_OBJECT, &[5], raw.clone());
+        let object = card::CardObject {
+            storage_id: 0x0001_0001,
+            handle: 5,
+            info: ObjectInfo::parse(&card_info(0xB101, "DSC00044.ARW", 9000, "")).unwrap(),
+            kind: FileKind::Raw,
+            stamp: String::new(),
+        };
+        let mut read = card::CardRead::new(&s, &object, 512 << 20).unwrap();
+        let mut sink = Vec::new();
+        // A busy camera hands control back to the actor instead of being retried in place.
+        let steps: Vec<_> = (0..3)
+            .map(|_| read.step(&mut s, &mut sink).unwrap())
+            .collect();
+        use card::ReadStep::{Busy, More};
+        assert_eq!(steps, [Busy, More, Busy]);
+        assert_eq!(s.transport().sent.len(), 3);
+        assert_eq!(
+            read.step(&mut s, &mut sink).unwrap(),
+            card::ReadStep::Done {
+                bytes: 9000,
+                declared: 9000
+            }
+        );
+        assert_eq!(sink, raw);
+        assert_read_only(&s);
         s.transport().finish();
     }
 

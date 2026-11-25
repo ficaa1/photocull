@@ -195,6 +195,7 @@ pub struct Sent {
     pub opcode: u16,
     pub params: Vec<u32>,
     pub out: Option<Vec<u8>>,
+    pub timeout: Duration,
 }
 
 struct ScriptStep {
@@ -339,8 +340,9 @@ impl PtpTransport for ScriptedTransport {
         &mut self,
         request: Operation<'_>,
         phase: DataPhase<'_>,
-        _deadline: Instant,
+        deadline: Instant,
     ) -> Result<Reply, TransportError> {
+        let timeout = deadline.saturating_duration_since(self.now());
         self.elapsed += self.latency;
         let out = match &phase {
             DataPhase::Out(bytes) => Some(bytes.to_vec()),
@@ -350,6 +352,7 @@ impl PtpTransport for ScriptedTransport {
             opcode: request.opcode,
             params: request.params.to_vec(),
             out,
+            timeout,
         });
         let s = self.next(&format!("transaction {:04X}", request.opcode));
         let capture = [handle::CAPTURE];

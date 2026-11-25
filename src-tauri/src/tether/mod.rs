@@ -2,6 +2,7 @@
 //! Tauri commands. Node owns the ledger, naming and Library ingest; Rust receives write plans
 //! only through the private `tether-*` backend methods.
 
+mod backfill;
 pub mod icc;
 pub mod live;
 pub mod protocol;
@@ -25,7 +26,7 @@ use protocol::transport::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -298,6 +299,18 @@ struct DeviceDesc {
     wifi: bool,
     /// How a Wi-Fi camera was reached and which body answered.
     route: Option<AttachedWifiRoute>,
+}
+
+impl DeviceDesc {
+    fn body_id(&self) -> String {
+        if !self.serial.is_empty() {
+            return self.serial.clone();
+        }
+        if let Some(guid) = self.route.as_ref().and_then(|r| r.responder_guid) {
+            return format!("guid:{}", wifi::format_uuid(&guid));
+        }
+        self.device_id.clone()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -669,6 +682,7 @@ enum Cmd {
     SetProperty(Stamp, String, SetValue, u64, Reply<Value>),
     Focus(Stamp, FocusOp, Reply<Value>),
     Live(Stamp, bool, Reply<Value>),
+    Backfill(Stamp, backfill::BackfillOp, Reply<Value>),
     Shutdown(mpsc::Sender<()>),
 }
 
@@ -1396,7 +1410,7 @@ fn camera_snapshot(
     if let Some(v) = text(&device.model) {
         out.insert("model".into(), v);
     }
-    if let Some(v) = text(&device.serial) {
+    if let Some(v) = text(&device.body_id()) {
         out.insert("bodyId".into(), v);
     }
     if let Some(v) = text(&device.firmware) {
@@ -1524,8 +1538,13 @@ struct DrainCtx {
 }
 
 impl DrainCtx {
-    fn open(&self, info: &ObjectInfo, kind: FileKind) -> io::Result<MemberSink> {
-        match self.try_open(info, kind) {
+    fn open(
+        &self,
+        info: &ObjectInfo,
+        kind: FileKind,
+        backfill: Option<&mut backfill::Backfill>,
+    ) -> io::Result<MemberSink> {
+        match self.try_open(info, kind, backfill) {
             Ok(sink) => Ok(sink),
             Err(e) => {
                 let message = e.message.clone();
@@ -1535,7 +1554,12 @@ impl DrainCtx {
         }
     }
 
-    fn try_open(&self, info: &ObjectInfo, kind: FileKind) -> TResult<MemberSink> {
+    fn try_open(
+        &self,
+        info: &ObjectInfo,
+        kind: FileKind,
+        backfill: Option<&mut backfill::Backfill>,
+    ) -> TResult<MemberSink> {
         let declared = (info.compressed_size != u32::MAX).then_some(info.compressed_size as u64);
         let free = transfer::free_space(&self.binding.root).ok();
         if let Some(free) = free {
@@ -1547,12 +1571,13 @@ impl DrainCtx {
             }
         }
         let name = object_name(info, kind);
-        let body = if self.device.serial.is_empty() {
-            self.device.model.clone()
-        } else {
-            self.device.serial.clone()
-        };
-        let (shot_key, object_key) = provider_keys(&body, &self.cohort, self.epoch, info, &name);
+        let (shot_key, object_key) = provider_keys(
+            &self.device.body_id(),
+            &self.cohort,
+            self.epoch,
+            info,
+            &name,
+        );
         let role = match kind {
             FileKind::Raw => Some(HostRole::Raw),
             FileKind::Jpeg => Some(HostRole::Jpeg),
@@ -1572,7 +1597,7 @@ impl DrainCtx {
                 shoot,
                 self.epoch,
                 request,
-                { "key": shot_key },
+                { "key": shot_key, "originalName": name },
                 roles,
                 camera_snapshot(&self.device, &self.snapshot, Some(info)),
             ]),
@@ -1601,21 +1626,22 @@ impl DrainCtx {
             name,
             declared,
         };
-        let fresh = matches!(plan.status.as_str(), "announced" | "receiving" | "held");
-        let sink = if fresh {
-            let path = transfer::stage_path(&self.binding.root, &plan.stage_rel)
-                .map_err(TetherError::from_transfer)?;
-            let limit = declared.unwrap_or(0).max(MAX_CAPTURE_BYTES);
-            let mut writer =
-                StageWriter::create(path, limit).map_err(TetherError::from_transfer)?;
-            // The camera may not send a photo twice; whatever arrived stays for recovery.
-            writer.keep_partial();
-            MemberSink::Stage(writer)
-        } else {
-            MemberSink::Discard
-        };
+        if let Some(job) = backfill {
+            job.claim_live_member(&plan.member_id);
+        }
+        let fresh = matches!(plan.status.as_str(), "announced" | "receiving" | "held")
+            && member["hasFile"] != true;
+        if !fresh {
+            return Ok(MemberSink::Discard);
+        }
+        let path = transfer::stage_path(&self.binding.root, &plan.stage_rel)
+            .map_err(TetherError::from_transfer)?;
+        let limit = declared.unwrap_or(0).max(MAX_CAPTURE_BYTES);
+        let mut writer = StageWriter::create(path, limit).map_err(TetherError::from_transfer)?;
+        // The camera may not send a photo twice; whatever arrived stays for recovery.
+        writer.keep_partial();
         *self.plan.borrow_mut() = Some(plan);
-        Ok(sink)
+        Ok(MemberSink::Stage(writer))
     }
 }
 
@@ -1651,7 +1677,24 @@ struct Actor {
     late_backlog: Vec<icc::LateObject>,
     late_retry_at: Instant,
     cohorts: CaptureCohorts,
+    /// Composition test shots of this launch by body, capture time and stem, never pulled from
+    /// the card.
+    test_shots: HashSet<(String, String, String)>,
+    /// Test Shot releases, recorded before the shutter, whose photo may never have arrived.
+    test_releases: Vec<backfill::TestRelease>,
+    backfill: Option<backfill::Backfill>,
+    backfill_due: Option<Instant>,
+    backfill_pass: u64,
+    /// Bodies whose last card pass failed; they are read again only on request.
+    card_failed: HashSet<String>,
+    /// This turn read from the card, so the next one follows without waiting.
+    card_busy: bool,
+    /// The shoot and body the last connection served, so the next one is known as a reconnect.
+    connected: Option<(String, String)>,
 }
+
+/// Maximum time a timed-out USB GetObject claim may hold backfill before expiring.
+const LATE_CLAIM_TTL: Duration = Duration::from_secs(60);
 
 /// Where a late GetObject payload belongs.
 struct LateClaim {
@@ -1659,6 +1702,7 @@ struct LateClaim {
     plan: MemberPlan,
     shot: Value,
     epoch: u64,
+    created_at: Instant,
 }
 
 impl Actor {
@@ -1692,12 +1736,22 @@ impl Actor {
             late_backlog: Vec::new(),
             late_retry_at: now,
             cohorts: CaptureCohorts::default(),
+            test_shots: HashSet::new(),
+            test_releases: Vec::new(),
+            backfill: None,
+            backfill_due: None,
+            backfill_pass: 0,
+            card_failed: HashSet::new(),
+            card_busy: false,
+            connected: None,
         }
     }
 
     fn run(mut self) {
         loop {
-            let wait = if self.live_on {
+            let wait = if self.card_busy {
+                Duration::ZERO
+            } else if self.live_on {
                 Duration::from_millis(10)
             } else if self.session.is_some() || self.reconnect.is_some() {
                 Duration::from_millis(50)
@@ -1888,6 +1942,12 @@ impl Actor {
                     self.stop_live(None);
                     Ok(json!({ "streamId": null, "state": "off" }))
                 };
+                let _ = reply.send(result);
+            }
+            Cmd::Backfill(stamp, op, reply) => {
+                let result = self
+                    .check_stamp(&stamp)
+                    .and_then(|_| self.backfill_command(op));
                 let _ = reply.send(result);
             }
             Cmd::Shutdown(_) => {}
@@ -2244,6 +2304,7 @@ impl Actor {
         if self.want_live && !self.paused {
             let _ = self.start_live();
         }
+        self.after_connect(&binding.shoot_id);
         Ok(self.snapshot())
     }
 
@@ -2337,6 +2398,7 @@ impl Actor {
     }
 
     fn close_session(&mut self) {
+        self.end_backfill("interrupted", None);
         self.stop_live(None);
         if let Some(mut session) = self.session.take() {
             self.last_props = session.camera_properties();
@@ -2378,6 +2440,7 @@ impl Actor {
 
     fn lost(&mut self, reason: &str) {
         crate::logs::write(&format!("tether lost: {reason}"));
+        self.end_backfill("interrupted", Some(reason));
         self.stop_live(Some(reason.to_string()));
         if let Some(mut session) = self.session.take() {
             self.last_props = session.camera_properties();
@@ -2474,7 +2537,9 @@ impl Actor {
     }
 
     fn service(&mut self) {
+        self.card_busy = false;
         self.cohorts.expire_test();
+        prune_pending(&mut self.pending, &mut self.inner.timed_out.lock().unwrap());
         self.store_late_objects();
         if self.reconnect.is_some() {
             self.try_reconnect();
@@ -2562,6 +2627,10 @@ impl Actor {
                 .iter()
                 .any(|(_, at)| at.elapsed() < Duration::from_secs(4))
             || self.cohorts.pending_test.is_some();
+        self.service_backfill();
+        if self.session.is_none() {
+            return;
+        }
         if self.live_on && !self.paused && !capture_active && Instant::now() >= self.next_live {
             self.fetch_live();
         }
@@ -2806,6 +2875,7 @@ impl Actor {
         let Some(binding) = self.binding() else {
             return;
         };
+        let body = self.body_identity();
         for _ in 0..4 {
             prune_pending(&mut self.pending, &mut self.inner.timed_out.lock().unwrap());
             if self.draining_held() {
@@ -2838,6 +2908,7 @@ impl Actor {
             let mut test_plan = None;
             let mut test_error = None;
             let mut regular = None;
+            let mut test_shot = None;
             let result = session.drain_one(|info, kind| {
                 let cohort = CompositionCohort::new(self.epoch, info, kind);
                 let Some(disposition) = self.cohorts.test_disposition(&cohort, active) else {
@@ -2846,9 +2917,10 @@ impl Actor {
                         ctx.request = None;
                     }
                     regular = Some(cohort);
-                    return ctx.open(info, kind);
+                    return ctx.open(info, kind, self.backfill.as_mut());
                 };
                 let TestDisposition { new_shot, discard } = disposition;
+                test_shot = capture_time(info).map(|t| (t, cohort.stem.clone()));
                 test = Some((cohort, disposition));
                 if discard || !matches!(kind, FileKind::Raw | FileKind::Jpeg) {
                     return Ok(MemberSink::Discard);
@@ -2868,6 +2940,14 @@ impl Actor {
             });
             self.inner.receiving.fetch_sub(1, Ordering::SeqCst);
             let orphan = session.transport_mut().take_orphan();
+            if let Some((time, stem)) = test_shot {
+                self.test_shots.insert((body.clone(), time, stem));
+                if self.cohorts.pending_test.is_some()
+                    && test.as_ref().is_some_and(|(_, d)| d.new_shot)
+                {
+                    backfill::resolve_test_release(&mut self.test_releases, &body, self.epoch);
+                }
+            }
             if let Some((cohort, TestDisposition { new_shot, discard })) = test {
                 match result {
                     Ok(DrainStep::Object(object, sink)) => {
@@ -3075,6 +3155,7 @@ impl Actor {
                                     plan: plan.clone(),
                                     shot: camera_snapshot(&ctx.device, &ctx.snapshot, None),
                                     epoch: self.epoch,
+                                    created_at: Instant::now(),
                                 },
                             );
                         }
@@ -3135,20 +3216,21 @@ impl Actor {
     /// Stores GetObject payloads that ImageCaptureCore completed after their timeout.
     fn store_late_objects(&mut self) {
         self.late_backlog.extend(icc::take_late_objects());
-        if self.late_backlog.is_empty() || Instant::now() < self.late_retry_at {
-            return;
-        }
-        for late in std::mem::take(&mut self.late_backlog) {
-            if let Err((late, e)) = self.store_late(late) {
-                self.late_backlog.push(late);
-                self.late_retry_at = Instant::now() + Duration::from_secs(5);
-                let message = format!(
-                    "{} A photo that arrived late is held in memory until it can be saved; keep PhotoCull open.",
-                    e.message
-                );
-                self.hold_draining(&e.code, &message);
+        if !self.late_backlog.is_empty() && Instant::now() >= self.late_retry_at {
+            for late in std::mem::take(&mut self.late_backlog) {
+                if let Err((late, e)) = self.store_late(late) {
+                    self.late_backlog.push(late);
+                    self.late_retry_at = Instant::now() + Duration::from_secs(5);
+                    let message = format!(
+                        "{} A photo that arrived late is held in memory until it can be saved; keep PhotoCull open.",
+                        e.message
+                    );
+                    self.hold_draining(&e.code, &message);
+                }
             }
         }
+        self.late_claims
+            .retain(|_, c| c.created_at.elapsed() < LATE_CLAIM_TTL);
     }
 
     /// Durable first: the payload is on disk before any journal or publication step.
@@ -3209,6 +3291,7 @@ impl Actor {
             plan,
             shot,
             epoch,
+            ..
         } = claim;
         let app = self.inner.app.clone();
         if let Err(e) = transfer::validate_staged_signature(&path, &plan.name) {
@@ -3339,11 +3422,25 @@ impl Actor {
             self.cohorts.check_transition(pending, false)?;
             self.cohorts.awaiting_quiet_queue = false;
         }
-        let session = self.ready_session()?;
         let options = CaptureOptions {
-            wait_for_focus: session.should_wait_for_focus(),
+            wait_for_focus: self.ready_session()?.should_wait_for_focus(),
         };
-        match session.capture(options, &inner.cancel) {
+        let test = request_id.is_none();
+        if test {
+            self.record_test_release();
+        }
+        let session = self.ready_session()?;
+        let released = session.capture(options, &inner.cancel);
+        let uncertain = matches!(
+            released,
+            Err(SessionError::Removed {
+                shutter_uncertain: true
+            })
+        );
+        if test && !matches!(released, Ok(CaptureOutcome::Released)) && !uncertain {
+            self.withdraw_test_release();
+        }
+        match released {
             Ok(CaptureOutcome::Released) => {
                 // Older requests nobody waits for any more were resolved as unknown; a newer
                 // shutter release never lets them claim its photo.
@@ -3362,12 +3459,7 @@ impl Actor {
             Ok(outcome) => Ok(outcome),
             Err(e) => {
                 let mut mapped = TetherError::from_session(e_clone(&e));
-                mapped.uncertain = matches!(
-                    e,
-                    SessionError::Removed {
-                        shutter_uncertain: true
-                    }
-                );
+                mapped.uncertain = uncertain;
 
                 self.handle_session_error(e);
                 Err(mapped)
@@ -3589,14 +3681,16 @@ fn auto_reconnect_enabled(settings: &Value) -> bool {
 /// same ImageCaptureCore device and model count.
 fn same_body(previous: &DeviceDesc, device_id: &str, model: &str, serial: &str) -> bool {
     if previous.serial.is_empty() {
-        previous.device_id == device_id && previous.model == model.trim()
+        serial.trim().is_empty()
+            && previous.device_id == device_id
+            && previous.model == model.trim()
     } else {
         previous.serial == serial.trim()
     }
 }
 
 /// Whether a reopened Wi-Fi camera is the one the shoot was using: the same PTP/IP responder
-/// GUID and model, and the same serial when both report one. An address alone proves nothing.
+/// GUID, model and reported serial. An address alone proves nothing.
 fn same_wifi_body(
     previous: &DeviceDesc,
     model: &str,
@@ -3608,7 +3702,7 @@ fn same_wifi_body(
         .route
         .as_ref()
         .is_some_and(|r| r.same_body(model, responder_guid))
-        && (previous.serial.is_empty() || serial.is_empty() || previous.serial == serial)
+        && previous.serial == serial
 }
 
 /// A stable name for one camera body, saved with a stopped shoot so resuming reattaches only
@@ -5680,6 +5774,15 @@ pub async fn tether_control(
                 "refresh" => tether.ask(|tx| Cmd::Refresh(stamp, tx)).await,
                 "reconnect" => tether.ask(|tx| Cmd::Reconnect(stamp, tx)).await,
                 "fel" => tether.ask(|tx| Cmd::Fel(stamp, tx)).await,
+                "backfill" | "backfill-pause" | "backfill-resume" | "backfill-cancel" => {
+                    let op = match op.as_str() {
+                        "backfill" => backfill::BackfillOp::Start,
+                        "backfill-pause" => backfill::BackfillOp::Pause,
+                        "backfill-resume" => backfill::BackfillOp::Resume,
+                        _ => backfill::BackfillOp::Cancel,
+                    };
+                    tether.ask(|tx| Cmd::Backfill(stamp, op, tx)).await
+                }
                 "disconnect" => {
                     tether.inner.cancel.store(true, Ordering::SeqCst);
                     tether.inner.abort_connect();
@@ -6930,6 +7033,13 @@ mod tests {
             model: "ILCE-7M3".into(),
             ..DeviceDesc::default()
         };
+        let snapshot = |d| camera_snapshot(d, &ExposureSnapshot::default(), None);
+        assert_eq!(snapshot(&anonymous)["bodyId"], "old");
+        let second = DeviceDesc {
+            device_id: "new".into(),
+            ..anonymous.clone()
+        };
+        assert_ne!(snapshot(&anonymous)["bodyId"], snapshot(&second)["bodyId"]);
         let other = [device("new", icc::SONY_USB_VENDOR)];
         assert_eq!(reconnect_target(&anonymous, &other), None);
         let back = [
@@ -7037,12 +7147,21 @@ mod tests {
             route: Some(route),
             ..DeviceDesc::default()
         };
+        assert_eq!(
+            camera_snapshot(&previous, &ExposureSnapshot::default(), None)["bodyId"],
+            format!("guid:{}", wifi::format_uuid(&guid))
+        );
         assert!(same_wifi_body(&previous, "ILCE-7CM2 ", "", Some(guid)));
         assert!(!same_wifi_body(&previous, "ILCE-7CM2", "", Some([8; 16])));
         let with_serial = DeviceDesc {
             serial: "0001".into(),
             ..previous.clone()
         };
+        assert_eq!(
+            camera_snapshot(&with_serial, &ExposureSnapshot::default(), None)["bodyId"],
+            "0001"
+        );
+        assert!(!same_wifi_body(&with_serial, "ILCE-7CM2", "", Some(guid)));
         assert!(!same_wifi_body(
             &with_serial,
             "ILCE-7CM2",

@@ -1069,9 +1069,10 @@ fn read_events(mut stream: TcpStream, shared: Arc<Shared>, generation: u64) {
 
 #[cfg(test)]
 mod tests {
+    use super::super::card::{CardRead, CardScan, ReadStep, ScanStep};
     use super::super::codec::{self, Grammar};
     use super::super::fixtures::*;
-    use super::super::ptp::{format, handle};
+    use super::super::ptp::{format, handle, DeviceInfo, FileKind};
     use super::super::session::{
         ConnectionState, DrainStep, SessionConfig, SessionError, SessionEvent, SonySession,
     };
@@ -1376,12 +1377,16 @@ mod tests {
 
     /// Serves the α7C II negotiation and first snapshot.
     fn serve_handshake(cam: &mut Camera, busy_first: bool) {
+        serve_handshake_as(cam, device_info("ILCE-7CM2"), busy_first);
+    }
+
+    fn serve_handshake_as(cam: &mut Camera, info: DeviceInfo, busy_first: bool) {
         if busy_first {
             let op = cam.expect(op::GET_DEVICE_INFO, &[]);
             cam.c.send(&response(0x2019, op.tid, &[]));
         }
         let op = cam.expect(op::GET_DEVICE_INFO, &[]);
-        cam.reply_in(&op, &device_info("ILCE-7CM2").encode());
+        cam.reply_in(&op, &info.encode());
         for phase in [1, 2] {
             let op = cam.expect(op::SDIO_CONNECT, &[phase, 0, 0]);
             cam.reply_in(&op, &[0; 8]);
@@ -1459,6 +1464,62 @@ mod tests {
         s.connect().unwrap();
         assert_eq!(s.state(), ConnectionState::Ready);
         assert_eq!(s.transport().generation(), first + 1);
+        s.close().unwrap();
+        peer.join().unwrap();
+    }
+
+    #[test]
+    fn card_objects_are_listed_and_read_over_wifi_while_the_session_stays_live() {
+        let (l, addr) = listen();
+        let raw = arw_file(300_000);
+        let served = raw.clone();
+        let peer = thread::spawn(move || {
+            let mut cam = accept_camera(&l);
+            serve_handshake_as(&mut cam, device_info_with_storage("ILCE-7CM2"), false);
+            let op = cam.expect(op::GET_STORAGE_IDS, &[]);
+            cam.reply_in(&op, &handle_list(&[0x0001_0001]));
+            let op = cam.expect(op::GET_OBJECT_HANDLES, &[0x0001_0001, 0, 0]);
+            cam.reply_in(&op, &handle_list(&[1, 2]));
+            let op = cam.expect(op::GET_OBJECT_INFO, &[2]);
+            let info = card_info(
+                format::SONY_ARW,
+                "DSC00002.ARW",
+                served.len() as u32,
+                "20261125T143020",
+            );
+            cam.reply_in(&op, &info);
+            // Deleted on the camera after the listing.
+            let op = cam.expect(op::GET_OBJECT_INFO, &[1]);
+            cam.c.send(&response(0x2009, op.tid, &[]));
+            let op = cam.expect(op::GET_OBJECT, &[2]);
+            cam.reply_in(&op, &served);
+            serve_close(&mut cam);
+        });
+        let mut s = session(addr);
+        s.connect().unwrap();
+        let mut scan = CardScan::new(None);
+        while scan.step(&mut s).unwrap() == ScanStep::Working {}
+        assert_eq!((scan.found.len(), scan.inspected, scan.refused), (1, 2, 1));
+        let object = scan.found[0].clone();
+        assert_eq!(object.kind, FileKind::Raw);
+        let mut sink = Vec::new();
+        let mut read = CardRead::new(&s, &object, 512 << 20).unwrap();
+        let size = raw.len() as u64;
+        let step = read.step(&mut s, &mut sink);
+        assert_eq!(
+            step.unwrap(),
+            ReadStep::Done {
+                bytes: size,
+                declared: size
+            }
+        );
+        assert_eq!(sink, raw);
+        assert_eq!(s.state(), ConnectionState::Ready);
+        assert_eq!(
+            s.transport_mut().poll_event(),
+            None,
+            "nothing retired the link"
+        );
         s.close().unwrap();
         peer.join().unwrap();
     }

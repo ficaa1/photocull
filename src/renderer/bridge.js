@@ -15,7 +15,7 @@
     return () => subscribers.get(name).delete(callback);
   };
   const EVENTS = ['backup-progress','edit-shortcut', 'open-folder-shortcut', 'settings-shortcut', 'fullscreen-toggle', 'fullscreen-changed', 'devices-changed', 'copy-progress', 'sidecar-warning', 'preview-state', 'develop-progress', 'export-progress', 'lens-database-progress', 'prepare-progress',
-    'update-progress', 'check-updates-shortcut', 'tether-connection', 'tether-properties', 'tether-config-changed', 'tether-transfer', 'tether-library-delta', 'tether-live-state', 'tether-issue', 'tether-composition'];
+    'update-progress', 'check-updates-shortcut', 'tether-connection', 'tether-properties', 'tether-config-changed', 'tether-transfer', 'tether-library-delta', 'tether-live-state', 'tether-issue', 'tether-composition', 'tether-backfill'];
 
   let backend, imageBase, platform, host, shell;
   if (tauri) {
@@ -244,6 +244,7 @@
     onTetherLive: callback => subscribe('tether-live-state', callback),
     onTetherIssue: callback => subscribe('tether-issue', callback),
     onTetherComposition: callback => subscribe('tether-composition', callback),
+    onTetherBackfill: callback => subscribe('tether-backfill', callback),
     imageUrl: (session, id, kind, params = '') => `${imageBase.prefix}/${session}/${id}/${kind}?${imageBase.query}${params}`,
     onEdit: callback => subscribe('edit-shortcut', callback),
     onOpenFolder: callback => subscribe('open-folder-shortcut', callback),

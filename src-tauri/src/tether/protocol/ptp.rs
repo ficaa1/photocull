@@ -6,6 +6,8 @@ pub mod op {
     pub const GET_DEVICE_INFO: u16 = 0x1001;
     pub const OPEN_SESSION: u16 = 0x1002;
     pub const CLOSE_SESSION: u16 = 0x1003;
+    pub const GET_STORAGE_IDS: u16 = 0x1004;
+    pub const GET_OBJECT_HANDLES: u16 = 0x1007;
     pub const GET_OBJECT_INFO: u16 = 0x1008;
     pub const GET_OBJECT: u16 = 0x1009;
     pub const GET_PARTIAL_OBJECT: u16 = 0x101B;
@@ -27,8 +29,10 @@ pub mod resp {
     pub const SESSION_NOT_OPEN: u16 = 0x2003;
     pub const OPERATION_NOT_SUPPORTED: u16 = 0x2005;
     pub const PARAMETER_NOT_SUPPORTED: u16 = 0x2006;
+    pub const INVALID_STORAGE_ID: u16 = 0x2008;
     pub const INVALID_OBJECT_HANDLE: u16 = 0x2009;
     pub const ACCESS_DENIED: u16 = 0x200F;
+    pub const STORE_NOT_AVAILABLE: u16 = 0x2013;
     pub const DEVICE_BUSY: u16 = 0x2019;
     pub const INVALID_PARAMETER: u16 = 0x201D;
     pub const SESSION_ALREADY_OPEN: u16 = 0x201E;
@@ -41,8 +45,10 @@ pub mod resp {
             SESSION_NOT_OPEN => "SessionNotOpen",
             OPERATION_NOT_SUPPORTED => "OperationNotSupported",
             PARAMETER_NOT_SUPPORTED => "ParameterNotSupported",
+            INVALID_STORAGE_ID => "InvalidStorageID",
             INVALID_OBJECT_HANDLE => "InvalidObjectHandle",
             ACCESS_DENIED => "AccessDenied",
+            STORE_NOT_AVAILABLE => "StoreNotAvailable",
             DEVICE_BUSY => "DeviceBusy",
             INVALID_PARAMETER => "InvalidParameter",
             SESSION_ALREADY_OPEN => "SessionAlreadyOpen",
@@ -63,6 +69,7 @@ pub mod event {
 
 pub mod format {
     pub const UNDEFINED: u16 = 0x3000;
+    pub const ASSOCIATION: u16 = 0x3001;
     pub const DEFINED_IMAGE: u16 = 0x3800;
     pub const EXIF_JPEG: u16 = 0x3801;
     pub const JFIF: u16 = 0x3808;
@@ -379,6 +386,14 @@ impl<'a> Cursor<'a> {
         }
         (0..n).map(|_| self.u16()).collect()
     }
+
+    pub fn u32_array(&mut self) -> Result<Vec<u32>, ProtocolError> {
+        let n = self.u32()? as usize;
+        if n > self.remaining() / 4 {
+            return malformed("array count exceeds the dataset");
+        }
+        (0..n).map(|_| self.u32()).collect()
+    }
 }
 
 /// Little-endian writer for datasets and outbound values.
@@ -428,6 +443,13 @@ impl Writer {
         self.u32(v.len() as u32);
         for x in v {
             self.u16(*x);
+        }
+        self
+    }
+    pub fn u32_array(&mut self, v: &[u32]) -> &mut Self {
+        self.u32(v.len() as u32);
+        for x in v {
+            self.u32(*x);
         }
         self
     }
