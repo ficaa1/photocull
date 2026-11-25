@@ -770,6 +770,38 @@ test('resuming keeps the shoot\'s own shot-subfolder choice when the Library sho
   assert.equal((await ctx.service.resumeTarget(shootId)).includeShots, false);
 });
 
+test('a capture folder replaced while it is checked gets no layout folders', async t => {
+  const ctx = await setup(t);
+  const moved = path.join(ctx.base, 'Ceramics moved');
+  ctx.service.isCard = async root => { await fs.rename(root, moved); await fs.mkdir(root); return false; };
+  await assert.rejects(ctx.bind('session', true), e => e.code === 'DEST_CHANGED');
+  assert.deepEqual([await fs.readdir(ctx.root), await fs.readdir(moved)], [[], []]);
+  assert.equal(ctx.service.active(), false);
+});
+
+test('a Keep recorded without its folder waits once its shot folder has gone', async t => {
+  const ctx = await setup(t);
+  await ctx.bind('single', true);
+  await fs.mkdir(path.join(ctx.root, 'Blue'));
+  await ctx.service.setLocation(ctx.shootId, 1, 'Blue');
+  const key = 'composition:launch:4', content = Buffer.from('II*\0sample');
+  const member = { memberId: sha(key + ':raw'), originalName: 'DSC00004.ARW', bytes: content.length, sha256: sha(content) };
+  const stage = path.join(ctx.root, '.photocull-tether', member.memberId + '.part');
+  await fs.mkdir(path.dirname(stage), { recursive: true }); await fs.writeFile(stage, content);
+  await ctx.service.journal(ctx.shootId, 'close');
+  await fs.rm(path.join(ctx.root, 'Blue'), { recursive: true });
+  await ctx.service.bind(ctx.root, null, 'single', true, null, ctx.shootId);
+  const keep = () => ctx.service.accept(ctx.shootId, 2, null, { key, staged: [member] }, ['raw'], { model: 'ILCE-7M3', bodyId: 'studio' });
+  await assert.rejects(keep(), e => e.code === 'DEST_CHANGED' && e.detail.retryable === false && e.message.includes('Blue'));
+  // Still held after another restart, when nothing falls back any more.
+  await ctx.service.journal(ctx.shootId, 'close');
+  await ctx.open();
+  await ctx.bind('single', true);
+  await assert.rejects(keep(), e => e.code === 'DEST_CHANGED');
+  assert.equal((await ctx.state()).counters.next, 1);
+  assert.deepEqual((await fs.readdir(ctx.root)).sort(), ['.photocull-tether']);
+});
+
 test('a bind whose journal cannot be saved leaves no shoot running', async t => {
   const ctx = await setup(t);
   await ctx.bind();

@@ -282,6 +282,12 @@ class TetherService {
       if (rootIdentity.folderId !== undefined && rootIdentity.folderId !== folderId) fail('DEST_CHANGED', 'The capture folder changed before tethering started.');
     }
     if (await this.isCard(root)) fail('UNSUPPORTED', 'Camera cards cannot be tether destinations. Choose a folder on this computer.');
+    // Each await is a chance for the folder to be replaced; nothing is created in a replacement.
+    const unchanged = async () => {
+      const now = await fs.realpath(root).catch(() => null) === root && await fs.stat(root).catch(() => null);
+      if (!now?.isDirectory() || `${now.dev}:${now.ino}` !== folderId) fail('DEST_CHANGED', 'The capture folder was moved or replaced while tethering started. Choose it again.');
+    };
+    await unchanged();
     const running = this.activeShoot && this.ledgers.get(this.activeShoot)?.shoot;
     if (running && (running.canonicalRoot !== root || running.layout !== layout || resumeShootId !== null)) fail('CAMERA_BUSY', 'Stop the current tethered shoot first.');
     if (resumeShootId !== null) {
@@ -289,11 +295,13 @@ class TetherService {
       if (saved?.canonicalRoot !== root || saved.folderId !== folderId || saved.layout !== layout) fail('DEST_CHANGED', 'The capture folder changed since this session stopped. Start a new session instead.');
     }
     if (layout === 'session') for (const name of LAYOUT_FOLDERS) {
+      await unchanged();
       const dir = path.join(root, name);
       await fs.mkdir(dir).catch(error => { if (error.code !== 'EEXIST') fail('IO_ERROR', `${dir}: ${error.message}`, { field: name }); });
       const info = await fs.lstat(dir);
       if (!info.isDirectory() || info.isSymbolicLink()) fail('IO_ERROR', `${dir} exists and is not a folder.`, { field: name });
     }
+    await unchanged();
     let ledger = await this.findShoot(root, folderId, layout);
     if (resumeShootId !== null && ledger?.shoot.shootId !== id(resumeShootId, 'resume')) fail('DEST_CHANGED', 'The capture folder changed since this session stopped. Start a new session instead.');
     if (!ledger) {
@@ -320,6 +328,7 @@ class TetherService {
       const identity = await this.directoryIdentity(s, s.activeRelDir).catch(() => null);
       // A shot folder removed or replaced while the shoot was stopped falls back to the capture folder itself.
       if (s.activeRelDir && identity !== s.activeDirId) {
+        s.droppedShotDir = s.activeRelDir;
         s.recentRelDirs = s.recentRelDirs.filter(r => r.relative !== s.activeRelDir);
         s.activeRelDir = '';
         s.activeDirId = await this.directoryIdentity(s, '').catch(() => null);
@@ -547,6 +556,8 @@ class TetherService {
       const connection = Number.isSafeInteger(epoch) ? epoch : 0;
       const existing = key && Object.values(ledger.exposures).find(e => e.providerShotKey === key && (e.epoch === connection || (!!snapshot.captureTime && e.captureTime === snapshot.captureTime)));
       if (existing) return { ...receipt(existing), boundRequestId: null };
+      // A Keep recorded without its folder may have been for a shot folder that has since gone.
+      if (providerExposure?.staged !== undefined && !providerExposure.target && shoot.droppedShotDir) fail('DEST_CHANGED', `This test shot was kept before its shot folder was recorded, and “${shoot.droppedShotDir}” is gone. It is not saved anywhere else.`, { retryable: false });
       const target = providerExposure?.target ? await this.keptTarget(shoot, providerExposure.target) : { relative: shoot.activeRelDir, dirId: shoot.activeDirId };
       const staged = providerExposure?.staged;
       const kept = staged === undefined ? [] : await this.verifiedKeep(ledger, key, requestId, hostRoles, staged);

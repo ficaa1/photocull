@@ -654,7 +654,7 @@ enum SetValue {
 }
 
 enum Cmd {
-    Bind(Binding, Value, Reply<()>),
+    Bind(Binding, Value, Reply<Vec<Value>>),
     Connect(String, Option<ExpectedBody>, Reply<Value>),
     Snapshot(Reply<Value>),
     TransfersSettled(Reply<bool>),
@@ -1624,6 +1624,8 @@ struct Actor {
     rx: mpsc::Receiver<Cmd>,
     session: Option<SonySession<CameraTransport>>,
     device: Option<DeviceDesc>,
+    /// The shoot `device` was verified and attached for; a failed connect leaves it unchanged.
+    device_shoot: Option<String>,
     shoot_id: Option<String>,
     epoch: u64,
     state: LinkState,
@@ -1667,6 +1669,7 @@ impl Actor {
             rx,
             session: None,
             device: None,
+            device_shoot: None,
             shoot_id: None,
             epoch: 0,
             state: LinkState::Offline,
@@ -1978,7 +1981,7 @@ impl Actor {
         let reason = self.inner.state.lock().unwrap().1.clone();
         json!({
             "epoch": self.epoch,
-            "shootId": self.shoot_id,
+            "shootId": self.device_shoot,
             "device": self.device_json(),
             "properties": Self::properties_json(&props),
             "propRev": self.session.as_ref().map(|s| s.prop_rev()).unwrap_or(0),
@@ -2198,6 +2201,7 @@ impl Actor {
             self.emit_connection(Some(&e.message));
             return Err(e);
         }
+        self.device_shoot = Some(binding.shoot_id.clone());
         self.device = Some(DeviceDesc {
             device_id: device_id.to_string(),
             model: info.model.trim().to_string(),
@@ -2639,7 +2643,10 @@ impl Actor {
         emit(&self.inner.app, "tether-properties", payload);
     }
 
-    fn bind(&mut self, binding: Binding, mut recoveries: Value) -> TResult<()> {
+    /// Binds the shoot and replays interrupted Keeps; returns the issues of Keeps that could not
+    /// finish, which the renderer has not subscribed to yet.
+    fn bind(&mut self, binding: Binding, mut recoveries: Value) -> TResult<Vec<Value>> {
+        let mut issues = Vec::new();
         let previous = self.inner.binding.lock().unwrap().clone();
         if let Some(old) = previous.as_ref().filter(|b| b.root != binding.root) {
             clean_composition(&self.inner.data_dir, &old.root)?;
@@ -2660,14 +2667,12 @@ impl Actor {
             if let Err(e) =
                 tauri::async_runtime::block_on(keep_composition(&self.inner, &binding, &promotion))
             {
-                emit(
-                    &self.inner.app,
-                    "tether-issue",
-                    json!({
-                        "v": 1, "shootId": binding.shoot_id, "session": binding.session, "code": e.code,
-                        "message": format!("Keeping test shot {}: {}", promotion.seq, e.message), "retryable": true, "actions": [],
-                    }),
-                );
+                let issue = json!({
+                    "v": 1, "shootId": binding.shoot_id, "session": binding.session, "code": e.code,
+                    "message": format!("Keeping test shot {}: {}", promotion.seq, e.message), "retryable": e.retryable, "actions": [],
+                });
+                emit(&self.inner.app, "tether-issue", issue.clone());
+                issues.push(issue);
             }
         }
         clean_composition(&self.inner.data_dir, &binding.root)?;
@@ -2678,7 +2683,7 @@ impl Actor {
         self.cohorts.pending_test = None;
         *self.inner.binding.lock().unwrap() = Some(binding.clone());
         resume_records(&self.inner, &binding, &recoveries);
-        Ok(())
+        Ok(issues)
     }
 
     fn composition(&mut self, op: CompositionOp) -> TResult<Value> {
@@ -4830,13 +4835,20 @@ fn layout_root(root: &Path, layout: &str) -> PathBuf {
 }
 
 /// Validates a destination root: a real folder, accepted by `check` before anything is written,
-/// whose staging area accepts exclusive publication.
-fn preflight_root(path: &Path, check: impl FnOnce(&Path) -> TResult<()>) -> TResult<PathBuf> {
+/// whose staging area accepts exclusive publication. Returns the root and the identity `check`
+/// approved; a folder replaced meanwhile is refused before and after staging is created.
+fn preflight_root(
+    path: &Path,
+    check: impl FnOnce(&Path) -> TResult<()>,
+) -> TResult<(PathBuf, Option<String>)> {
     let root = dunce::canonicalize(path)
         .map_err(|_| TetherError::new("DEST_CHANGED", "The capture folder is not available."))?;
     transfer::resolve_dir(&root, "").map_err(TetherError::from_transfer)?;
+    let identity = transfer::dir_identity(&root);
     check(&root)?;
+    same_root(&root, &identity)?;
     let stage = transfer::stage_dir(&root).map_err(TetherError::from_transfer)?;
+    same_root(&root, &identity)?;
     let token = transfer::hex(&transfer::Sha256::digest(
         format!("{}:{:?}", std::process::id(), Instant::now()).as_bytes(),
     ));
@@ -4857,7 +4869,19 @@ fn preflight_root(path: &Path, check: impl FnOnce(&Path) -> TResult<()>) -> TRes
     let _ = std::fs::remove_file(&probe);
     let _ = std::fs::remove_file(&published);
     result?;
-    Ok(root)
+    Ok((root, identity))
+}
+
+/// Refuses a root that is no longer the folder first resolved at this path.
+fn same_root(root: &Path, identity: &Option<String>) -> TResult<()> {
+    let current = dunce::canonicalize(root).ok();
+    if current.as_deref() != Some(root) || transfer::dir_identity(root) != *identity {
+        return Err(TetherError::new(
+            "DEST_CHANGED",
+            "The capture folder was moved or replaced while tethering started. Choose it again.",
+        ));
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -4945,7 +4969,8 @@ pub async fn tether_open(
                 })
             })
             .await?;
-            let identity = transfer::dir_identity(&root).map(|id| json!({ "folderId": id }));
+            let (root, identity) = root;
+            let identity = identity.map(|id| json!({ "folderId": id }));
             let bound = node(
                 &app,
                 "tether-bind",
@@ -4978,17 +5003,21 @@ pub async fn tether_open(
                 )),
             };
             // A newly opened sidecar shoot stays open only when the camera side is bound too.
-            if let Err(e) = attached {
-                if rebinding.is_none() {
-                    let _ = node(&app, "tether-journal", json!([shoot_id, "close", {}])).await;
+            let issues = match attached {
+                Ok(issues) => issues,
+                Err(e) => {
+                    if rebinding.is_none() {
+                        let _ = node(&app, "tether-journal", json!([shoot_id, "close", {}])).await;
+                    }
+                    return Err(e);
                 }
-                return Err(e);
-            }
+            };
             Ok(json!({
                 "shootId": shoot_id,
                 "session": bound["session"],
                 "configRev": bound["configRev"],
                 "libraryRev": bound["libraryRev"],
+                "issues": issues,
             }))
         }
         .await,
@@ -7073,9 +7102,27 @@ mod tests {
         });
         assert_eq!(refused.unwrap_err().code, "UNSUPPORTED");
         assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
-        let accepted = preflight_root(&root, |_| Ok(())).unwrap();
+        let (accepted, _) = preflight_root(&root, |_| Ok(())).unwrap();
         assert!(accepted.join(transfer::STAGE_DIR).is_dir());
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_destination_replaced_while_it_is_checked_gets_no_staging_folder() {
+        let root = std::env::temp_dir().join(format!("photocull-swap-{}", std::process::id()));
+        let moved = root.with_extension("moved");
+        std::fs::create_dir_all(&root).unwrap();
+        let replaced = preflight_root(&root, |checked| {
+            std::fs::rename(checked, &moved).unwrap();
+            std::fs::create_dir(checked).unwrap();
+            Ok(())
+        });
+        assert_eq!(replaced.unwrap_err().code, "DEST_CHANGED");
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+        assert_eq!(std::fs::read_dir(&moved).unwrap().count(), 0);
+        std::fs::remove_dir_all(&root).unwrap();
+        std::fs::remove_dir_all(&moved).unwrap();
     }
 
     #[test]

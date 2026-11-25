@@ -112,7 +112,7 @@
       // want: the test shot being fetched, so a slower earlier fetch never replaces a newer frame.
       this.test = { active: false, hasShot: false, awaitingShot: false, busy: false, frame: null, want: null, testSeq: null, pairComplete: true, restoreLiveExpanded: false };
       this.recycleUntil = 0; this.recycleTimer = 0; this.wbArmed = false; this.wbBusy = false;
-      this.recent = []; this.opening = false;
+      this.recent = []; this.opening = false; this.openSeq = 0;
       this.misfire = { history: new FlashHistory(), shown: false, detail: '', chain: Promise.resolve() };
       this.build();
       this.layer = new O.OverlayLayer(host.reviewViewport, {
@@ -192,6 +192,7 @@
       if (changed || value?.location?.relative !== this.shoot?.location?.relative) this.resetMisfire(changed);
       this.shoot = value ? { ...value } : null;
       if (changed) {
+        this.openSeq++;
         this.telemetry.queued = this.telemetry.receiving = 0;
         this.follow = { paused: false, autoPaused: false, pending: 0, latestOrdinal: 0, shownOrdinal: 0, latestId: null, epoch: 0 };
         const latest = value && (this.host.session()?.items || []).filter(i => i.ordinal).sort((a, b) => b.ordinal - a.ordinal)[0];
@@ -825,7 +826,7 @@
         else { try { this.camera.devices = (await this.api.tetherDevices()).devices || this.camera.devices; } catch {} }
         if (!this.shoot) { status.textContent = 'Camera added. Start a tethered session to connect.'; return; }
         const addedId = result?.deviceId || result?.device?.deviceId;
-        if (addedId) await this.connect(addedId);
+        if (addedId) await this.connect(addedId, this.carriedExpect(addedId));
         if (this.connected()) { status.textContent = ''; this.toggleWifiForm(false); }
         else status.textContent = this.camera.reason || 'Camera added. Choose it above to connect.';
       } catch (error) {
@@ -1067,10 +1068,16 @@
       } catch (error) { $('tether-start-status').textContent = error.message; }
       finally { this.endOpening(); }
     }
+    // Interrupted Keeps replay while the shoot opens, before it is adopted here: their photos and
+    // any Keep that could not finish arrive with the result rather than as events.
     async opened(result) {
       if (result.session && result.session.id !== this.host.session()?.id) this.host.loadSession(result.session);
       const value = await this.api.tetherState(result.session?.id ?? this.host.session()?.id);
       this.setShoot(value?.shootId ? value : { shootId: result.shootId, session: result.session?.id, configRev: result.configRev, libraryRev: result.libraryRev, config: clone(this.settings()), counters: null });
+      if (!this.shoot) return;
+      for (const issue of result.issues || []) this.issues.set(this.issueKey(issue), issue);
+      this.renderIssues();
+      if ((this.shoot.libraryRev ?? 0) !== (result.libraryRev ?? 0)) await this.resyncLibrary();
     }
     async loadRecent() {
       if (!this.api.canTether) return;
@@ -1108,13 +1115,13 @@
     }
     async discover(autoConnect = false, camera = null) {
       if (!this.api.canTether) return;
-      const shootId = this.shoot?.shootId ?? null;
+      const open = this.openSeq;
       this.camera.state = this.connected() ? this.camera.state : 'discovering'; this.camera.reason = ''; this.render();
       try {
         const result = await this.api.tetherDevices();
         this.camera.devices = result.devices || [];
         if (!this.connected()) this.camera.state = 'offline';
-        const pending = autoConnect && !!this.shoot && this.shoot.shootId === shootId && !this.connected();
+        const pending = autoConnect && !!this.shoot && this.openSeq === open && !this.connected();
         const available = this.camera.devices.filter(d => !d.availability || d.availability === 'available'), usb = available.filter(d => transportOf(d) === 'usb');
         const preferred = pending ? this.preferredDevice(available, camera) : null;
         if (!this.camera.devices.length) this.camera.reason = 'No camera found. Check the setup steps below, then retry.';
@@ -1129,16 +1136,22 @@
       if (!this.shoot || !deviceId) return;
       const device = this.camera.devices.find(d => d.deviceId === deviceId);
       if (device && transportOf(device) === 'wifi' && (device.needsCredentials || device.auth === 'unknown' && device.address)) {
-        this.camera.deviceId = deviceId; this.camera.reason = ''; this.openWifiForDevice(device); return;
+        this.camera.deviceId = deviceId; this.camera.reason = ''; this.carryExpect(deviceId, expect); this.openWifiForDevice(device); return;
       }
       this.camera.state = 'connecting'; this.camera.deviceId = deviceId; this.render();
       try { this.applyConnection(await this.api.tetherConnect(this.shoot.shootId, deviceId, expect)); }
       catch (error) {
         this.camera.state = 'offline'; this.camera.reason = error.message; this.render();
         if (device && transportOf(device) === 'wifi' && ['SSH_CREDENTIALS_REQUIRED', 'SSH_AUTH_FAILED', 'AUTH_CHOICE_REQUIRED', 'AUTH_MODE_REQUIRED', ...HOST_KEY].includes(error.code)) {
-          this.openWifiForDevice(device, error);
+          this.carryExpect(deviceId, expect); this.openWifiForDevice(device, error);
         }
       }
+    }
+    // A resumed shoot's body check survives the Wi-Fi sign-in it needs, for that camera and open only.
+    carryExpect(deviceId, expect) { this.wifi.expect = expect && { open: this.openSeq, deviceId, expect }; }
+    carriedExpect(deviceId) {
+      const carried = this.wifi.expect;
+      return carried && carried.open === this.openSeq && carried.deviceId === deviceId ? carried.expect : null;
     }
     // Non-destructive property resync; never tears down the active camera session.
     async resyncCamera() {
