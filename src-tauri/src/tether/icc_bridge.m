@@ -376,7 +376,8 @@ int32_t photocull_icc_open_session(const char *device_id, uint64_t generation, d
         g_bridge.usesEventHandler = NO;
         camera.delegate = g_bridge;
         SEL handler = NSSelectorFromString(@"setPtpEventHandler:");
-        if (@available(macOS 12.0, *)) {
+        // Use NSProcessInfo instead of @available so rustc -nodefaultlibs needs no libclang_rt.
+        if ([[NSProcessInfo processInfo] isOperatingSystemAtLeastVersion:(NSOperatingSystemVersion){12, 0, 0}]) {
             if ([camera respondsToSelector:handler]) {
                 __weak PCBridge *weakBridge = g_bridge;
                 __weak ICCameraDevice *weakCamera = camera;
