@@ -654,6 +654,106 @@ test('crash recovery replays published members once and never re-advances counte
   assert.equal((await ctx.state()).libraryRev, reopened.libraryRev);
 });
 
+test('a stopped shoot resumes its counter, shot folder, config and camera without overwriting files', async t => {
+  const ctx = await setup(t);
+  await ctx.bind('session', true);
+  await fs.mkdir(path.join(ctx.libraryRoot, 'Blue'));
+  let rev = (await ctx.service.setLocation(ctx.shootId, 1, 'Blue')).configRev;
+  rev = (await ctx.service.config(ctx.shootId, rev, { jobName: 'Vases', namingTemplate: '{Name}_{Counter:4}', follow: { mode: 'off' }, flash: { syncLimit: 160, recycleMs: 0, misfireAlert: false, misfireChime: false } })).configRev;
+  rev = (await ctx.service.counter(ctx.shootId, rev, 'setNext', 41)).configRev;
+  await ctx.service.counter(ctx.shootId, rev, 'setStep', 2);
+  const first = await ctx.accept({ roles: ['raw'] });
+  assert.equal((await ctx.deliver(first.exposureId, 'DSC00001.ARW')).plan.finalRelPath, 'Blue/Vases_0041.ARW');
+  const shootId = ctx.shootId, before = await ctx.state();
+  assert.deepEqual(await ctx.service.recentShoots(), [], 'the running shoot is not offered for resuming');
+  await ctx.service.journal(shootId, 'close', { camera: { deviceId: 'usb-1', model: 'ILCE-7M3', transport: 'usb-icc' } });
+  await assert.rejects(ctx.service.journal(shootId, 'close', { device: 'usb-1' }), e => e.code === 'UNSUPPORTED');
+
+  // A restart reads the stopped shoot back from its journal.
+  await ctx.library.close();
+  await ctx.open();
+  const [entry, ...others] = await ctx.service.recentShoots();
+  assert.equal(others.length, 0);
+  assert.deepEqual({ ...entry, stoppedAt: typeof entry.stoppedAt }, { shootId, folder: ctx.root, name: 'Ceramics', layout: 'session', relative: 'Blue', shot: 'Blue', next: 43,
+    camera: { deviceId: 'usb-1', model: 'ILCE-7M3', transport: 'usb-icc' }, stoppedAt: 'string', available: true });
+  assert.deepEqual(await ctx.service.resumeTarget(shootId), { root: ctx.root, layout: 'session', includeShots: true });
+  // Another writer has meanwhile taken the next name in the shot folder.
+  await fs.writeFile(path.join(ctx.libraryRoot, 'Blue', 'Vases_0043.ARW'), 'not ours');
+  const resumed = await ctx.service.bind(ctx.root, null, 'session', true, null, shootId);
+  Object.assign(ctx, { session: resumed.session.id });
+  assert.equal(resumed.shootId, shootId);
+  const after = await ctx.state();
+  assert.deepEqual([after.counters.next, after.counters.step, after.location.relative, after.config], [43, 2, 'Blue', before.config]);
+  assert.equal(after.config.flash.syncLimit, 160);
+  const second = await ctx.accept({ roles: ['raw'] });
+  assert.deepEqual([second.ordinal, second.counters.capture], [2, 43]);
+  assert.equal((await ctx.deliver(second.exposureId, 'DSC00002.ARW')).plan.finalRelPath, 'Blue/Vases_0043-2.ARW');
+  assert.equal(await fs.readFile(path.join(ctx.libraryRoot, 'Blue', 'Vases_0043.ARW'), 'utf8'), 'not ours');
+  assert.equal(await fs.readFile(path.join(ctx.libraryRoot, 'Blue', 'Vases_0041.ARW'), 'utf8'), `DSC00001.ARW:${first.exposureId}`);
+  assert.deepEqual(ctx.library.get(ctx.session).items.filter(i => i.exposureId).map(i => i.ordinal).sort(), [1, 2]);
+  // A close without a connected camera keeps the one remembered before.
+  await ctx.service.journal(shootId, 'close', { camera: null });
+  assert.deepEqual((await ctx.service.recentShoots())[0].camera, { deviceId: 'usb-1', model: 'ILCE-7M3', transport: 'usb-icc' });
+});
+
+test('resuming falls back from a deleted shot folder and refuses a moved, replaced or card folder', async t => {
+  const ctx = await setup(t);
+  await ctx.bind('single', true);
+  await fs.mkdir(path.join(ctx.root, 'Day 2', 'Blue'), { recursive: true });
+  await ctx.service.setLocation(ctx.shootId, 1, 'Day 2/Blue');
+  await ctx.service.journal(ctx.shootId, 'close');
+  const shootId = ctx.shootId;
+  await fs.rm(path.join(ctx.root, 'Day 2', 'Blue'), { recursive: true });
+  await ctx.service.bind(ctx.root, null, 'single', true, null, shootId);
+  const state = await ctx.state();
+  assert.deepEqual([state.location.relative, state.location.recents], ['', []]);
+  const shot = await ctx.accept({ roles: ['raw'] });
+  assert.equal((await ctx.deliver(shot.exposureId, 'DSC00001.ARW')).plan.finalRelPath, 'Ceramics-0001.ARW');
+  await assert.rejects(ctx.service.resumeTarget(shootId), e => e.code === 'CAMERA_BUSY');
+  await ctx.service.journal(shootId, 'close');
+
+  ctx.service.isCard = async root => root === ctx.root;
+  await assert.rejects(ctx.service.resumeTarget(shootId), e => e.code === 'UNSUPPORTED' && /Camera cards/.test(e.message));
+  ctx.service.isCard = async () => false;
+  const moved = path.join(ctx.base, 'Ceramics moved');
+  await fs.rename(ctx.root, moved);
+  await assert.rejects(ctx.service.resumeTarget(shootId), e => e.code === 'DEST_CHANGED' && e.message.includes(ctx.root));
+  assert.equal((await ctx.service.recentShoots())[0].available, false);
+  await assert.rejects(ctx.service.resumeTarget(randomUUID()), e => e.code === 'STALE_SESSION');
+  await assert.rejects(ctx.service.resumeTarget('../shoot'), e => e.code === 'UNSUPPORTED');
+  // A new folder at the old path is another folder: binding it never revives the stopped shoot.
+  await fs.mkdir(ctx.root);
+  await assert.rejects(ctx.service.resumeTarget(shootId), e => e.code === 'DEST_CHANGED');
+  await assert.rejects(ctx.service.bind(ctx.root, null, 'single', true, null, shootId), e => e.code === 'DEST_CHANGED');
+  assert.deepEqual(await fs.readdir(moved).then(names => names.sort()), ['.photocull-tether', 'Ceramics-0001.ARW', 'Day 2']);
+});
+
+test('recent stopped shoots are newest first, one per folder and layout, and bounded', async t => {
+  const ctx = await setup(t);
+  let clock = Date.parse('2026-11-01T10:00:00Z');
+  ctx.service.now = () => new Date(clock += 60_000);
+  const folders = [];
+  for (let n = 0; n < 12; n++) {
+    const folder = path.join(ctx.base, `Shoot ${String(n).padStart(2, '0')}`);
+    await fs.mkdir(folder); folders.push(folder);
+    const bound = await ctx.service.bind(folder, null, 'single');
+    await ctx.service.journal(bound.shootId, 'close');
+  }
+  // Folder 3 again, as a session layout, and folder 5 replaced by a new folder of the same name.
+  const again = await ctx.service.bind(folders[3], null, 'session');
+  await ctx.service.journal(again.shootId, 'close');
+  await fs.mkdir(folders[5] + ' new'); await fs.rm(folders[5], { recursive: true }); await fs.rename(folders[5] + ' new', folders[5]);
+  const replaced = await ctx.service.bind(folders[5], null, 'single');
+  await ctx.service.journal(replaced.shootId, 'close');
+  const running = await ctx.service.bind(folders[11], null, 'single');
+  const list = await ctx.service.recentShoots();
+  assert.deepEqual(list.map(e => [path.basename(e.folder), e.layout]), [['Shoot 05', 'single'], ['Shoot 03', 'session'], ['Shoot 10', 'single'], ['Shoot 09', 'single'], ['Shoot 08', 'single'],
+    ['Shoot 07', 'single'], ['Shoot 06', 'single'], ['Shoot 04', 'single'], ['Shoot 03', 'single'], ['Shoot 02', 'single']]);
+  assert.equal(list[0].shootId, replaced.shootId);
+  assert.ok(!list.some(e => e.shootId === running.shootId));
+  assert.ok(list.every(e => e.available && e.next === 1 && e.camera === null));
+});
+
 test('JPEG-first edits survive a crash between RAW publication and the Library save', async t => {
   const ctx = await setup(t, { settings: { tether: { initial: { rating: 1, color: '4' } } } });
   await ctx.bind();

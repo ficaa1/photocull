@@ -2,7 +2,8 @@
 // temporary settings and synthetic photos. Browser mode has no camera, so the first phase covers the Tether
 // workspace layout, Wi-Fi form, composition aids, pinned reference Compare and Settings → Tether
 // with camera control disabled. A second phase simulates the desktop camera shell to cover capture,
-// Live View, follow, studio flash guards, Test Shot Mode, the WB eyedropper, Stop session and capture metadata.
+// Live View, follow, studio flash guards, Test Shot Mode, the WB eyedropper, Stop session, resuming a stopped
+// session and capture metadata.
 const { launch } = require('./launch.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
@@ -12,7 +13,7 @@ const { fixtures } = require('./fixtures.cjs');
 
 // Stands in for the desktop shell's camera commands and events; runs in the page before app.js.
 function simulateCamera() {
-  const real = window.photocull, T = window.__camera = { calls: [], handlers: {}, frames: {}, shoot: null, epoch: 1, propRev: 1, shutter: '1/200', fel: false, reviewColor: null };
+  const real = window.photocull, T = window.__camera = { calls: [], handlers: {}, frames: {}, shoot: null, stopped: [], parked: {}, epoch: 1, propRev: 1, shutter: '1/200', fel: false, reviewColor: null };
   const log = (...entry) => T.calls.push(entry), wait = ms => new Promise(resolve => setTimeout(resolve, ms));
   const on = name => callback => { (T.handlers[name] ||= new Set()).add(callback); return () => T.handlers[name].delete(callback); };
   const jpeg = color => new Promise(resolve => { const canvas = document.createElement('canvas'); canvas.width = 640; canvas.height = 427; const ctx = canvas.getContext('2d'); ctx.fillStyle = color; ctx.fillRect(0, 0, 640, 427); canvas.toBlob(resolve, 'image/jpeg'); });
@@ -26,7 +27,15 @@ function simulateCamera() {
   window.photocull = Object.freeze({ ...real, canTether: true, canDevelop: true,
     imageUrl: (session, id, kind, params) => id === T.nativePhoto ? `http://127.0.0.1:65531/camera/${kind}` : real.imageUrl(session, id, kind, params),
     chooseFolder: async () => { log('chooseFolder', !!T.shoot); return null; },
-    tetherOpen: async ({ session }) => {
+    tetherShoots: async () => structuredClone(T.stopped),
+    tetherOpen: async ({ session, resume = null }) => {
+      log('open', resume);
+      if (resume) {
+        T.shoot = { ...T.parked[resume], session };
+        if (T.missingShot) T.shoot.location = { display: 'Capture', relative: '', leaf: 'Capture', recents: [] };
+        T.stopped = T.stopped.filter(r => r.shootId !== resume);
+        return { shootId: resume, configRev: T.shoot.configRev, libraryRev: 0 };
+      }
       const settings = (await real.settings()).tether;
       T.shoot = { shootId: 'shoot-1', session, configRev: 1, libraryRev: 0, config: structuredClone(settings), counters: { next: 1, step: 1, resetTo: 1 }, location: { display: 'Capture', relative: '', leaf: 'Capture', recents: [] }, space: { freeBytes: 100 * 1024 ** 3, estimatedShots: 1000 } };
       return { shootId: 'shoot-1', configRev: 1, libraryRev: 0 };
@@ -35,8 +44,8 @@ function simulateCamera() {
     tetherConfig: async (shootId, configRev, patch) => { log('config', Object.keys(patch).sort().join()); if (T.holdConfig) await new Promise(resolve => { T.finishConfig = resolve; }); await wait(60); Object.assign(T.shoot.config, patch); T.shoot.configRev++; return { configRev: T.shoot.configRev, config: structuredClone(T.shoot.config) }; },
     tetherNamePreview: async (shootId, input) => PhotoCullNaming.renderCaptureName(input.namingTemplate, { jobName: input.jobName, counter: 1, extensions: ['.ARW'] }, { preview: true }),
     tetherPrimary: async (shootId, session, input) => { log('primary', input.seq); await wait(120); log('primary-ack', input.seq); return { acceptedSeq: input.seq, sourceId: input.id }; },
-    tetherDevices: async () => ({ devices: [{ deviceId: 'usb-1', model: 'ILCE-7M3', transport: 'usb-icc', availability: 'available' }] }),
-    tetherConnect: async () => { log('connect'); return T.snapshot(); },
+    tetherDevices: async () => ({ devices: T.devices || [{ deviceId: 'usb-1', model: 'ILCE-7M3', transport: 'usb-icc', availability: 'available' }] }),
+    tetherConnect: async (shootId, deviceId) => { log('connect', deviceId); return T.snapshot(); },
     tetherControl: async (shootId, epoch, op, extra = {}) => {
       log('control', op, ...('testSeq' in extra ? [extra.testSeq] : []));
       if (op === 'composition-on' || op === 'composition-off') T.composition = op === 'composition-on';
@@ -45,7 +54,13 @@ function simulateCamera() {
         if (T.holdResolve) await new Promise(resolve => { T.finishResolve = resolve; });
         return { testSeq: extra.testSeq, exposureId: op === 'composition-keep' ? `kept-${extra.testSeq}` : undefined };
       }
-      if (op === 'stop') { T.shoot = null; return { state: 'offline', epoch, cleanupWarning: 'Temporary test files could not be removed.' }; }
+      if (op === 'stop') {
+        const s = T.shoot, folder = state.session?.folder || '';
+        T.parked[s.shootId] = s;
+        T.stopped = [{ shootId: s.shootId, folder, name: folder.split(/[\\/]/).pop(), layout: 'single', relative: s.location.relative, shot: s.location.relative.split('/').pop(),
+          next: s.counters.next, camera: { deviceId: 'usb-1', model: 'ILCE-7M3', transport: 'usb-icc' }, stoppedAt: new Date().toISOString(), available: true },
+        ...T.stopped.filter(r => r.shootId !== s.shootId)];
+        T.shoot = null; return { state: 'offline', epoch, cleanupWarning: 'Temporary test files could not be removed.' }; }
       if (op === 'refresh') return T.snapshot();
       if (op === 'reconnect') { T.epoch++; setTimeout(() => T.emit('tether-connection', { shootId, ...T.snapshot() })); return { state: 'connecting', epoch: T.epoch }; }
       if (op === 'fel') { T.fel = !T.fel; setTimeout(() => T.changed('felState')); }
@@ -671,6 +686,12 @@ async function main() {
     await page.keyboard.press('Control+k'); await page.locator('#command-query').fill('stop tethered');
     assert.equal(await page.locator('#command-results [role=option]').first().getAttribute('aria-disabled'), 'false');
     await page.keyboard.press('Escape');
+    // The shoot being stopped has moved on to a shot folder and counter 42; two older shoots exist, one whose folder is gone.
+    await page.evaluate(() => {
+      Object.assign(__camera.shoot, { location: { display: 'Blue', relative: 'Blue', leaf: 'Blue', recents: ['Blue'] }, counters: { next: 42, step: 1, resetTo: 1 } });
+      __camera.stopped = [{ shootId: 'shoot-0', folder: '/studio/Vases', name: 'Vases', layout: 'session', relative: '', shot: '', next: 12, camera: null, stoppedAt: '2026-11-20T09:00:00Z', available: true },
+        { shootId: 'shoot-gone', folder: '/studio/Moved', name: 'Moved', layout: 'single', relative: '', shot: '', next: 3, camera: null, stoppedAt: '2026-11-19T09:00:00Z', available: false }];
+    });
     await clearCalls(); await page.locator('#tether-stop').click();
     await untilCall(c => c[0] === 'control' && c[1] === 'stop', 'stop');
     await page.waitForFunction(() => !tether.active());
@@ -678,6 +699,37 @@ async function main() {
     assert.match(await page.locator('#toast').textContent(), /Temporary test files could not be removed/);
     assert.equal(await page.evaluate(() => state.session.id), session, 'the folder stays open as an ordinary session');
     check('Stop session: button, palette and Open folder stop the shoot and keep the folder');
+
+    const folderName = path.basename(photos);
+    await page.locator('#tether-resume').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#tether-resume-last-name').textContent(), `${folderName} / Blue`);
+    assert.match(await page.locator('#tether-resume-last-meta').textContent(), /^Next 42 · ILCE-7M3 · /);
+    const earlier = () => page.locator('#tether-resume-recent option').evaluateAll(options => options.map(o => [o.value, o.disabled, o.textContent]));
+    const listed = await earlier();
+    assert.deepEqual(listed.map(([value, disabled]) => [value, disabled]), [['', false], ['shoot-0', false], ['shoot-gone', true]]);
+    assert.match(listed[1][2], /^Vases · next 12 · /); assert.match(listed[2][2], /folder missing$/);
+    await page.locator('#tether-dock-start').click(); await page.locator('#tether-start-dialog').waitFor({ state: 'visible' });
+    assert.equal(await visible('#tether-start-resume'), true, 'the start dialog offers resuming too');
+    assert.equal(await page.locator('#tether-start-resume-last-name').textContent(), `${folderName} / Blue`);
+    // A second body is on the bus: resuming reconnects the shoot's own camera rather than asking.
+    await page.evaluate(() => { __camera.devices = [{ deviceId: 'usb-2', model: 'ILCE-7CM2', transport: 'usb-icc', availability: 'available' }, { deviceId: 'usb-1', model: 'ILCE-7M3', transport: 'usb-icc', availability: 'available' }]; });
+    await clearCalls(); await page.locator('#tether-start-resume-last').click();
+    await page.waitForFunction(() => tether.active() && tether.connected());
+    assert.equal(await page.locator('#tether-start-dialog').evaluate(d => d.open), false);
+    assert.deepEqual((await calls()).filter(c => c[0] === 'open' || c[0] === 'connect'), [['open', 'shoot-1'], ['connect', 'usb-1']]);
+    assert.match(await page.locator('#toast').textContent(), /^Resumed Blue · next 42$/);
+    assert.deepEqual(await page.evaluate(() => [tether.shoot.location.relative, tether.shoot.counters.next, state.session.id]), ['Blue', 42, session]);
+    assert.equal(await page.locator('#tether-counter-next').inputValue(), '42');
+    assert.equal(await visible('#tether-resume'), false, 'a running shoot hides the resume offer');
+    check('Resume: start dialog reopens the last shoot with its shot folder, counter and camera');
+
+    await page.locator('#tether-stop').click(); await page.locator('#tether-resume').waitFor({ state: 'visible' });
+    await page.evaluate(() => { __camera.missingShot = true; });
+    await clearCalls(); await page.locator('#tether-resume-last').click();
+    await page.waitForFunction(() => tether.active() && tether.connected());
+    assert.match(await page.locator('#toast').textContent(), /Shot folder “Blue” is gone; capturing into Capture\. Next 42\./);
+    assert.deepEqual((await calls()).find(c => c[0] === 'open'), ['open', 'shoot-1']);
+    check('Resume: the dock reopens a shoot and reports a deleted shot folder');
 
     assert.equal(errors.length, 0, errors.join('\n'));
     console.log(JSON.stringify({ passed: true, checks, errors }, null, 2));

@@ -24,6 +24,7 @@ const RESERVED_NAME = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i;
 const ISSUE_CODES = ['CAMERA_LOST', 'IO_ERROR', 'NO_SPACE', 'INCOMPLETE', 'DEST_CHANGED', 'NAME_TAKEN', 'UNSUPPORTED', 'INVALID_FORMAT'];
 // Bytes that are not the image their name promises are kept for inspection but never published.
 const UNPUBLISHABLE = 'INVALID_FORMAT';
+const RECENT_SHOOTS = 10;
 
 const fail = (code, message, extra) => { throw coded(code, message, extra); };
 const isPlain = value => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -229,7 +230,43 @@ class TetherService {
     return best;
   }
 
-  async bind(validatedRoot, rootIdentity = null, layout = null, includeShots = false, existingSession = null) {
+  // Ledgers sorted newest first by file time, so a long history never reads every journal.
+  async recentShoots() {
+    const dir = path.join(this.dir, 'shoots'), names = (await fs.readdir(dir).catch(() => [])).filter(name => /^[\da-f-]{36}\.json$/i.test(name));
+    const files = (await Promise.all(names.map(async name => ({ name, mtime: (await fs.stat(path.join(dir, name)).catch(() => null))?.mtimeMs ?? 0 })))).sort((a, b) => b.mtime - a.mtime).slice(0, RECENT_SHOOTS * 6);
+    const newest = new Map();
+    for (const { name, mtime } of files) {
+      const shootId = name.slice(0, -5);
+      if (shootId === this.activeShoot) continue;
+      let shoot = this.ledgers.get(shootId)?.shoot;
+      if (!shoot) try { const value = JSON.parse(await fs.readFile(path.join(dir, name), 'utf8')); if (value?.version === 1) shoot = value.shoot; } catch {}
+      if (shoot?.shootId !== shootId || typeof shoot.canonicalRoot !== 'string') continue;
+      // Binding a folder resumes its newest shoot, so an older one for the same folder is never offered.
+      const key = `${shoot.canonicalRoot}\0${shoot.layout}`, seen = newest.get(key);
+      if (!seen || shoot.createdAt > seen.shoot.createdAt) newest.set(key, { shoot, stoppedAt: shoot.closedAt ?? new Date(mtime).toISOString() });
+    }
+    const list = [...newest.values()].sort((a, b) => b.stoppedAt.localeCompare(a.stoppedAt)).slice(0, RECENT_SHOOTS);
+    return Promise.all(list.map(async ({ shoot, stoppedAt }) => {
+      const stat = await fs.stat(shoot.canonicalRoot).catch(() => null);
+      return { shootId: shoot.shootId, folder: shoot.canonicalRoot, name: path.basename(shoot.canonicalRoot), layout: shoot.layout, relative: shoot.activeRelDir,
+        shot: shoot.activeRelDir.split('/').at(-1) || '', next: shoot.counters.next,
+        camera: shoot.lastDevice ? { ...shoot.lastDevice } : shoot.lastCamera?.model ? { deviceId: null, model: shoot.lastCamera.model } : null, stoppedAt, available: !!stat?.isDirectory() && `${stat.dev}:${stat.ino}` === shoot.folderId };
+    }));
+  }
+
+  // The folder a stopped shoot captured into, checked before the shell writes anything there.
+  async resumeTarget(shootId) {
+    if (typeof shootId !== 'string' || !/^[\da-f-]{36}$/i.test(shootId)) fail('UNSUPPORTED', 'Invalid shoot.', { field: 'shootId' });
+    if (shootId === this.activeShoot) fail('CAMERA_BUSY', 'This tethered session is already running.');
+    if (this.activeShoot) fail('CAMERA_BUSY', 'Stop the current tethered shoot first.');
+    const { shoot } = await this.loadLedger(shootId).catch(error => fail(error.code === 'ENOENT' ? 'STALE_SESSION' : error.code || 'IO_ERROR', error.code === 'ENOENT' ? 'This tethered session is no longer available.' : error.message));
+    const root = shoot.canonicalRoot, stat = await fs.stat(root).catch(() => null);
+    if (!stat?.isDirectory() || await fs.realpath(root).catch(() => null) !== root || `${stat.dev}:${stat.ino}` !== shoot.folderId) fail('DEST_CHANGED', `${root} was moved, renamed or deleted. Start a new session instead.`);
+    if (await this.isCard(root)) fail('UNSUPPORTED', 'Camera cards cannot be tether destinations. Choose a folder on this computer.');
+    return { root, layout: shoot.layout, includeShots: shoot.recursive };
+  }
+
+  async bind(validatedRoot, rootIdentity = null, layout = null, includeShots = false, existingSession = null, resumeShootId = null) {
     const tether = this.settings().tether;
     if (tether?.version !== 1) fail('UNSUPPORTED', 'Tether settings were saved by a newer PhotoCull. Update PhotoCull to tether.');
     if (typeof validatedRoot !== 'string' || !path.isAbsolute(validatedRoot)) fail('DEST_CHANGED', 'Choose a capture folder.');
@@ -253,6 +290,7 @@ class TetherService {
       if (!info.isDirectory() || info.isSymbolicLink()) fail('IO_ERROR', `${dir} exists and is not a folder.`, { field: name });
     }
     let ledger = await this.findShoot(root, folderId, layout);
+    if (resumeShootId !== null && ledger?.shoot.shootId !== id(resumeShootId, 'resume')) fail('DEST_CHANGED', 'The capture folder changed since this session stopped. Start a new session instead.');
     if (!ledger) {
       const shootId = randomUUID();
       ledger = { version: 1, shoot: { shootId, canonicalRoot: root, volumeId: rootIdentity?.volumeId ?? String(stat.dev), folderId, layout, recursive: layout === 'session',
@@ -275,6 +313,13 @@ class TetherService {
       Object.assign(s, { session: opened.id, recursive: opened.recursive, closedAt: null });
       if (!s.recursive && s.activeRelDir) s.activeRelDir = '';
       s.activeDirId = await this.directoryIdentity(s, s.activeRelDir).catch(() => null);
+      // A shot folder removed while the shoot was stopped falls back to the capture folder itself.
+      if (!s.activeDirId && s.activeRelDir) {
+        s.recentRelDirs = s.recentRelDirs.filter(r => r.relative !== s.activeRelDir);
+        s.activeRelDir = '';
+        s.activeDirId = await this.directoryIdentity(s, '').catch(() => null);
+        s.configRev++;
+      }
       const recoveries = await this.recover(draft, events);
       const session = this.library.get(opened.id);
       s.libraryRev = session.rev || 0;
@@ -853,6 +898,12 @@ class TetherService {
         } else if (action !== 'list') fail('UNSUPPORTED', 'Unknown recovery action.', { field: 'action' });
         records = Object.values(ledger.members).filter(m => m.status !== 'ingested').map(m => ({ exposureId: m.exposureId, memberId: m.memberId, originalName: m.originalName, state: m.status, code: m.code ?? null, message: m.reason ?? null, ...receiptOf(m) }));
       } else if (op === 'close') {
+        only(detail, ['camera'], 'close');
+        const camera = detail.camera;
+        if (isPlain(camera) && typeof camera.deviceId === 'string') {
+          shoot.lastDevice = { deviceId: shortText(camera.deviceId, 256, 'deviceId'), model: typeof camera.model === 'string' ? shortText(camera.model, 128, 'model') : null,
+            transport: typeof camera.transport === 'string' ? shortText(camera.transport, 32, 'transport') : null };
+        }
         await this.library.flushSidecars();
         shoot.closedAt = this.now().toISOString();
         await this.releaseClaims(ledger, claim => ledger.exposures[claim.exposureId]?.status !== 'complete');

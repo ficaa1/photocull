@@ -112,6 +112,7 @@
       // want: the test shot being fetched, so a slower earlier fetch never replaces a newer frame.
       this.test = { active: false, hasShot: false, awaitingShot: false, busy: false, frame: null, want: null, testSeq: null, pairComplete: true, restoreLiveExpanded: false };
       this.recycleUntil = 0; this.recycleTimer = 0; this.wbArmed = false; this.wbBusy = false;
+      this.recent = []; this.resuming = false;
       this.misfire = { history: new FlashHistory(), shown: false, detail: '', chain: Promise.resolve() };
       this.build();
       this.layer = new O.OverlayLayer(host.reviewViewport, {
@@ -121,6 +122,7 @@
       this.liveLayer = new O.OverlayLayer($('tether-live-viewport'), { geometry: () => this.liveGeometry(), live: true, onMove: (position, done) => this.overlayMoved(position, done) });
       this.subscribe();
       this.render();
+      void this.loadRecent();
     }
 
     // ---- State and configuration ----
@@ -541,6 +543,11 @@
       $('tether-autopause').onchange = () => this.update({ follow: { pauseOnInspect: $('tether-autopause').checked } });
       $('tether-chime').onclick = () => void this.host.saveSettings({ tether: { chime: !this.settings().chime } }).then(() => this.renderFollow(), error => this.host.toast(error.message));
       $('tether-arrival-pill').onclick = () => this.jumpLatest();
+      // Resume, from the dock or the start dialog
+      for (const prefix of ['tether-resume', 'tether-start-resume']) {
+        $(`${prefix}-last`).onclick = () => void this.resume(this.lastResumable()?.shootId);
+        $(`${prefix}-recent`).onchange = () => { const shootId = $(`${prefix}-recent`).value; $(`${prefix}-recent`).value = ''; if (shootId) void this.resume(shootId); };
+      }
       // Start dialog
       $('tether-start-cancel').onclick = () => $('tether-start-dialog').close();
       $('tether-start-confirm').onclick = () => void this.start();
@@ -592,7 +599,7 @@
     }
 
     render() {
-      this.renderStatus(); this.renderCamera(); this.renderWifi(); this.renderLocation(); this.renderNaming(); this.renderAdjustments(); this.renderComposition(); this.renderFollow(); this.renderTelemetry(); this.renderIssues(); this.renderLive(); this.renderPill(); this.renderTest(); this.renderWhiteBalancePick();
+      this.renderStatus(); this.renderResume(); this.renderCamera(); this.renderWifi(); this.renderLocation(); this.renderNaming(); this.renderAdjustments(); this.renderComposition(); this.renderFollow(); this.renderTelemetry(); this.renderIssues(); this.renderLive(); this.renderPill(); this.renderTest(); this.renderWhiteBalancePick();
     }
     renderStatus() {
       const state = !this.api.canTether ? 'unavailable' : !this.shoot ? 'idle' : this.camera.state === 'offline' ? 'armed' : this.camera.paused ? 'paused' : this.camera.state;
@@ -608,6 +615,30 @@
       dot.hidden = !signal; dot.dataset.state = signal;
       $('tether-mode').title = `Tether workspace${{ live: ' · Live View on', connected: ` · ${labels.ready} connected`, armed: ' · session running' }[signal] || ''}`;
       $('tether-panel-note').textContent = !this.api.canTether ? 'Camera control needs the PhotoCull desktop app. Composition aids, naming and follow defaults still work here.' : !this.shoot ? 'Editing defaults for the next tethered session.' : '';
+    }
+    lastResumable() { return this.recent.find(r => r.available) || null; }
+    renderResume() {
+      const last = this.lastResumable(), others = this.recent.filter(r => r !== last), show = this.api.canTether && !this.shoot && this.recent.length > 0;
+      const when = r => new Date(r.stoppedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const where = r => r.shot ? `${r.name} / ${r.shot}` : r.name;
+      const signature = JSON.stringify([this.recent, this.resuming]);
+      for (const prefix of ['tether-resume', 'tether-start-resume']) {
+        const box = $(prefix), button = $(`${prefix}-last`), select = $(`${prefix}-recent`);
+        box.hidden = !show;
+        button.disabled = !last || this.resuming; select.disabled = this.resuming;
+        if (box.dataset.signature === signature) continue;
+        box.dataset.signature = signature;
+        $(`${prefix}-last-name`).textContent = last ? where(last) : 'Earlier capture folders were moved or deleted';
+        $(`${prefix}-last-meta`).textContent = last ? [`Next ${last.next}`, last.camera?.model, when(last)].filter(Boolean).join(' · ') : '';
+        button.title = last ? `${last.folder}${last.layout === 'session' ? ' (session folders)' : ''}` : '';
+        $(`${prefix}-earlier`).hidden = !others.length;
+        const blank = el('option', null, `${others.length} earlier session${others.length === 1 ? '' : 's'}…`); blank.value = '';
+        select.replaceChildren(blank, ...others.map(r => {
+          const option = el('option', null, `${where(r)} · next ${r.next} · ${when(r)}${r.available ? '' : ' — folder missing'}`);
+          option.value = r.shootId; option.disabled = !r.available; option.title = r.folder; return option;
+        }));
+        select.value = '';
+      }
     }
     battery() {
       const p = this.camera.properties.get('battery'), b = this.camera.device?.battery;
@@ -1009,6 +1040,7 @@
       $('tether-start-open').disabled = !session || session.removable;
       $('tether-start-open-path').textContent = session ? ` · ${session.folder}` : '';
       (session && !session.removable ? $('tether-start-open') : $('tether-start-choose')).checked = true;
+      void this.loadRecent();
       const layout = this.settings().layout || 'single';
       for (const radio of document.querySelectorAll('input[name="tether-start-layout"]')) radio.checked = radio.value === layout;
       $('tether-start-status').textContent = ''; $('tether-start-dialog').showModal();
@@ -1022,14 +1054,50 @@
         const result = await this.api.tetherOpen({ session: useOpenFolder ? this.host.session()?.id ?? null : null, useOpenFolder, layout, includeShots: $('tether-start-shots').checked });
         if (!result) { $('tether-start-status').textContent = ''; return; }
         $('tether-start-dialog').close();
-        if (result.session && result.session.id !== this.host.session()?.id) this.host.loadSession(result.session);
-        const value = await this.api.tetherState(result.session?.id ?? this.host.session()?.id);
-        this.setShoot(value?.shootId ? value : { shootId: result.shootId, session: result.session?.id, configRev: result.configRev, libraryRev: result.libraryRev, config: clone(this.settings()), counters: null });
+        await this.opened(result);
         this.openPanel(); void this.discover(true);
       } catch (error) { $('tether-start-status').textContent = error.message; }
       finally { $('tether-start-confirm').disabled = false; }
     }
-    async discover(autoConnect = false) {
+    async opened(result) {
+      if (result.session && result.session.id !== this.host.session()?.id) this.host.loadSession(result.session);
+      const value = await this.api.tetherState(result.session?.id ?? this.host.session()?.id);
+      this.setShoot(value?.shootId ? value : { shootId: result.shootId, session: result.session?.id, configRev: result.configRev, libraryRev: result.libraryRev, config: clone(this.settings()), counters: null });
+    }
+    async loadRecent() {
+      if (!this.api.canTether) return;
+      try { this.recent = await this.api.tetherShoots() || []; } catch { this.recent = []; }
+      this.renderResume();
+    }
+    // Reopens a stopped shoot where it left off: its folder, shot folder, counter, settings and camera.
+    async resume(shootId) {
+      const entry = this.recent.find(r => r.shootId === shootId), dialog = $('tether-start-dialog');
+      if (!entry || this.shoot || this.resuming || !this.api.canTether || !dialog.open && this.host.blocked()) return;
+      const report = message => { if (dialog.open) $('tether-start-status').textContent = message; else if (message) this.host.toast(message); };
+      this.resuming = true; $('tether-start-confirm').disabled = true; this.renderResume();
+      if (dialog.open) $('tether-start-status').textContent = `Reopening ${entry.name}…`;
+      try {
+        await this.host.flushDevelop();
+        const result = await this.api.tetherOpen({ session: this.host.session()?.id ?? null, resume: entry.shootId });
+        if (!result) { report(''); return; }
+        if (dialog.open) dialog.close();
+        await this.opened(result);
+        this.openPanel();
+        const location = this.shoot?.location;
+        this.host.toast(entry.relative && location && location.relative !== entry.relative
+          ? `Shot folder “${entry.shot}” is gone; capturing into ${location.leaf}. Next ${this.shoot.counters?.next ?? entry.next}.`
+          : `Resumed ${location?.leaf || entry.name} · next ${this.shoot?.counters?.next ?? entry.next}`);
+        void this.discover(true, entry.camera);
+      } catch (error) { report(error.message); void this.loadRecent(); }
+      finally { this.resuming = false; $('tether-start-confirm').disabled = false; this.renderResume(); }
+    }
+    // The shoot's own camera first, by device and then by a single body of the same model.
+    preferredDevice(available, camera) {
+      if (!camera) return null;
+      const same = available.filter(d => camera.model && d.model === camera.model);
+      return available.find(d => camera.deviceId && d.deviceId === camera.deviceId) || (same.length === 1 ? same[0] : null);
+    }
+    async discover(autoConnect = false, camera = null) {
       if (!this.api.canTether) return;
       this.camera.state = this.connected() ? this.camera.state : 'discovering'; this.camera.reason = ''; this.render();
       try {
@@ -1037,7 +1105,9 @@
         this.camera.devices = result.devices || [];
         if (!this.connected()) this.camera.state = 'offline';
         const available = this.camera.devices.filter(d => !d.availability || d.availability === 'available'), usb = available.filter(d => transportOf(d) === 'usb');
+        const preferred = autoConnect && this.shoot && !this.connected() ? this.preferredDevice(available, camera) : null;
         if (!this.camera.devices.length) this.camera.reason = 'No camera found. Check the setup steps below, then retry.';
+        else if (preferred) await this.connect(preferred.deviceId);
         else if (autoConnect && usb.length === 1 && available.length === 1 && this.shoot && !this.connected()) await this.connect(usb[0].deviceId);
         else if (available.length > 1 && !this.connected()) this.camera.reason = 'Several cameras found. Choose one above.';
       } catch (error) { this.camera.state = 'offline'; this.camera.reason = error.message; }
@@ -1105,6 +1175,7 @@
       if (this.shoot?.shootId === shoot.shootId) this.setShoot(null);
       Object.assign(this.camera, { state: 'offline', device: null, paused: false, reason: '', actions: {}, capabilities: {} }); this.camera.properties.clear();
       this.render(); this.host.toast(result?.cleanupWarning || 'Tethered session stopped');
+      void this.loadRecent();
       return result;
     }
     async togglePause() {

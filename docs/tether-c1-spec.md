@@ -222,6 +222,7 @@ Add **exactly** these strings to Rust’s `RENDERER_METHODS` for tethering. Each
 | `tether-config` | `[shootId,expectedConfigRev,patch]` | `{configRev,config}`. Allowed patch keys are jobName, namingTemplate, adjustments, metadataPresetId, initial, follow and composition (section 11). Validate before applying, reject stale writes. Updates affect new acceptances; viewing changes take effect immediately. |
 | `tether-counter` | `[shootId,expectedConfigRev,op,value?]` | `{configRev,next,resetTo,step}`. Operations `setNext,setStart,setStep,increment,decrement,reset`. Automatic allocation and manual commands serialize; include the next-number value in config revision changes so a stale manual action cannot rewind an intervening capture. |
 | `tether-name-preview` | `[shootId,{jobName,namingTemplate,relativeShot?}]` | `{valid,filenames,estimatedTokens,pendingTokens,warning}`. Pure formatting, at most two samples, no filesystem side effects. |
+| `tether-shoots` | `[]` | Up to 10 stopped shoots, newest first and one per folder and layout, never the running one: `[{shootId,folder,name,layout,relative,shot,next,camera:{deviceId,model,transport?}\|null,stoppedAt,available}]`. `available` is false once the folder was moved, renamed or replaced. Read-only. |
 | `tether-primary` | `[shootId,session,{seq,id,settings?,recipe?}]` | `{acceptedSeq,sourceId}`. ID may be null. Validate member/RAW and bounded draft, discard stale seq for this renderer lease. Used for Primary and when editing the Last donor. Session state remains the durable owner of manual Develop saves. |
 
 ### Public Tauri commands
@@ -230,7 +231,7 @@ Register the following in `tauri::generate_handler!`; all arguments are named fi
 
 | Command | Arguments | Success value |
 | --- | --- | --- |
-| `tether_open` | `{session:null\|id,useOpenFolder,layout:"single"\|"session",includeShots}` | Native picker or validated current root, preflight, recover, optional one-time scan. `{shootId,session:PublicSession,configRev,libraryRev}` or null on cancel. |
+| `tether_open` | `{session:null\|id,useOpenFolder,layout:"single"\|"session",includeShots,resume?:shootId}` | Native picker or validated current root, preflight, recover, optional one-time scan. With `resume`, the stopped shoot's own folder, layout and subfolder setting replace the other choices; the renderer never names a path. `{shootId,session:PublicSession,configRev,libraryRev}` or null on cancel. |
 | `tether_location` | `{shootId,expectedConfigRev,op:"choose"\|"create"\|"set",parentRel?,leaf?,relative?,activate?}` | Choose opens a scoped native directory picker; create accepts one component; set activates an existing relative folder. Return normalized location/space and configRev or null on cancel. Never truncate/reuse another physical root under the same shoot. |
 | `tether_devices` | `{}` | `{state,devices:[{deviceId,model,transport,firmware?,availability}],activeDeviceId?,epoch}`. Discovery IDs expire on topology change. |
 | `tether_connect` | `{shootId,deviceId}` | `{epoch,device,properties,actions,connection}`. Same binding is idempotent. A disconnected body can be explicitly selected again. |
@@ -254,14 +255,15 @@ These methods are **stdio-only**, registered only in native desktop sidecar mode
 
 | Private method | Arguments → result |
 | --- | --- |
-| `tether-bind` | `[validatedRoot,rootIdentity,layout,includeShots,existingSession?] → {shootId,session,configRev,libraryRev,recoveries}`. Create/reopen ledger and bind to Library. |
+| `tether-resume-target` | `[shootId] → {root,layout,includeShots}`. The folder of a stopped shoot, refused with `DEST_CHANGED` when it was moved, renamed or replaced and `UNSUPPORTED` on a camera card. |
+| `tether-bind` | `[validatedRoot,rootIdentity,layout,includeShots,existingSession?,resumeShootId?] → {shootId,session,configRev,libraryRev,recoveries}`. Create/reopen ledger and bind to Library. A resumed shoot must be the one the folder reopens, else `DEST_CHANGED`. An active shot folder that no longer exists falls back to the capture folder. |
 | `tether-set-location` | `[shootId,expectedRev,verifiedRelativeDir,directoryIdentity,activate] → {configRev,location}`. Rust has already checked/created the folder. |
 | `tether-request` | `[shootId,requestId,primarySeq,op,result?] → {state,dispatchAllowed}`. Unique create/dispatch/resolve transitions; commit frozen software-trigger intent before dispatch, reuse it for its first confirmed exposure. Additional burst frames freeze at their own acceptance. |
 | `tether-accept` | `[shootId,epoch,requestId?,providerExposure,hostRoles,cameraSnapshot] → {exposureId,ordinal,counters,targetDirIdentity}`. Dedupe or allocate. Physical triggers freeze policy here. |
 | `tether-member` | `[shootId,exposureId,objectDescriptor] → {memberId,stageRelPath,status}`. Journal only validated source object data and the UUID stage intent before download. |
 | `tether-reserve` | `[shootId,memberId,stagedReceipt,shotMetadata] → {stem,finalRelPath,claimId}`. Verify receipt, materialize the naming context, atomically reserve (or return existing plan). Rust acquires the same-volume stem claim before publication; on claim conflict return to allocation with occupied suffix excluded. |
 | `tether-ingest` | `[shootId,memberId,claimId,publishedReceipt] → {exposureId,itemId,rev}`. Idempotent Library transaction with validated path/identity, replay-safe delta. |
-| `tether-journal` | `[shootId,op,detail]`. `issue` records member/exposure failure and prior stage, `conflict` invalidates an unused reservation, `recovery` enumerates or transitions only that shoot’s owned records, `close` flushes/unbinds. Return `{state,pending,records?}`. |
+| `tether-journal` | `[shootId,op,detail]`. `issue` records member/exposure failure and prior stage, `conflict` invalidates an unused reservation, `recovery` enumerates or transitions only that shoot’s owned records, `close` flushes/unbinds and records `{camera:{deviceId,model,transport}}`, the body to reconnect on resume. Return `{state,pending,records?}`. |
 | `tether-session-frame` | `[session,id,kind,original,contentRev] → {contentRev,width,height,route}`. Resolve bounded, authenticated `/image/<session>/<id>/<kind>` or scoped cached display result for Rust only. Never accept a caller URL for native fetching. |
 | `tether-asset` | `[shootId,op,asset]`. `bind` records hash, raster size and local cache ID after native import; `lookup` verifies ownership; `clear` releases the binding. Return validated asset descriptor or null. |
 

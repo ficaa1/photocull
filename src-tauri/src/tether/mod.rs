@@ -4772,19 +4772,36 @@ pub async fn tether_open(
     use_open_folder: bool,
     layout: String,
     include_shots: bool,
+    resume: Option<String>,
 ) -> Result<Value, String> {
     let tether = tether.inner().clone();
     Ok(envelope(
         async move {
+            if let Some(s) = &session {
+                valid_id(s, "session")?;
+            }
+            // A resumed shoot names its own folder and layout; the renderer never passes a path.
+            let (layout, include_shots, resumed) = match &resume {
+                Some(shoot_id) => {
+                    valid_id(shoot_id, "resume")?;
+                    let target = node(&app, "tether-resume-target", json!([shoot_id])).await?;
+                    let root = str_field(&target, "root")?;
+                    (
+                        str_field(&target, "layout")?,
+                        target["includeShots"].as_bool().unwrap_or(include_shots),
+                        Some(PathBuf::from(root)),
+                    )
+                }
+                None => (layout, include_shots, None),
+            };
             if layout != "single" && layout != "session" {
                 return Err(
                     TetherError::new("UNSUPPORTED", "Invalid capture layout.").field("layout")
                 );
             }
-            if let Some(s) = &session {
-                valid_id(s, "session")?;
-            }
-            let chosen = if use_open_folder {
+            let chosen = if resumed.is_some() {
+                resumed
+            } else if use_open_folder {
                 let s = session
                     .clone()
                     .ok_or_else(|| TetherError::new("STALE_SESSION", "Open a folder first."))?;
@@ -4827,7 +4844,8 @@ pub async fn tether_open(
                     identity,
                     layout,
                     include_shots,
-                    session
+                    session,
+                    resume
                 ]),
             )
             .await?;
@@ -5505,14 +5523,19 @@ pub async fn tether_control(
                     tether.inner.abort_connect();
                     let _shoot_guard = tether.inner.shoot_lock.lock().await;
                     tether.check(&shoot_id, None)?;
+                    // The camera is remembered with the shoot so a resumed session can reconnect to it.
+                    let mut camera = Value::Null;
                     if tether.inner.actor.lock().unwrap().is_some() {
+                        if let Ok(snapshot) = tether.ask(Cmd::Snapshot).await {
+                            camera = snapshot["device"].clone();
+                        }
                         let _ = tether.ask(|tx| Cmd::Disconnect(stamp.clone(), tx)).await;
                     }
                     drop(tether.inner.publish_lock.lock().await);
                     let closed = node(
                         &app,
                         "tether-journal",
-                        json!([binding.shoot_id, "close", {}]),
+                        json!([binding.shoot_id, "close", { "camera": camera }]),
                     )
                     .await?;
                     let mut guard = tether.inner.binding.lock().unwrap();

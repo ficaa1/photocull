@@ -312,8 +312,9 @@ async function start() {
     },
     'deletion-end': () => { deleting = false; },
     'forget': (session, ids) => library.forget(session, ids),
-    // Tethering (src/tether.cjs). The renderer may call only these six.
+    // Tethering (src/tether.cjs). The renderer may call only these seven.
     'tether-state': session => tether.state(session),
+    'tether-shoots': () => tether.recentShoots(),
     'tether-library': (shootId, session) => tether.libraryState(shootId, session),
     'tether-config': (shootId, configRev, patch) => tether.config(shootId, configRev, patch),
     'tether-counter': (shootId, configRev, op, value) => tether.counter(shootId, configRev, op, value),
@@ -325,6 +326,7 @@ async function start() {
     // Shell-only: never registered for --web or --server, and absent from Rust's renderer allowlist.
     Object.assign(methods, {
       'tether-check-destination': root => tether.checkDestination(root),
+      'tether-resume-target': shootId => tether.resumeTarget(shootId),
       'tether-bind': async (...args) => { requireIdle(); return tether.bind(...args); },
       'tether-set-location': (...args) => tether.setLocation(...args),
       'tether-request': (...args) => tether.request(...args),

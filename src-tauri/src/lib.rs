@@ -88,6 +88,7 @@ const RENDERER_METHODS: &[&str] = &[
     "tether-counter",
     "tether-name-preview",
     "tether-primary",
+    "tether-shoots",
 ];
 
 #[tauri::command]
