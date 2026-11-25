@@ -771,6 +771,46 @@ pub fn object_info(format: u16, name: &str, size: u32, sequence: u32) -> Vec<u8>
     .encode()
 }
 
+/// A body that also lists its card storage, as some Sony modes do.
+pub fn device_info_with_storage(model: &str) -> DeviceInfo {
+    let mut info = device_info(model);
+    info.operations
+        .extend([op::GET_STORAGE_IDS, op::GET_OBJECT_HANDLES]);
+    info
+}
+
+/// ObjectInfo of a file stored on the card; Sony stores no sequence number for those.
+pub fn card_info(format: u16, name: &str, size: u32, captured: &str) -> Vec<u8> {
+    ObjectInfo {
+        storage_id: 0x0001_0001,
+        object_format: format,
+        compressed_size: size,
+        parent_object: 1,
+        filename: name.into(),
+        capture_date: captured.into(),
+        modification_date: captured.into(),
+        ..Default::default()
+    }
+    .encode()
+}
+
+pub fn folder_info(name: &str) -> Vec<u8> {
+    ObjectInfo {
+        storage_id: 0x0001_0001,
+        object_format: 0x3001,
+        association_type: 1,
+        filename: name.into(),
+        ..Default::default()
+    }
+    .encode()
+}
+
+pub fn handle_list(handles: &[u32]) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.u32_array(handles);
+    w.finish()
+}
+
 pub fn jpeg_file(len: usize) -> Vec<u8> {
     let mut v = vec![0xFF, 0xD8, 0xFF, 0xE1];
     v.resize(len.max(6) - 2, 0x11);

@@ -113,6 +113,7 @@
       this.test = { active: false, hasShot: false, awaitingShot: false, busy: false, frame: null, want: null, testSeq: null, pairComplete: true, restoreLiveExpanded: false };
       this.recycleUntil = 0; this.recycleTimer = 0; this.wbArmed = false; this.wbBusy = false;
       this.misfire = { history: new FlashHistory(), shown: false, detail: '', chain: Promise.resolve() };
+      this.backfill = { state: 'idle', note: '', busy: false };
       this.build();
       this.layer = new O.OverlayLayer(host.reviewViewport, {
         geometry: () => { const v = host.reviewView, d = v.drawn; return d && v.visible ? { rect: { x: d.left, y: d.top, width: d.width, height: d.height } } : null; },
@@ -198,6 +199,7 @@
         this.jobName = value?.config?.jobName || ''; void this.loadAsset();
         clearTimeout(this.primaryTimer); this.primaryAck = 0; this.primaryPending = null; this.primaryRequest = null;
         this.stopRecycle(); this.resetTest();
+        this.backfill = { state: 'idle', note: '', busy: false };
       }
       this.composeChanged(); this.render();
     }
@@ -272,6 +274,7 @@
         this.camera.propRev = event.propRev; this.render();
       });
       api.onTetherComposition(event => void this.receiveComposition(event));
+      api.onTetherBackfill(event => { if (this.shoot && event.shootId === this.shoot.shootId) this.receiveBackfill(event); });
       api.onTetherTransfer(event => {
         if (this.shoot && event.shootId && event.shootId !== this.shoot.shootId) return;
         Object.assign(this.telemetry, { queued: event.queued ?? this.telemetry.queued, receiving: event.receiving ?? this.telemetry.receiving, mbps: event.mbps ?? this.telemetry.mbps, latency: event.latency ?? this.telemetry.latency });
@@ -450,6 +453,10 @@
       $('tether-wifi-form').addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); this.toggleWifiForm(false); } });
       $('tether-reconnect').onclick = () => void this.control('reconnect');
       $('tether-disconnect').onclick = () => void this.control('disconnect');
+      $('tether-backfill-pull').onclick = () => void this.backfillControl('backfill');
+      $('tether-backfill-pause').onclick = () => void this.backfillControl(this.backfill.state === 'paused' ? 'backfill-resume' : 'backfill-pause');
+      $('tether-backfill-cancel').onclick = () => void this.backfillControl('backfill-cancel');
+      $('tether-auto-backfill').onchange = () => void this.host.saveSettings({ tether: { autoBackfill: $('tether-auto-backfill').checked } }).then(() => this.renderBackfill(), error => { this.host.toast(error.message); this.renderBackfill(); });
       $('tether-capture').onclick = () => void this.capture();
       $('tether-fel').onclick = () => void this.control('fel');
       for (const id of ['tether-composition-toggle', 'tether-stage-composition']) $(id).onclick = () => void this.toggleComposition();
@@ -592,7 +599,7 @@
     }
 
     render() {
-      this.renderStatus(); this.renderCamera(); this.renderWifi(); this.renderLocation(); this.renderNaming(); this.renderAdjustments(); this.renderComposition(); this.renderFollow(); this.renderTelemetry(); this.renderIssues(); this.renderLive(); this.renderPill(); this.renderTest(); this.renderWhiteBalancePick();
+      this.renderStatus(); this.renderCamera(); this.renderWifi(); this.renderLocation(); this.renderNaming(); this.renderAdjustments(); this.renderComposition(); this.renderFollow(); this.renderTelemetry(); this.renderIssues(); this.renderLive(); this.renderPill(); this.renderTest(); this.renderWhiteBalancePick(); this.renderBackfill();
     }
     renderStatus() {
       const state = !this.api.canTether ? 'unavailable' : !this.shoot ? 'idle' : this.camera.state === 'offline' ? 'armed' : this.camera.paused ? 'paused' : this.camera.state;
@@ -1590,6 +1597,48 @@
       this.renderStageAlerts();
     }
     renderStageAlerts() { const alerts = $('tether-stage-alerts'); alerts.hidden = [...alerts.children].every(node => node.hidden); }
+
+    // ---- Missed shots: photos the camera saved to its card but never sent. The card is only read. ----
+    receiveBackfill(event) {
+      const shots = n => `${n} missed shot${n === 1 ? '' : 's'}`, failed = event.failed ? ` ${event.failed} file${event.failed === 1 ? '' : 's'} could not be read and stay${event.failed === 1 ? 's' : ''} on the card.` : '';
+      const note = {
+        done: event.total ? `Pulled ${shots(event.shots ?? 0)} from the card.${failed}` : 'Nothing missed: every shot on the card is already here.',
+        cancelled: `Stopped. Pulled ${shots(event.shots ?? 0)}; the rest stay on the card.`,
+        interrupted: 'The camera disconnected; missed shots stay on the card for the next pull.',
+        unavailable: event.message || 'This connection does not show the camera’s memory card.',
+        error: `Missed shots were not pulled: ${event.message || 'the card could not be read'}. They stay on the card.`,
+      }[event.state];
+      this.backfill = { ...this.backfill, ...event, note: note ?? this.backfill.note };
+      // An automatic pass speaks up only when it brought something in.
+      if (note && event.state !== 'interrupted' && (!event.auto || event.state === 'done' && event.shots)) this.host.toast(note);
+      this.renderBackfill();
+    }
+    backfillText() {
+      const b = this.backfill, of = `${b.current ?? 0} of ${b.total ?? 0} missed shot${b.total === 1 ? '' : 's'}`;
+      if (b.state === 'cancelling') return 'Stopping after this shot…';
+      if (b.state === 'paused') return Number.isFinite(b.total) ? `Paused at ${of}` : 'Paused while checking the camera card';
+      if (b.state === 'pulling') return `Pulling ${of}…`;
+      return 'Checking the camera card for missed shots…';
+    }
+    renderBackfill() {
+      const b = this.backfill, running = ['scanning', 'pulling', 'paused', 'cancelling'].includes(b.state);
+      $('tether-backfill-banner').hidden = !running;
+      $('tether-backfill-text').textContent = running ? this.backfillText() : '';
+      $('tether-backfill-pause').textContent = b.state === 'paused' ? 'Resume' : 'Pause';
+      $('tether-backfill-pause').disabled = $('tether-backfill-cancel').disabled = b.busy || b.state === 'cancelling';
+      $('tether-backfill-pull').disabled = !this.api.canTether || !this.shoot || !this.connected() || running || b.busy;
+      $('tether-backfill-note').textContent = running ? '' : b.note;
+      $('tether-auto-backfill').checked = this.settings().autoBackfill !== false;
+      this.renderStageAlerts();
+    }
+    // Progress arrives as tether-backfill events; the reply only reports refusals.
+    async backfillControl(op) {
+      if (!this.shoot || this.backfill.busy) return;
+      this.backfill.busy = true; this.renderBackfill();
+      try { await this.api.tetherControl(this.shoot.shootId, this.camera.epoch, op); }
+      catch (error) { this.host.toast(error.message); }
+      finally { this.backfill.busy = false; this.renderBackfill(); }
+    }
 
     // ---- Test Shot (Composition) Mode: frames preview on the stage without joining the session ----
     testShown() { return this.test.active && !!this.test.frame && this.host.mode() === 'tether'; }

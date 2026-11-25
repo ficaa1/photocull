@@ -31,6 +31,14 @@ const fold = name => name.normalize('NFC').toLowerCase();
 const two = n => String(n).padStart(2, '0');
 const wallClock = d => `${d.getFullYear()}:${two(d.getMonth() + 1)}:${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
 const median = values => { const sorted = [...values].sort((a, b) => a - b), mid = sorted.length >> 1; return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2; };
+const WALL = /^(\d{4}):(\d\d):(\d\d) (\d\d):(\d\d):(\d\d)$/;
+const wallSeconds = text => { const m = WALL.exec(text ?? ''); return m ? Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]) / 1000 : null; };
+const secondsWall = seconds => { const d = new Date(seconds * 1000); return `${d.getUTCFullYear()}:${two(d.getUTCMonth() + 1)}:${two(d.getUTCDate())} ${two(d.getUTCHours())}:${two(d.getUTCMinutes())}:${two(d.getUTCSeconds())}`; };
+const digest = text => createHash('sha256').update(text).digest('hex');
+// How far before the shoot's start, on the camera's clock, a card photo still counts as missed.
+const CARD_SLACK = 60, CARD_SLACK_UNKNOWN = 300;
+// Member codes left by a transfer that never completed; the card copy may stand in for them.
+const RETAKE = new Set(['CAMERA_LOST', 'INCOMPLETE', 'IO_ERROR', 'NO_SPACE']);
 function only(value, allowed, field) {
   if (!isPlain(value)) fail('UNSUPPORTED', `Invalid ${field}.`, { field });
   const unknown = Object.keys(value).find(key => !allowed.includes(key));
@@ -272,6 +280,7 @@ class TetherService {
     this.activeShoot = shoot.shootId;
     return this.tx(shoot.shootId, async (draft, events) => {
       const s = draft.shoot;
+      if (!s.backfill || s.closedAt) s.backfill = { startedAt: wallClock(this.now()), syncedThrough: null };
       Object.assign(s, { session: opened.id, recursive: opened.recursive, closedAt: null });
       if (!s.recursive && s.activeRelDir) s.activeRelDir = '';
       s.activeDirId = await this.directoryIdentity(s, s.activeRelDir).catch(() => null);
@@ -861,6 +870,123 @@ class TetherService {
       } else fail('UNSUPPORTED', 'Unknown journal operation.', { field: 'op' });
       const pending = Object.values(ledger.members).filter(m => PENDING.has(m.status)).length;
       return { state: shoot.closedAt ? 'closed' : 'open', pending, ...(records ? { records } : {}) };
+    });
+  }
+
+  // Missed shots on the camera card. Nothing here touches the card: Rust lists and reads it, and
+  // every file it pulls goes through the ordinary member journal, reservation and publication.
+  backfill(shootId, op, detail = {}) {
+    if (op === 'window') return this.cardWindow(this.ledger(shootId));
+    if (op === 'plan') return this.cardPlan(this.ledger(shootId), detail);
+    if (op === 'prepare') return this.cardPrepare(shootId, detail);
+    if (op === 'synced') return this.tx(shootId, async ledger => {
+      only(detail, ['through'], 'card sync');
+      if (wallSeconds(detail.through) === null) fail('UNSUPPORTED', 'Invalid capture time.', { field: 'through' });
+      const mark = ledger.shoot.backfill;
+      if (mark && (!mark.syncedThrough || detail.through > mark.syncedThrough)) mark.syncedThrough = detail.through;
+      return { syncedThrough: mark?.syncedThrough ?? null };
+    });
+    fail('UNSUPPORTED', 'Unknown backfill operation.', { field: 'op' });
+  }
+
+  // The earliest camera time a missed shot can have: this session's start moved onto the camera's
+  // clock by the offset its tethered shots showed, or the newest time a full pass already settled.
+  cardWindow(ledger) {
+    const mark = ledger.shoot.backfill, start = wallSeconds(mark?.startedAt);
+    if (start === null) return { since: null };
+    const offsets = Object.values(ledger.exposures).filter(e => !e.providerShotKey?.startsWith('card:') && e.captureTime && e.hostTime)
+      .sort((a, b) => b.ordinal - a.ordinal).slice(0, 25).map(e => wallSeconds(e.captureTime) - wallSeconds(e.hostTime)).filter(Number.isFinite);
+    let since = start + (offsets.length ? median(offsets) - CARD_SLACK : -CARD_SLACK_UNKNOWN);
+    const synced = wallSeconds(mark.syncedThrough);
+    if (synced !== null) since = Math.max(since, synced - CARD_SLACK);
+    return { since: secondsWall(Math.floor(since)) };
+  }
+
+  cardListing(detail) {
+    only(detail, ['body', 'hostRoles', 'objects', 'epoch', 'camera', 'exclude'], 'card listing');
+    const body = shortText(detail.body ?? '', 128, 'body');
+    const hostRoles = Array.isArray(detail.hostRoles) ? detail.hostRoles.filter(r => r === 'raw' || r === 'jpeg') : [];
+    const objects = (Array.isArray(detail.objects) ? detail.objects : fail('UNSUPPORTED', 'Invalid card listing.', { field: 'objects' })).map(o => {
+      only(o, ['handle', 'storageId', 'name', 'role', 'bytes', 'captureTime'], 'card object');
+      // The camera's format code and the file's extension must agree on a photo role.
+      const name = cameraFilename(o.name), role = captureMember(null, '', name, null).role;
+      if (role !== o.role || !['raw', 'jpeg'].includes(role)) return null;
+      for (const field of ['handle', 'storageId', 'bytes']) if (!Number.isSafeInteger(o[field]) || o[field] < 0) fail('UNSUPPORTED', `Invalid ${field}.`, { field });
+      if (wallSeconds(o.captureTime) === null) fail('UNSUPPORTED', 'Invalid capture time.', { field: 'captureTime' });
+      return { handle: o.handle, storageId: o.storageId, name, role, bytes: o.bytes, captureTime: o.captureTime };
+    }).filter(Boolean);
+    return { body, hostRoles, objects };
+  }
+
+  // One exposure per capture second and file stem, RAW first; ordered oldest first.
+  cardGroups(body, objects) {
+    const groups = new Map();
+    for (const o of objects) {
+      const stem = fold(path.basename(o.name, path.extname(o.name))), at = `${o.captureTime}\0${stem}`;
+      if (!groups.has(at)) groups.set(at, { key: `card:${digest(`${body}\0${o.captureTime}\0${stem}`).slice(0, 40)}`, captureTime: o.captureTime, stem, objects: [] });
+      const group = groups.get(at);
+      if (!group.objects.some(x => x.role === o.role)) group.objects.push({ ...o, objectKey: `${group.key}:${digest(fold(o.name)).slice(0, 16)}` });
+    }
+    for (const g of groups.values()) g.objects.sort((a, b) => (a.role === 'raw' ? 0 : 1) - (b.role === 'raw' ? 0 : 1));
+    return [...groups.values()].sort((a, b) => a.captureTime < b.captureTime ? -1 : a.captureTime > b.captureTime ? 1 : a.stem < b.stem ? -1 : 1);
+  }
+
+  // What the ledger already holds of a card exposure. A file is present when a member of the same
+  // capture second and role has its stem or size; one whose transfer never completed is reopened.
+  cardTarget(ledger, group, hostRoles, exclude = []) {
+    const members = Object.values(ledger.members), sameStem = m => fold(path.basename(m.originalName, path.extname(m.originalName))) === group.stem;
+    const sized = (m, o) => o.bytes > 0 && [m.declaredBytes, m.receivedBytes].includes(o.bytes);
+    const exposure = Object.values(ledger.exposures).find(e => e.providerShotKey === group.key)
+      ?? Object.values(ledger.exposures).find(e => e.captureTime === group.captureTime && members.some(m => m.exposureId === e.exposureId && (sameStem(m) || group.objects.some(o => o.role === m.role && sized(m, o)))));
+    const wanted = exposure ? exposure.expectedHostRoles : hostRoles.some(r => group.objects.some(o => o.role === r)) ? hostRoles : group.objects.map(o => o.role);
+    const reopenable = m => !exclude.includes(m.memberId) && !m.sha256 && (['announced', 'receiving'].includes(m.status) || m.status === 'held' && RETAKE.has(m.code));
+    const todo = [];
+    let present = 0;
+    for (const object of group.objects.filter(o => wanted.includes(o.role))) {
+      const own = exposure ? members.filter(m => m.exposureId === exposure.exposureId && m.role === object.role) : [];
+      if (own.some(m => !reopenable(m))) { present++; continue; }
+      const member = own.find(m => m.providerObjectKey === object.objectKey) ?? own[0];
+      todo.push({ object, memberId: member?.memberId ?? null });
+    }
+    return { exposure, wanted, todo, present };
+  }
+
+  cardPlan(ledger, detail) {
+    const { body, hostRoles, objects } = this.cardListing(detail);
+    const groups = [];
+    let present = 0;
+    for (const group of this.cardGroups(body, objects)) {
+      const target = this.cardTarget(ledger, group, hostRoles);
+      if (target.todo.length) groups.push({ captureTime: group.captureTime, objects: target.todo.map(t => t.object) });
+      else if (target.present) present++;
+    }
+    return { groups, present };
+  }
+
+  // Re-checks one exposure right before its files are read, then creates or reopens its members.
+  async cardPrepare(shootId, detail) {
+    const { body, hostRoles, objects } = this.cardListing(detail), exclude = Array.isArray(detail.exclude) ? detail.exclude.filter(x => typeof x === 'string') : [];
+    const [group, ...rest] = this.cardGroups(body, objects);
+    if (!group || rest.length) fail('UNSUPPORTED', 'A card exposure is one capture.', { field: 'objects' });
+    const first = this.cardTarget(this.ledger(shootId), group, hostRoles, exclude);
+    if (!first.todo.length) return { exposureId: first.exposure?.exposureId ?? null, members: [] };
+    const exposureId = first.exposure?.exposureId
+      ?? (await this.accept(shootId, detail.epoch, null, { key: group.key }, first.wanted.filter(r => group.objects.some(o => o.role === r)), { ...(isPlain(detail.camera) ? detail.camera : {}), captureTime: group.captureTime })).exposureId;
+    return this.tx(shootId, async ledger => {
+      const exposure = ledger.exposures[exposureId];
+      const { todo } = this.cardTarget(ledger, group, hostRoles, exclude), members = [];
+      for (const { object, memberId } of todo) {
+        let member = memberId && ledger.members[memberId];
+        if (member?.status === 'held') Object.assign(member, { status: 'announced', code: null, reason: null, heldFrom: null, finalRelPath: null, claimId: null });
+        else if (!member) {
+          member = captureMember(exposure.exposureId, randomUUID(), object.name, object.bytes || null, object.objectKey);
+          ledger.members[member.memberId] = member;
+        }
+        members.push({ handle: object.handle, storageId: object.storageId, memberId: member.memberId, stageRelPath: member.stageRelPath, status: member.status, originalName: member.originalName, declaredBytes: member.declaredBytes });
+      }
+      const open = Object.values(ledger.members).filter(m => m.exposureId === exposure.exposureId);
+      if (['accepted', 'needsAttention'].includes(exposure.status) && members.length && !open.some(m => m.status === 'held')) exposure.status = 'transferring';
+      return { exposureId: exposure.exposureId, members };
     });
   }
 

@@ -13,7 +13,7 @@ const TETHER_GROUPS = ['wb', 'light', 'curve', 'detailColor', 'optics', 'orienta
 const TETHER = { version: 1, layout: 'single', namingTemplate: '{Name}-{Counter:4}', counterStart: 1, counterStep: 1,
   adjustments: { mode: 'last', recipeId: null, entireRecipe: true, groups: TETHER_GROUPS },
   metadataPresetId: null, initial: { rating: null, color: null, pick: null },
-  follow: { mode: 'whenReady', pauseOnInspect: true, developedReview: false }, chime: false, autoReconnect: true,
+  follow: { mode: 'whenReady', pauseOnInspect: true, developedReview: false }, chime: false, autoReconnect: true, autoBackfill: true,
   flash: { syncLimit: 200, recycleMs: 0, misfireAlert: true, misfireChime: false },
   composition: {
     grid: { shown: false, type: 'thirds', rows: 3, cols: 3, color: '#ffffff', opacity: 0.5, mirror: false, clockwise: true, guides: [] },

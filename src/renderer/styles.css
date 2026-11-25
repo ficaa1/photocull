@@ -1155,6 +1155,12 @@ body:not(.tether-active) #tether-dock, body:not(.tether-active) #tether-stage-ba
 .tether-alert-test { background: #3a3122; color: var(--warn); box-shadow: inset 2px 0 0 var(--warn); }
 .tether-alert-test .tether-alert-meta { color: #c9ad86; }
 .tether-alert-warn { background: #3a3122; color: var(--warn); }
+.tether-alert-info { background: var(--accent-bg); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
+.tether-backfill { display: grid; gap: var(--s1); }
+.tether-backfill[hidden] { display: none; }
+.tether-backfill .button { justify-self: start; }
+.tether-backfill p { margin: 0; }
+.tether-backfill p:empty { display: none; }
 .tether-alert-danger { align-self: flex-start; padding-right: 2px; border: 1px solid #7a4a49; background: var(--red-bg); color: #ffe3e0; }
 .tether-alert-danger strong { font-weight: 600; }
 .tether-alert-danger .icon-button { width: 24px; height: 24px; color: #f6d9d7; font-size: 16px; }

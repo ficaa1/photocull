@@ -2,6 +2,7 @@
 
 #![allow(dead_code)]
 
+pub mod card;
 pub mod codec;
 #[cfg(test)]
 mod fixtures;

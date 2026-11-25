@@ -1642,7 +1642,8 @@ tetherPage.innerHTML='<h3>Tethered capture</h3><p id="settings-tether-note" clas
   +'<div class="field-row"><label for="settings-tether-follow">Show new captures</label><select id="settings-tether-follow"><option value="whenReady">When Ready</option><option value="immediately">Immediately</option><option value="off">Off</option></select></div>'
   +'<label class="toggle-row"><input id="settings-tether-autopause" type="checkbox"> Pause following while zoomed in or comparing</label>'
   +'<label class="toggle-row"><input id="settings-tether-chime" type="checkbox"> Play a sound when a capture arrives</label>'
-  +'<label class="toggle-row"><input id="settings-tether-reconnect" type="checkbox"> Reconnect automatically when the camera returns</label>';
+  +'<label class="toggle-row"><input id="settings-tether-reconnect" type="checkbox"> Reconnect automatically when the camera returns</label>'
+  +'<label class="toggle-row"><input id="settings-tether-backfill" type="checkbox"> Auto-pull missed frames from the camera card on reconnect</label>';
 $('settings-status').before(tetherPage);
 $('settings-tether-naming').oninput=()=>{const value=$('settings-tether-naming').value,check=PhotoCullNaming.validateCaptureTemplate(value);$('settings-tether-naming').setAttribute('aria-invalid',String(!check.valid));
   $('settings-tether-naming-sample').textContent=check.valid?'Sample '+PhotoCullNaming.renderCaptureName(value,{jobName:state.session?.folder.split(/[\\/]/).filter(Boolean).pop()||'Capture',counter:Number($('settings-tether-counter-start').value)||1,extensions:['.ARW','.JPG']},{preview:true}).filenames.join(' + '):check.error;};
@@ -1652,7 +1653,7 @@ function fillTetherSettings(value) {
   $('settings-tether-note').textContent=usable?'These defaults apply to the next tethered session. The Tether workspace edits the running shoot.':'These tether settings were saved by a newer PhotoCull and are left unchanged.';
   if(!usable)return;
   $('settings-tether-layout').value=t.layout;$('settings-tether-naming').value=t.namingTemplate;$('settings-tether-counter-start').value=t.counterStart;$('settings-tether-counter-step').value=t.counterStep;
-  $('settings-tether-adjustments').value=t.adjustments.mode;$('settings-tether-follow').value=t.follow.mode;$('settings-tether-autopause').checked=t.follow.pauseOnInspect;$('settings-tether-chime').checked=t.chime;$('settings-tether-reconnect').checked=t.autoReconnect;
+  $('settings-tether-adjustments').value=t.adjustments.mode;$('settings-tether-follow').value=t.follow.mode;$('settings-tether-autopause').checked=t.follow.pauseOnInspect;$('settings-tether-chime').checked=t.chime;$('settings-tether-reconnect').checked=t.autoReconnect;$('settings-tether-backfill').checked=t.autoBackfill!==false;
   $('settings-tether-naming').oninput();
 }
 function readTetherSettings(value) {
@@ -1660,7 +1661,7 @@ function readTetherSettings(value) {
   const t=value.tether;t.layout=$('settings-tether-layout').value;t.namingTemplate=$('settings-tether-naming').value;
   t.counterStart=Math.round(Number($('settings-tether-counter-start').value));t.counterStep=Math.round(Number($('settings-tether-counter-step').value));
   t.adjustments={...t.adjustments,mode:$('settings-tether-adjustments').value};t.follow={...t.follow,mode:$('settings-tether-follow').value,pauseOnInspect:$('settings-tether-autopause').checked};
-  t.chime=$('settings-tether-chime').checked;t.autoReconnect=$('settings-tether-reconnect').checked;
+  t.chime=$('settings-tether-chime').checked;t.autoReconnect=$('settings-tether-reconnect').checked;t.autoBackfill=$('settings-tether-backfill').checked;
 }
 function fillWorkspaceSettings(value) {drawKeyboard();fillTetherSettings(value);$('card-folders').value=(value.cardFolders||['DCIM']).join('\n');$('manual-cards').value=(value.manualCards||[]).join('\n');$('backup-template').value=value.backupTemplate||'{date}-{card}';}
 function readWorkspaceSettings(value) {readTetherSettings(value);value.cardFolders=$('card-folders').value.split('\n').map(s=>s.trim()).filter(Boolean);value.manualCards=$('manual-cards').value.split('\n').map(s=>s.trim()).filter(Boolean);value.backupTemplate=$('backup-template').value.trim();}

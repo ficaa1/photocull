@@ -816,6 +816,75 @@ test('after a reconnect only a capture time proves a repeated camera key is the 
   assert.notEqual((await accept(4, { captureTime: '2026:11:25 10:11:13' })).exposureId, dated.exposureId);
 });
 
+test('missed card shots join the shoot once, beside what arrived live', async t => {
+  const ctx = await setup(t);
+  let now = new Date(2026, 10, 25, 14, 0, 0);
+  ctx.service.now = () => now;
+  await ctx.bind();
+  const camera = captureTime => ({ model: 'ILCE-7M3', bodyId: 'body-1', captureTime });
+  const live = async (captureTime, at) => { now = at; return ctx.service.accept(ctx.shootId, 1, null, { key: `sony:${captureTime}` }, ['raw', 'jpeg'], camera(captureTime)); };
+  // The camera clock runs five minutes ahead of this computer.
+  const first = await live('2026:11:25 14:05:10', new Date(2026, 10, 25, 14, 0, 10));
+  await ctx.deliver(first.exposureId, 'DSC00010.ARW'); await ctx.deliver(first.exposureId, 'DSC00010.JPG');
+  const second = await live('2026:11:25 14:05:20', new Date(2026, 10, 25, 14, 0, 20));
+  await ctx.deliver(second.exposureId, 'DSC00011.ARW');
+  const lostJpeg = await ctx.service.member(ctx.shootId, second.exposureId, { role: 'jpeg', originalName: 'DSC00011.JPG', providerObjectKey: 'sony:live:DSC00011.JPG' });
+  await ctx.service.journal(ctx.shootId, 'issue', { memberId: lostJpeg.memberId, code: 'CAMERA_LOST', message: 'The camera disconnected while sending this photo.' });
+
+  assert.deepEqual(await ctx.service.backfill(ctx.shootId, 'window'), { since: '2026:11:25 14:04:00' });
+  const content = name => `card:${name}`;
+  const card = (name, captureTime, handle) => ({ handle, storageId: 0x10001, name, role: /\.JPG$/.test(name) ? 'jpeg' : 'raw', bytes: Buffer.byteLength(content(name)), captureTime });
+  const objects = [
+    card('DSC00009.ARW', '2026:11:25 14:04:30', 9), card('DSC00009.JPG', '2026:11:25 14:04:30', 10),
+    card('DSC00010.JPG', '2026:11:25 14:05:10', 12), card('DSC00010.ARW', '2026:11:25 14:05:10', 11),
+    card('DSC00011.ARW', '2026:11:25 14:05:20', 13), card('DSC00011.JPG', '2026:11:25 14:05:20', 14),
+    card('DSC00012.ARW', '2026:11:25 14:06:00', 15), card('DSC00012.JPG', '2026:11:25 14:06:00', 16),
+    // A HEIF the camera reports as a RAW format is not a photo PhotoCull pulls.
+    { ...card('DSC00013.HIF', '2026:11:25 14:06:30', 17), role: 'raw' },
+  ];
+  const listing = { body: 'body-1', hostRoles: ['raw', 'jpeg'] };
+  const handles = plan => plan.groups.map(g => g.objects.map(o => o.handle));
+  const planned = await ctx.service.backfill(ctx.shootId, 'plan', { ...listing, objects });
+  assert.deepEqual([handles(planned), planned.present], [[[9, 10], [14], [15, 16]], 1]);
+  // A RAW-only computer copy takes only the RAW of an exposure nothing of has arrived.
+  assert.deepEqual(handles(await ctx.service.backfill(ctx.shootId, 'plan', { body: 'body-1', hostRoles: ['raw'], objects: objects.slice(6) })), [[15]]);
+
+  const prepare = group => ctx.service.backfill(ctx.shootId, 'prepare', { ...listing, epoch: 2, camera: { model: 'ILCE-7M3', bodyId: 'body-1' }, objects: group });
+  const pull = async (member, name) => {
+    const stage = path.join(ctx.root, ...member.stageRelPath.split('/')), receipt = { bytes: Buffer.byteLength(content(name)), sha256: sha(content(name)) };
+    await fs.mkdir(path.dirname(stage), { recursive: true }); await fs.writeFile(stage, content(name));
+    await ctx.service.journal(ctx.shootId, 'staged', { memberId: member.memberId, stageRelPath: member.stageRelPath, ...receipt });
+    const plan = await ctx.service.reserve(ctx.shootId, member.memberId, receipt);
+    await fs.link(stage, path.join(ctx.libraryRoot, ...plan.finalRelPath.split('/'))); await fs.unlink(stage);
+    await ctx.service.ingest(ctx.shootId, member.memberId, plan.claimId, { finalRelPath: plan.finalRelPath, bytes: receipt.bytes });
+    return plan.finalRelPath;
+  };
+  // The JPEG lost in transfer is reopened, not duplicated, and completes its live RAW.
+  const reopened = await prepare([objects[5]]);
+  assert.deepEqual([reopened.exposureId, reopened.members.map(m => [m.memberId, m.status])], [second.exposureId, [[lostJpeg.memberId, 'announced']]]);
+  assert.equal(await pull(reopened.members[0], 'DSC00011.JPG'), 'Ceramics-0002.JPG');
+  // The missed pair becomes one new exposure with the shoot's naming and counter.
+  const before = Object.keys(ctx.service.ledger(ctx.shootId).exposures).length;
+  const missed = await prepare(objects.slice(0, 2));
+  assert.deepEqual(missed.members.map(m => [m.handle, m.originalName]), [[9, 'DSC00009.ARW'], [10, 'DSC00009.JPG']]);
+  assert.deepEqual([await pull(missed.members[0], 'DSC00009.ARW'), await pull(missed.members[1], 'DSC00009.JPG')], ['Ceramics-0003.ARW', 'Ceramics-0003.JPG']);
+  const exposure = ctx.service.ledger(ctx.shootId).exposures[missed.exposureId];
+  assert.deepEqual([exposure.captureTime, exposure.expectedHostRoles, exposure.status], ['2026:11:25 14:04:30', ['raw', 'jpeg'], 'complete']);
+  // A second pass finds everything and changes nothing.
+  assert.deepEqual(handles(await ctx.service.backfill(ctx.shootId, 'plan', { ...listing, objects })), [[15, 16]]);
+  assert.deepEqual((await prepare(objects.slice(0, 2))).members, []);
+  assert.equal(Object.keys(ctx.service.ledger(ctx.shootId).exposures).length, before + 1);
+  assert.deepEqual((await ctx.state()).issues, []);
+
+  await ctx.service.backfill(ctx.shootId, 'synced', { through: '2026:11:25 14:30:00' });
+  assert.deepEqual(await ctx.service.backfill(ctx.shootId, 'window'), { since: '2026:11:25 14:29:00' });
+  // Stopping and reopening the shoot starts a new window.
+  await ctx.service.journal(ctx.shootId, 'close');
+  now = new Date(2026, 10, 26, 9, 0, 0);
+  await ctx.bind();
+  assert.deepEqual(await ctx.service.backfill(ctx.shootId, 'window'), { since: '2026:11:26 09:04:00' });
+});
+
 test('a file that is not the image its name promises is never published, retried or recovered', async t => {
   const ctx = await setup(t);
   await ctx.bind();

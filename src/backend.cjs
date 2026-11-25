@@ -333,6 +333,7 @@ async function start() {
       'tether-reserve': (...args) => tether.reserve(...args),
       'tether-ingest': (...args) => tether.ingest(...args),
       'tether-journal': (...args) => tether.journal(...args),
+      'tether-backfill': (...args) => tether.backfill(...args),
       'tether-session-frame': (...args) => tether.sessionFrame(...args),
       'tether-asset': (...args) => tether.asset(...args),
     });

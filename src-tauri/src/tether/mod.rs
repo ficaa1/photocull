@@ -2,6 +2,7 @@
 //! Tauri commands. Node owns the ledger, naming and Library ingest; Rust receives write plans
 //! only through the private `tether-*` backend methods.
 
+mod backfill;
 pub mod icc;
 pub mod live;
 pub mod protocol;
@@ -25,7 +26,7 @@ use protocol::transport::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -669,6 +670,7 @@ enum Cmd {
     SetProperty(Stamp, String, SetValue, u64, Reply<Value>),
     Focus(Stamp, FocusOp, Reply<Value>),
     Live(Stamp, bool, Reply<Value>),
+    Backfill(Stamp, backfill::BackfillOp, Reply<Value>),
     Shutdown(mpsc::Sender<()>),
 }
 
@@ -1649,6 +1651,12 @@ struct Actor {
     late_backlog: Vec<icc::LateObject>,
     late_retry_at: Instant,
     cohorts: CaptureCohorts,
+    /// Composition test shots of this launch by capture time and stem, never pulled from the card.
+    test_shots: HashSet<(String, String)>,
+    backfill: Option<backfill::Backfill>,
+    backfill_due: Option<Instant>,
+    /// The shoot the last connection served, so the next one is known as a reconnect.
+    connected_shoot: Option<String>,
 }
 
 /// Where a late GetObject payload belongs.
@@ -1689,6 +1697,10 @@ impl Actor {
             late_backlog: Vec::new(),
             late_retry_at: now,
             cohorts: CaptureCohorts::default(),
+            test_shots: HashSet::new(),
+            backfill: None,
+            backfill_due: None,
+            connected_shoot: None,
         }
     }
 
@@ -1885,6 +1897,12 @@ impl Actor {
                     self.stop_live(None);
                     Ok(json!({ "streamId": null, "state": "off" }))
                 };
+                let _ = reply.send(result);
+            }
+            Cmd::Backfill(stamp, op, reply) => {
+                let result = self
+                    .check_stamp(&stamp)
+                    .and_then(|_| self.backfill_command(op));
                 let _ = reply.send(result);
             }
             Cmd::Shutdown(_) => {}
@@ -2220,6 +2238,7 @@ impl Actor {
         if self.want_live && !self.paused {
             let _ = self.start_live();
         }
+        self.after_connect(&binding.shoot_id);
         Ok(self.snapshot())
     }
 
@@ -2313,6 +2332,7 @@ impl Actor {
     }
 
     fn close_session(&mut self) {
+        self.end_backfill("interrupted", None);
         self.stop_live(None);
         if let Some(mut session) = self.session.take() {
             self.last_props = session.camera_properties();
@@ -2354,6 +2374,7 @@ impl Actor {
 
     fn lost(&mut self, reason: &str) {
         crate::logs::write(&format!("tether lost: {reason}"));
+        self.end_backfill("interrupted", Some(reason));
         self.stop_live(Some(reason.to_string()));
         if let Some(mut session) = self.session.take() {
             self.last_props = session.camera_properties();
@@ -2538,6 +2559,12 @@ impl Actor {
                 .iter()
                 .any(|(_, at)| at.elapsed() < Duration::from_secs(4))
             || self.cohorts.pending_test.is_some();
+        if !capture_active {
+            self.service_backfill();
+            if self.session.is_none() {
+                return;
+            }
+        }
         if self.live_on && !self.paused && !capture_active && Instant::now() >= self.next_live {
             self.fetch_live();
         }
@@ -2804,6 +2831,7 @@ impl Actor {
             let mut test_plan = None;
             let mut test_error = None;
             let mut regular = None;
+            let mut test_shot = None;
             let result = session.drain_one(|info, kind| {
                 let cohort = CompositionCohort::new(self.epoch, info, kind);
                 let Some(disposition) = self.cohorts.test_disposition(&cohort, active) else {
@@ -2815,6 +2843,7 @@ impl Actor {
                     return ctx.open(info, kind);
                 };
                 let TestDisposition { new_shot, discard } = disposition;
+                test_shot = capture_time(info).map(|t| (t, cohort.stem.clone()));
                 test = Some((cohort, disposition));
                 if discard || !matches!(kind, FileKind::Raw | FileKind::Jpeg) {
                     return Ok(MemberSink::Discard);
@@ -2834,6 +2863,9 @@ impl Actor {
             });
             self.inner.receiving.fetch_sub(1, Ordering::SeqCst);
             let orphan = session.transport_mut().take_orphan();
+            if let Some(shot) = test_shot {
+                self.test_shots.insert(shot);
+            }
             if let Some((cohort, TestDisposition { new_shot, discard })) = test {
                 match result {
                     Ok(DrainStep::Object(object, sink)) => {
@@ -5495,6 +5527,15 @@ pub async fn tether_control(
                 "refresh" => tether.ask(|tx| Cmd::Refresh(stamp, tx)).await,
                 "reconnect" => tether.ask(|tx| Cmd::Reconnect(stamp, tx)).await,
                 "fel" => tether.ask(|tx| Cmd::Fel(stamp, tx)).await,
+                "backfill" | "backfill-pause" | "backfill-resume" | "backfill-cancel" => {
+                    let op = match op.as_str() {
+                        "backfill" => backfill::BackfillOp::Start,
+                        "backfill-pause" => backfill::BackfillOp::Pause,
+                        "backfill-resume" => backfill::BackfillOp::Resume,
+                        _ => backfill::BackfillOp::Cancel,
+                    };
+                    tether.ask(|tx| Cmd::Backfill(stamp, op, tx)).await
+                }
                 "disconnect" => {
                     tether.inner.cancel.store(true, Ordering::SeqCst);
                     tether.inner.abort_connect();

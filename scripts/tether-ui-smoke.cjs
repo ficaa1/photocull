@@ -83,6 +83,7 @@ function simulateCamera() {
     lensDatabase: async () => ({ installed: false }),
     onTetherConnection: on('tether-connection'), onTetherProperties: on('tether-properties'), onTetherConfig: on('tether-config-changed'), onTetherTransfer: on('tether-transfer'),
     onTetherLibrary: on('tether-library-delta'), onTetherLive: on('tether-live-state'), onTetherIssue: on('tether-issue'), onTetherComposition: on('tether-composition'),
+    onTetherBackfill: on('tether-backfill'),
   });
 }
 
@@ -344,6 +345,42 @@ async function main() {
     await clearCalls(); await page.locator('#tether-reconnect').click();
     await untilCall(c => c[0] === 'control' && c[1] === 'reconnect', 'reconnect');
     await page.waitForFunction(() => tether.camera.epoch === __camera.epoch && tether.connected());
+    // Missed shots: progress and outcomes come from tether-backfill events; the card is never written.
+    const backfill = event => page.evaluate(event => __camera.emit('tether-backfill', { v: 1, shootId: 'shoot-1', epoch: __camera.epoch, storageAvailable: true, ...event }), event);
+    const bannerText = () => page.locator('#tether-backfill-text').textContent();
+    assert.equal(await page.locator('#tether-auto-backfill').isChecked(), true, 'auto-pull is on by default');
+    await page.locator('#tether-auto-backfill').click();
+    await until(s => s.autoBackfill === false, 'autoBackfill off');
+    await page.locator('#tether-auto-backfill').click();
+    await until(s => s.autoBackfill === true, 'autoBackfill on');
+    await clearCalls(); await page.locator('#tether-backfill-pull').click();
+    await untilCall(c => c[0] === 'control' && c[1] === 'backfill', 'backfill');
+    await backfill({ state: 'scanning', scanned: 8, listed: 40 });
+    await page.waitForFunction(() => !document.querySelector('#tether-backfill-banner').hidden);
+    assert.match(await bannerText(), /Checking the camera card for missed shots/);
+    assert.equal(await page.locator('#tether-backfill-pull').isDisabled(), true, 'one pass at a time');
+    await backfill({ state: 'pulling', current: 3, total: 7, shots: 2, pulled: 4 });
+    await page.waitForFunction(() => /Pulling 3 of 7 missed shots…/.test(document.querySelector('#tether-backfill-text').textContent));
+    await page.locator('#tether-backfill-pause').click();
+    await untilCall(c => c[0] === 'control' && c[1] === 'backfill-pause', 'backfill-pause');
+    await backfill({ state: 'paused', paused: true, current: 3, total: 7 });
+    await page.waitForFunction(() => document.querySelector('#tether-backfill-pause').textContent === 'Resume');
+    assert.match(await bannerText(), /Paused at 3 of 7 missed shots/);
+    await page.locator('#tether-backfill-pause').click();
+    await untilCall(c => c[0] === 'control' && c[1] === 'backfill-resume', 'backfill-resume');
+    await page.locator('#tether-backfill-cancel').click();
+    await untilCall(c => c[0] === 'control' && c[1] === 'backfill-cancel', 'backfill-cancel');
+    await backfill({ state: 'cancelled', current: 4, total: 7, shots: 3, pulled: 6 });
+    await page.waitForFunction(() => document.querySelector('#tether-backfill-banner').hidden && document.querySelector('#tether-stage-alerts').hidden);
+    assert.equal(await page.locator('#tether-backfill-note').textContent(), 'Stopped. Pulled 3 missed shots; the rest stay on the card.');
+    assert.equal(await page.locator('#tether-backfill-pull').isDisabled(), false);
+    await backfill({ state: 'done', auto: true, current: 0, total: 0, shots: 0 });
+    await page.waitForFunction(() => /^Nothing missed/.test(document.querySelector('#tether-backfill-note').textContent));
+    await backfill({ state: 'unavailable', storageAvailable: false, auto: true, message: 'This connection does not show the camera’s memory card. Sony cameras in PC Remote mode often keep the card hidden; nothing was changed.' });
+    await page.waitForFunction(() => /PC Remote mode often keep the card hidden/.test(document.querySelector('#tether-backfill-note').textContent));
+    assert.equal(await page.locator('#tether-backfill-banner').isHidden(), true);
+    check('missed shots: pull, progress banner, pause/resume/cancel, nothing missed and hidden-card notes, auto-pull toggle');
+
     await clearCalls();
     const beforeJumpEpoch = await page.evaluate(() => tether.camera.epoch);
     await page.evaluate(() => { __camera.propRev += 5; __camera.emit('tether-properties', { shootId: 'shoot-1', epoch: tether.camera.epoch, propRev: __camera.propRev, changed: [{ key: 'shutter', label: 'Shutter', kind: 'enum', value: '1/250', display: '1/250', access: 'rw', choices: ['1/160', '1/200', '1/250', '1/400'].map(id => ({ id, label: id })) }] }); });
