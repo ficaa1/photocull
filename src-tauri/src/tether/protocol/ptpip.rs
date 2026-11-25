@@ -1069,7 +1069,7 @@ fn read_events(mut stream: TcpStream, shared: Arc<Shared>, generation: u64) {
 
 #[cfg(test)]
 mod tests {
-    use super::super::card::{CardAccess, CardScan};
+    use super::super::card::{whole_read_timeout, CardRead, CardScan, ReadStep, ScanStep};
     use super::super::codec::{self, Grammar};
     use super::super::fixtures::*;
     use super::super::ptp::{format, handle, DeviceInfo, FileKind};
@@ -1497,19 +1497,22 @@ mod tests {
         });
         let mut s = session(addr);
         s.connect().unwrap();
-        let Ok(CardAccess::Listed(mut scan)) = CardScan::open(&mut s, None) else {
-            panic!("the card is listed");
-        };
-        while !scan.step(&mut s, 8).unwrap() {}
-        assert_eq!((scan.found.len(), scan.inspected), (1, 2));
+        let mut scan = CardScan::new(None);
+        while scan.step(&mut s).unwrap() == ScanStep::Working {}
+        assert_eq!((scan.found.len(), scan.inspected, scan.refused), (1, 2, 1));
         let object = scan.found[0].clone();
+        assert_eq!(object.kind, FileKind::Raw);
         let mut sink = Vec::new();
-        let read = s
-            .read_object(object.handle, &object.info, &mut sink)
-            .unwrap()
-            .unwrap();
-        assert!(read.complete());
-        assert_eq!(read.kind, FileKind::Raw);
+        let mut read = CardRead::new(&s, &object, 512 << 20).unwrap();
+        let size = raw.len() as u64;
+        let step = read.step(&mut s, &mut sink, whole_read_timeout(size, true));
+        assert_eq!(
+            step.unwrap(),
+            ReadStep::Done {
+                bytes: size,
+                declared: size
+            }
+        );
         assert_eq!(sink, raw);
         assert_eq!(s.state(), ConnectionState::Ready);
         assert_eq!(

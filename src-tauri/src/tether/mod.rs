@@ -1651,12 +1651,20 @@ struct Actor {
     late_backlog: Vec<icc::LateObject>,
     late_retry_at: Instant,
     cohorts: CaptureCohorts,
-    /// Composition test shots of this launch by capture time and stem, never pulled from the card.
-    test_shots: HashSet<(String, String)>,
+    /// Composition test shots of this launch by body, capture time and stem, never pulled from
+    /// the card.
+    test_shots: HashSet<(String, String, String)>,
+    /// Test Shot releases, recorded before the shutter, whose photo may never have arrived.
+    test_releases: VecDeque<backfill::TestRelease>,
     backfill: Option<backfill::Backfill>,
     backfill_due: Option<Instant>,
-    /// The shoot the last connection served, so the next one is known as a reconnect.
-    connected_shoot: Option<String>,
+    backfill_pass: u64,
+    /// Bodies whose last card pass failed; they are read again only on request.
+    card_failed: HashSet<String>,
+    /// This turn read from the card, so the next one follows without waiting.
+    card_busy: bool,
+    /// The shoot and body the last connection served, so the next one is known as a reconnect.
+    connected: Option<(String, String)>,
 }
 
 /// Where a late GetObject payload belongs.
@@ -1698,15 +1706,21 @@ impl Actor {
             late_retry_at: now,
             cohorts: CaptureCohorts::default(),
             test_shots: HashSet::new(),
+            test_releases: VecDeque::new(),
             backfill: None,
             backfill_due: None,
-            connected_shoot: None,
+            backfill_pass: 0,
+            card_failed: HashSet::new(),
+            card_busy: false,
+            connected: None,
         }
     }
 
     fn run(mut self) {
         loop {
-            let wait = if self.live_on {
+            let wait = if self.card_busy {
+                Duration::ZERO
+            } else if self.live_on {
                 Duration::from_millis(10)
             } else if self.session.is_some() || self.reconnect.is_some() {
                 Duration::from_millis(50)
@@ -2471,7 +2485,9 @@ impl Actor {
     }
 
     fn service(&mut self) {
+        self.card_busy = false;
         self.cohorts.expire_test();
+        prune_pending(&mut self.pending, &mut self.inner.timed_out.lock().unwrap());
         self.store_late_objects();
         if self.reconnect.is_some() {
             self.try_reconnect();
@@ -2559,11 +2575,9 @@ impl Actor {
                 .iter()
                 .any(|(_, at)| at.elapsed() < Duration::from_secs(4))
             || self.cohorts.pending_test.is_some();
-        if !capture_active {
-            self.service_backfill();
-            if self.session.is_none() {
-                return;
-            }
+        self.service_backfill();
+        if self.session.is_none() {
+            return;
         }
         if self.live_on && !self.paused && !capture_active && Instant::now() >= self.next_live {
             self.fetch_live();
@@ -2799,6 +2813,7 @@ impl Actor {
         let Some(binding) = self.binding() else {
             return;
         };
+        let body = self.body_identity();
         for _ in 0..4 {
             prune_pending(&mut self.pending, &mut self.inner.timed_out.lock().unwrap());
             if self.draining_held() {
@@ -2863,8 +2878,11 @@ impl Actor {
             });
             self.inner.receiving.fetch_sub(1, Ordering::SeqCst);
             let orphan = session.transport_mut().take_orphan();
-            if let Some(shot) = test_shot {
-                self.test_shots.insert(shot);
+            if let Some((time, stem)) = test_shot {
+                self.test_shots.insert((body.clone(), time, stem));
+            }
+            if test.as_ref().is_some_and(|(_, d)| d.new_shot) {
+                backfill::resolve_test_release(&mut self.test_releases, &body);
             }
             if let Some((cohort, TestDisposition { new_shot, discard })) = test {
                 match result {
@@ -3337,11 +3355,25 @@ impl Actor {
             self.cohorts.check_transition(pending, false)?;
             self.cohorts.awaiting_quiet_queue = false;
         }
-        let session = self.ready_session()?;
         let options = CaptureOptions {
-            wait_for_focus: session.should_wait_for_focus(),
+            wait_for_focus: self.ready_session()?.should_wait_for_focus(),
         };
-        match session.capture(options, &inner.cancel) {
+        let test = request_id.is_none();
+        if test {
+            self.record_test_release();
+        }
+        let session = self.ready_session()?;
+        let released = session.capture(options, &inner.cancel);
+        let uncertain = matches!(
+            released,
+            Err(SessionError::Removed {
+                shutter_uncertain: true
+            })
+        );
+        if test && !matches!(released, Ok(CaptureOutcome::Released)) && !uncertain {
+            self.withdraw_test_release();
+        }
+        match released {
             Ok(CaptureOutcome::Released) => {
                 // Older requests nobody waits for any more were resolved as unknown; a newer
                 // shutter release never lets them claim its photo.
@@ -3360,12 +3392,7 @@ impl Actor {
             Ok(outcome) => Ok(outcome),
             Err(e) => {
                 let mut mapped = TetherError::from_session(e_clone(&e));
-                mapped.uncertain = matches!(
-                    e,
-                    SessionError::Removed {
-                        shutter_uncertain: true
-                    }
-                );
+                mapped.uncertain = uncertain;
 
                 self.handle_session_error(e);
                 Err(mapped)

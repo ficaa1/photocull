@@ -1,16 +1,27 @@
 //! Missed-shot backfill: after a reconnect, or when the photographer asks, photos the camera saved
 //! to its card during the shoot but never delivered are read from the card and go through the same
 //! staging, journal and publication as live captures. The card is only read, never changed.
+//!
+//! Each actor turn does at most one card transaction, and only while no live capture is announced,
+//! queued, awaited or being received, so a shutter, Pause, Cancel or Disconnect waits for one
+//! transaction at most.
 
-use super::protocol::card::{CardAccess, CardObject, CardScan, Outcome, PullQueue, PullStep};
+use super::protocol::card::{
+    self, CardObject, CardRead, CardScan, Outcome, PullQueue, PullStep, ReadStep, ScanStep,
+};
 use super::*;
 
-/// Card objects inspected per actor turn, so a live capture never waits long.
-const SCAN_BATCH: usize = 8;
 /// Lets the camera's own capture queue drain after a reconnect before the card is read.
 const AUTO_DELAY: Duration = Duration::from_secs(3);
 /// Publications in flight above which the card waits.
 const PUBLISH_BACKLOG: usize = 4;
+/// A released shutter keeps the card idle this long for its photo.
+const SHUTTER_GRACE: Duration = Duration::from_secs(4);
+/// Card objects planned per Node call.
+const PLAN_BATCH: usize = 128;
+const TEST_RELEASES: usize = 64;
+
+const EMPTY: &str = "The card shows no photos over this connection. It may be empty, or the camera may keep its files hidden in PC Remote mode.";
 
 pub(super) enum BackfillOp {
     Start,
@@ -19,30 +30,113 @@ pub(super) enum BackfillOp {
     Cancel,
 }
 
+/// A Test Shot released over this connection; its frame stays on the card.
+pub(super) struct TestRelease {
+    body: String,
+    at_ms: u64,
+    resolved: bool,
+}
+
 pub(super) struct Backfill {
+    pass: u64,
     epoch: u64,
     auto: bool,
     paused: bool,
-    /// Newest capture time seen inside the window, as `YYYY:MM:DD hh:mm:ss`.
-    newest: Option<String>,
+    cancelling: bool,
+    body: String,
+    listed: usize,
+    truncated: bool,
     /// Exposures the ledger already held in full.
     already: usize,
+    /// Frames left on the card as possible Test Shots.
+    held: usize,
+    /// Capture times, as `YYYY:MM:DD hh:mm:ss`, of files on the computer or journaled on their way.
+    settled: Vec<String>,
+    /// The earliest capture time a later pass must read again.
+    unsettled: Option<String>,
+    /// Some listed file could not be placed in time, so nothing is marked synced.
+    blind: bool,
     phase: Phase,
     last_emit: Instant,
 }
 
 enum Phase {
     Scanning(CardScan),
+    Planning {
+        objects: Vec<CardObject>,
+        next: usize,
+        releases: Vec<u64>,
+        groups: Vec<Vec<CardObject>>,
+    },
     Pulling {
         groups: Vec<Vec<CardObject>>,
         queue: PullQueue,
-        prepared: Option<(usize, Vec<Option<MemberPlan>>)>,
+        prepared: Option<Prepared>,
+        reading: Option<Reading>,
     },
 }
 
-enum Stop {
-    Interrupted,
-    Error(String),
+/// Node's answer for the group being pulled: a member per file to read, or why there is none.
+struct Prepared {
+    group: usize,
+    plans: Vec<Option<MemberPlan>>,
+    deferred: Vec<bool>,
+}
+
+struct Reading {
+    item: usize,
+    object: CardObject,
+    plan: MemberPlan,
+    read: CardRead,
+    writer: StageWriter,
+    timeout: Duration,
+    started: Instant,
+}
+
+impl Backfill {
+    fn note_unsettled(&mut self, object: &CardObject) {
+        match capture_time(&object.info) {
+            Some(t) if self.unsettled.as_ref().map_or(true, |u| t < *u) => self.unsettled = Some(t),
+            Some(_) => {}
+            None => self.blind = true,
+        }
+    }
+
+    fn record(&mut self, object: &CardObject, outcome: Outcome) {
+        match outcome {
+            Outcome::Pulled | Outcome::Present => match capture_time(&object.info) {
+                Some(t) => self.settled.push(t),
+                None => self.blind = true,
+            },
+            Outcome::Failed | Outcome::Deferred => self.note_unsettled(object),
+        }
+    }
+
+    /// The newest capture time below every file still unsettled.
+    fn synced_through(&self) -> Option<&String> {
+        if self.blind {
+            return None;
+        }
+        self.settled
+            .iter()
+            .filter(|t| self.unsettled.as_ref().map_or(true, |u| *t < u))
+            .max()
+    }
+
+    fn state(&self) -> &'static str {
+        match &self.phase {
+            _ if self.cancelling => "cancelling",
+            Phase::Pulling { queue, reading, .. } => {
+                if reading.is_none() && queue.next() == PullStep::Paused {
+                    "paused"
+                } else {
+                    "pulling"
+                }
+            }
+            _ if self.paused => "paused",
+            _ => "scanning",
+        }
+    }
 }
 
 pub(super) fn auto_backfill_enabled(settings: &Value) -> bool {
@@ -56,15 +150,58 @@ fn card_stamp(wall: &str) -> Option<String> {
 }
 
 fn card_object_json(object: &CardObject) -> Value {
-    let declared = object.info.compressed_size;
     json!({
         "handle": object.handle,
         "storageId": object.storage_id,
         "name": object_name(&object.info, object.kind),
         "role": object.kind.role(),
-        "bytes": if declared == u32::MAX { 0 } else { declared },
+        "bytes": object.info.compressed_size,
         "captureTime": capture_time(&object.info),
     })
+}
+
+/// Files of one exposure sort together: capture second, then stem.
+fn exposure_order(object: &CardObject) -> (String, String) {
+    let name = object_name(&object.info, object.kind);
+    (object.stamp.clone(), file_stem(&name).to_lowercase())
+}
+
+/// The end of the planning batch from `start`, never splitting an exposure.
+fn batch_end(objects: &[CardObject], start: usize) -> usize {
+    let mut end = (start + PLAN_BATCH).min(objects.len());
+    while end < objects.len() && exposure_order(&objects[end - 1]) == exposure_order(&objects[end])
+    {
+        end += 1;
+    }
+    end
+}
+
+/// A Test Shot's photo arrived, so its card frame is known by capture time and name instead.
+pub(super) fn resolve_test_release(releases: &mut VecDeque<TestRelease>, body: &str) {
+    if let Some(release) = releases.iter_mut().find(|r| !r.resolved && r.body == body) {
+        release.resolved = true;
+    }
+}
+
+fn pulling(groups: Vec<Vec<CardObject>>) -> Phase {
+    Phase::Pulling {
+        queue: PullQueue::new(groups.iter().map(Vec::len).collect()),
+        groups,
+        prepared: None,
+        reading: None,
+    }
+}
+
+fn put_reading(job: &mut Backfill, read: Reading) {
+    if let Phase::Pulling { reading, .. } = &mut job.phase {
+        *reading = Some(read);
+    }
+}
+
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
 }
 
 impl Actor {
@@ -74,24 +211,21 @@ impl Actor {
             BackfillOp::Start | BackfillOp::Resume => self.pause_backfill(false),
             BackfillOp::Pause => self.pause_backfill(true),
             BackfillOp::Cancel => {
-                let at_boundary = match self.backfill.as_mut().map(|job| &mut job.phase) {
-                    Some(Phase::Pulling { queue, .. }) => {
+                if let Some(job) = self.backfill.as_mut() {
+                    job.cancelling = true;
+                    if let Phase::Pulling { queue, .. } = &mut job.phase {
                         queue.cancel();
-                        queue.next(false) == PullStep::Cancelled
                     }
-                    Some(Phase::Scanning(_)) => true,
-                    None => false,
-                };
-                if at_boundary {
-                    return Ok(self.end_backfill("cancelled", None));
                 }
-                if let Some(job) = &self.backfill {
-                    self.emit_backfill(job, job_state(job), None);
+                if !self.end_if_settled() {
+                    if let Some(job) = &self.backfill {
+                        self.emit_backfill(job, job.state(), None);
+                    }
                 }
             }
         }
         Ok(match &self.backfill {
-            Some(job) => self.backfill_payload(Some(job), job_state(job), None),
+            Some(job) => self.backfill_payload(Some(job), job.state(), None),
             None => self.backfill_payload(None, "idle", None),
         })
     }
@@ -105,17 +239,19 @@ impl Actor {
             queue.set_paused(paused);
         }
         if let Some(job) = &self.backfill {
-            self.emit_backfill(job, job_state(job), None);
+            self.emit_backfill(job, job.state(), None);
         }
     }
 
+    /// Queues a pass; the card is first read on a later turn, when no live capture is waiting.
     pub(super) fn start_backfill(&mut self, auto: bool) -> TResult<Value> {
         let binding = self.binding().ok_or_else(TetherError::stale_session)?;
         self.ready_session()?;
+        self.backfill_due = None;
         let window = node_blocking(
             &self.inner.app,
             "tether-backfill",
-            json!([binding.shoot_id, "window", {}]),
+            json!([binding.shoot_id, "window", { "camera": self.card_camera() }]),
         )?;
         let since = window["since"]
             .as_str()
@@ -126,35 +262,22 @@ impl Actor {
                     "This shoot has no start time to compare the card with.",
                 )
             })?;
-        let session = self.ready_session()?;
-        let opened = CardScan::open(session, Some(since));
-        let scan = match opened {
-            Ok(CardAccess::Listed(scan)) => scan,
-            Ok(CardAccess::Unavailable(reason)) => {
-                crate::logs::write(&format!("tether backfill unavailable: {reason}"));
-                let mut payload = self.backfill_payload(None, "unavailable", Some(reason));
-                payload["auto"] = auto.into();
-                emit(&self.inner.app, "tether-backfill", payload.clone());
-                return Ok(payload);
-            }
-            Err(e) => {
-                let error = TetherError::from_session(e_clone(&e));
-                self.handle_session_error(e);
-                return Err(error);
-            }
-        };
-        crate::logs::write(&format!(
-            "tether backfill: {} objects on {} storage(s)",
-            scan.listed,
-            scan.storages.len()
-        ));
+        self.backfill_pass += 1;
         let job = Backfill {
+            pass: self.backfill_pass,
             epoch: self.epoch,
             auto,
             paused: false,
-            newest: None,
+            cancelling: false,
+            body: self.body_identity(),
+            listed: 0,
+            truncated: false,
             already: 0,
-            phase: Phase::Scanning(scan),
+            held: 0,
+            settled: Vec::new(),
+            unsettled: None,
+            blind: false,
+            phase: Phase::Scanning(CardScan::new(Some(since))),
             last_emit: Instant::now(),
         };
         let payload = self.emit_backfill(&job, "scanning", None);
@@ -162,16 +285,51 @@ impl Actor {
         Ok(payload)
     }
 
-    /// Schedules the automatic pass after a reconnect within the same shoot.
+    /// Schedules the automatic pass after a reconnect of the same body within the same shoot.
     pub(super) fn after_connect(&mut self, shoot_id: &str) {
-        let reconnected = self.connected_shoot.as_deref() == Some(shoot_id);
-        self.connected_shoot = Some(shoot_id.to_string());
-        self.backfill_due = reconnected.then(|| Instant::now() + AUTO_DELAY);
+        let body = self.body_identity();
+        let connection = (shoot_id.to_string(), body.clone());
+        let reconnected = self.connected.as_ref() == Some(&connection);
+        self.connected = Some(connection);
+        // A body whose card reads failed is read again only when the photographer asks.
+        self.backfill_due =
+            (reconnected && !self.card_failed.contains(&body)).then(|| Instant::now() + AUTO_DELAY);
+    }
+
+    pub(super) fn record_test_release(&mut self) {
+        if self.test_releases.len() == TEST_RELEASES {
+            self.test_releases.pop_front();
+        }
+        self.test_releases.push_back(TestRelease {
+            body: self.body_identity(),
+            at_ms: unix_ms(),
+            resolved: false,
+        });
+    }
+
+    pub(super) fn withdraw_test_release(&mut self) {
+        self.test_releases.pop_back();
+    }
+
+    pub(super) fn body_identity(&self) -> String {
+        let device = self.device.clone().unwrap_or_default();
+        format!("{}\0{}", device.model, device.serial)
+    }
+
+    fn card_camera(&self) -> Value {
+        let device = self.device.clone().unwrap_or_default();
+        camera_snapshot(&device, &ExposureSnapshot::default(), None)
     }
 
     /// Nothing from a live capture is waiting, arriving or held, so a card read cannot delay one.
     fn card_may_read(&self) -> bool {
-        self.pending.is_empty()
+        let shutter_waiting = {
+            let waiters = self.inner.confirmations.lock().unwrap();
+            self.pending
+                .iter()
+                .any(|(id, at)| waiters.contains_key(id) || at.elapsed() < SHUTTER_GRACE)
+        };
+        !shutter_waiting
             && self.cohorts.pending_test.is_none()
             && self.half_press_since.is_none()
             && self.inner.receiving.load(Ordering::SeqCst) == 0
@@ -179,12 +337,11 @@ impl Actor {
             && self.inner.drain_hold.lock().unwrap().is_none()
             && self.binding().is_some()
             && self.session.as_ref().is_some_and(|s| {
-                s.state() == ConnectionState::Ready
-                    && !s.object_announced()
-                    && s.queue_signal() == QueueSignal::Empty
+                s.state() == ConnectionState::Ready && !card::live_capture_waiting(s)
             })
     }
 
+    /// Runs one step of the pass. Ending, pausing and cancelling never wait for the card.
     pub(super) fn service_backfill(&mut self) {
         if self.backfill.is_none() {
             let due = self.backfill_due.is_some_and(|at| Instant::now() >= at);
@@ -200,126 +357,232 @@ impl Actor {
             }
             return;
         }
-        if !self.card_may_read() {
+        if self.end_if_settled() || !self.card_may_read() {
             return;
         }
         let Some(job) = self.backfill.take() else {
             return;
         };
-        if job.epoch != self.epoch {
-            self.emit_backfill(&job, "interrupted", None);
-            return;
-        }
         match job.phase {
             Phase::Scanning(_) => self.scan_step(job),
+            Phase::Planning { .. } => self.plan_step(job),
             Phase::Pulling { .. } => self.pull_step(job),
         }
     }
 
-    fn scan_step(&mut self, mut job: Backfill) {
-        if job.paused || self.session.is_none() {
-            self.backfill = Some(job);
-            return;
-        }
-        let (Phase::Scanning(scan), Some(session)) = (&mut job.phase, self.session.as_mut()) else {
-            return;
+    /// Ends a pass that is finished, cancelled at an exposure boundary, cancelled while the card
+    /// cannot be read, or left over from an earlier connection.
+    fn end_if_settled(&mut self) -> bool {
+        let Some(job) = &self.backfill else {
+            return false;
         };
-        let result = scan.step(session, SCAN_BATCH);
-        match result {
-            Ok(false) => {
+        let state = if job.epoch != self.epoch {
+            Some("interrupted")
+        } else {
+            match &job.phase {
+                Phase::Pulling {
+                    queue,
+                    reading: None,
+                    ..
+                } if matches!(queue.next(), PullStep::Finished | PullStep::Cancelled) => {
+                    Some(if job.cancelling { "cancelled" } else { "done" })
+                }
+                Phase::Pulling { .. } if job.cancelling && !self.card_may_read() => {
+                    Some("cancelled")
+                }
+                Phase::Scanning(_) | Phase::Planning { .. } if job.cancelling => Some("cancelled"),
+                _ => None,
+            }
+        };
+        let Some(state) = state else {
+            return false;
+        };
+        if let Some(job) = self.backfill.take() {
+            self.finish_backfill(job, state);
+        }
+        true
+    }
+
+    fn scan_step(&mut self, mut job: Backfill) {
+        let step = match (&mut job.phase, self.session.as_mut()) {
+            (Phase::Scanning(scan), Some(session)) if !job.paused => scan.step(session),
+            _ => {
+                self.backfill = Some(job);
+                return;
+            }
+        };
+        match step {
+            Ok(ScanStep::Yield) => self.backfill = Some(job),
+            Ok(ScanStep::Working) => {
+                self.card_busy = true;
                 if job.last_emit.elapsed() >= Duration::from_millis(300) {
                     job.last_emit = Instant::now();
                     self.emit_backfill(&job, "scanning", None);
                 }
                 self.backfill = Some(job);
             }
-            Ok(true) => {
-                let found = match &mut job.phase {
-                    Phase::Scanning(scan) => std::mem::take(&mut scan.found),
-                    Phase::Pulling { .. } => Vec::new(),
+            Ok(ScanStep::Done) => {
+                self.card_busy = true;
+                let Phase::Scanning(scan) = std::mem::replace(&mut job.phase, pulling(Vec::new()))
+                else {
+                    return;
                 };
-                self.plan_backfill(job, found);
-            }
-            Err(e) => {
-                let message = TetherError::from_session(e_clone(&e)).message;
-                let stop = if self.handle_session_error(e) {
-                    Stop::Interrupted
-                } else {
-                    Stop::Error(message)
+                crate::logs::write(&format!(
+                    "tether backfill: {} listed on {} storage(s), {} inspected, {} in the window, {} undated, {} refused",
+                    scan.listed,
+                    scan.storages.len(),
+                    scan.inspected,
+                    scan.found.len(),
+                    scan.undated,
+                    scan.refused
+                ));
+                job.listed = scan.listed;
+                job.truncated = scan.truncated;
+                job.blind = scan.blind();
+                let mut objects = scan.found;
+                objects.sort_by_cached_key(exposure_order);
+                let releases = self
+                    .test_releases
+                    .iter()
+                    .filter(|r| !r.resolved && r.body == job.body)
+                    .map(|r| r.at_ms)
+                    .collect();
+                job.phase = Phase::Planning {
+                    objects,
+                    next: 0,
+                    releases,
+                    groups: Vec::new(),
                 };
-                self.stop_backfill(job, stop);
+                self.backfill = Some(job);
             }
+            Ok(ScanStep::Unavailable(reason)) => {
+                crate::logs::write(&format!("tether backfill unavailable: {reason}"));
+                self.emit_backfill(&job, "unavailable", Some(reason));
+            }
+            Err(e) => self.card_error(job, e),
         }
     }
 
-    fn plan_backfill(&mut self, mut job: Backfill, found: Vec<CardObject>) {
+    /// Asks Node which card exposures are missing, one bounded batch per turn.
+    fn plan_step(&mut self, mut job: Backfill) {
         let Some(binding) = self.binding() else {
-            return self.stop_backfill(job, Stop::Interrupted);
+            return self.finish_backfill(job, "interrupted");
         };
-        // Test shots stay out of the shoot whatever the card holds.
-        let found: Vec<CardObject> = found
-            .into_iter()
-            .filter(|o| {
-                let stem = file_stem(&object_name(&o.info, o.kind)).to_uppercase();
-                capture_time(&o.info).map_or(true, |t| !self.test_shots.contains(&(t, stem)))
-            })
+        if job.paused {
+            self.backfill = Some(job);
+            return;
+        }
+        let test_shots: Vec<Value> = self
+            .test_shots
+            .iter()
+            .filter(|(body, ..)| *body == job.body)
+            .map(|(_, time, stem)| json!({ "captureTime": time, "stem": stem }))
             .collect();
-        job.newest = found.iter().filter_map(|o| capture_time(&o.info)).max();
-        let groups: Vec<Vec<CardObject>> = if found.is_empty() {
-            Vec::new()
-        } else {
-            let objects: Vec<Value> = found.iter().map(card_object_json).collect();
-            let planned = node_blocking(
-                &self.inner.app,
-                "tether-backfill",
-                json!([binding.shoot_id, "plan", {
-                    "body": self.body_key(),
-                    "hostRoles": self.host_roles(),
-                    "objects": objects,
-                }]),
-            );
-            let planned = match planned {
-                Ok(planned) => planned,
-                Err(e) => return self.stop_backfill(job, Stop::Error(e.message)),
-            };
-            job.already = planned["present"].as_u64().unwrap_or(0) as usize;
-            let pick = |entry: &Value| {
-                found
-                    .iter()
-                    .find(|o| {
-                        entry["handle"].as_u64() == Some(o.handle as u64)
-                            && entry["storageId"].as_u64() == Some(o.storage_id as u64)
-                    })
-                    .cloned()
-            };
-            planned["groups"]
-                .as_array()
-                .map(|groups| {
-                    groups
-                        .iter()
-                        .filter_map(|g| {
-                            let objects: Vec<CardObject> =
-                                g["objects"].as_array()?.iter().filter_map(&pick).collect();
-                            (!objects.is_empty()).then_some(objects)
-                        })
-                        .collect()
-                })
-                .unwrap_or_default()
-        };
-        crate::logs::write(&format!(
-            "tether backfill: {} in the window, {} exposure(s) missing, {} already here",
-            found.len(),
-            groups.len(),
-            job.already
-        ));
-        let mut queue = PullQueue::new(groups.iter().map(Vec::len).collect());
-        queue.set_paused(job.paused);
-        job.phase = Phase::Pulling {
+        let camera = self.card_camera();
+        let host_roles = self.host_roles();
+        let Phase::Planning {
+            objects,
+            next,
+            releases,
             groups,
-            queue,
-            prepared: None,
+        } = &mut job.phase
+        else {
+            return;
         };
-        self.pull_step(job);
+        let end = batch_end(objects, *next);
+        let batch = &objects[*next..end];
+        let planned = node_blocking(
+            &self.inner.app,
+            "tether-backfill",
+            json!([binding.shoot_id, "plan", {
+                "camera": camera,
+                "hostRoles": host_roles,
+                "objects": batch.iter().map(card_object_json).collect::<Vec<_>>(),
+                "exclude": self.unready_members(),
+                "testShots": test_shots,
+                "testReleases": releases,
+            }]),
+        );
+        let planned = match planned {
+            Ok(planned) => planned,
+            Err(e) => return self.finish_backfill_with(job, "error", Some(&e.message)),
+        };
+        let index: HashMap<(u64, u64), usize> = batch
+            .iter()
+            .enumerate()
+            .map(|(i, o)| ((o.storage_id as u64, o.handle as u64), i))
+            .collect();
+        let mut pulled = vec![false; batch.len()];
+        for group in planned["groups"].as_array().into_iter().flatten() {
+            let members: Vec<CardObject> = group["objects"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|o| index.get(&(o["storageId"].as_u64()?, o["handle"].as_u64()?)))
+                .map(|&i| {
+                    pulled[i] = true;
+                    batch[i].clone()
+                })
+                .collect();
+            if !members.is_empty() {
+                groups.push(members);
+            }
+        }
+        let unsettled: HashSet<&str> = planned["unsettled"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        let consumed: Vec<u64> = planned["consumed"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_u64)
+            .collect();
+        releases.retain(|at| !consumed.contains(at));
+        let mut settled = Vec::new();
+        let mut open = Vec::new();
+        for (i, object) in batch.iter().enumerate() {
+            let time = capture_time(&object.info);
+            if time.as_deref().is_some_and(|t| unsettled.contains(t)) {
+                open.push(object.clone());
+            } else if !pulled[i] {
+                settled.push(object.clone());
+            }
+        }
+        *next = end;
+        let finished = end == objects.len();
+        job.already += planned["present"].as_u64().unwrap_or(0) as usize;
+        job.held += planned["held"].as_u64().unwrap_or(0) as usize;
+        for object in &settled {
+            job.record(object, Outcome::Present);
+        }
+        for object in &open {
+            job.note_unsettled(object);
+        }
+        self.card_busy = true;
+        if finished {
+            let Phase::Planning { groups, .. } =
+                std::mem::replace(&mut job.phase, pulling(Vec::new()))
+            else {
+                return;
+            };
+            crate::logs::write(&format!(
+                "tether backfill: {} exposure(s) missing, {} already here, {} held as possible test shots",
+                groups.len(),
+                job.already,
+                job.held
+            ));
+            job.phase = pulling(groups);
+            if let Phase::Pulling { queue, .. } = &mut job.phase {
+                queue.set_paused(job.paused);
+                if job.cancelling {
+                    queue.cancel();
+                }
+            }
+        }
+        self.backfill = Some(job);
     }
 
     fn pull_step(&mut self, mut job: Backfill) {
@@ -327,62 +590,77 @@ impl Actor {
             groups,
             queue,
             prepared,
+            reading,
         } = &mut job.phase
         else {
             return;
         };
-        let (group, item) = match queue.next(false) {
-            PullStep::Finished => return self.finish_backfill(job, "done"),
-            PullStep::Cancelled => return self.finish_backfill(job, "cancelled"),
-            PullStep::Paused | PullStep::Wait => {
-                self.backfill = Some(job);
-                return;
-            }
-            PullStep::Item { group, item } => (group, item),
+        if let Some(read) = reading.take() {
+            return self.continue_read(job, read);
+        }
+        let PullStep::Item { group, item } = queue.next() else {
+            self.backfill = Some(job);
+            return;
         };
         let Some(binding) = self.binding() else {
-            return self.stop_backfill(job, Stop::Interrupted);
+            return self.finish_backfill(job, "interrupted");
         };
-        if prepared.as_ref().map(|(g, _)| *g) != Some(group) {
-            match self.prepare_card_group(&binding, &groups[group]) {
-                Ok(plans) => *prepared = Some((group, plans)),
+        self.card_busy = true;
+        if prepared.as_ref().map(|p| p.group) != Some(group) {
+            match self.prepare_card_group(&binding, group, &groups[group]) {
+                Ok(p) => *prepared = Some(p),
                 Err(e) => {
                     crate::logs::write(&format!(
                         "tether backfill prepare {}: {}",
                         e.code, e.message
                     ));
+                    let objects = groups[group].clone();
                     queue.finish_group(Outcome::Failed);
-                    self.emit_backfill(&job, job_state(&job), None);
+                    for object in &objects {
+                        job.note_unsettled(object);
+                    }
+                    self.emit_backfill(&job, job.state(), None);
                     self.backfill = Some(job);
                     return;
                 }
             }
         }
-        let plan = prepared
+        let object = groups[group][item].clone();
+        let (plan, deferred) = prepared
             .as_ref()
-            .and_then(|(_, plans)| plans.get(item).cloned().flatten());
+            .map(|p| (p.plans[item].clone(), p.deferred[item]))
+            .unwrap_or((None, false));
         let outcome = match plan {
-            None => Outcome::Present,
-            Some(plan) => match self.pull_card_object(&binding, &groups[group][item], plan) {
-                Ok(outcome) => outcome,
-                Err(stop) => {
-                    queue.advance(Outcome::Failed);
-                    return self.stop_backfill(job, stop);
+            Some(plan) if matches!(plan.status.as_str(), "announced" | "receiving") => {
+                match self.open_card_read(&binding, &object, plan) {
+                    Ok(Ok(read)) => {
+                        put_reading(&mut job, Reading { item, ..read });
+                        self.backfill = Some(job);
+                        return;
+                    }
+                    Ok(Err(outcome)) => outcome,
+                    Err(message) => {
+                        job.note_unsettled(&object);
+                        if let Phase::Pulling { queue, .. } = &mut job.phase {
+                            queue.advance(Outcome::Failed);
+                        }
+                        return self.finish_backfill_with(job, "error", Some(&message));
+                    }
                 }
-            },
+            }
+            _ if deferred => Outcome::Deferred,
+            _ => Outcome::Present,
         };
-        queue.advance(outcome);
-        self.emit_backfill(&job, job_state(&job), None);
-        self.backfill = Some(job);
+        self.advance(job, &object, outcome);
     }
 
-    fn body_key(&self) -> String {
-        let device = self.device.clone().unwrap_or_default();
-        if device.serial.is_empty() {
-            device.model
-        } else {
-            device.serial
+    fn advance(&mut self, mut job: Backfill, object: &CardObject, outcome: Outcome) {
+        if let Phase::Pulling { queue, .. } = &mut job.phase {
+            queue.advance(outcome);
         }
+        job.record(object, outcome);
+        self.emit_backfill(&job, job.state(), None);
+        self.backfill = Some(job);
     }
 
     fn host_roles(&self) -> Vec<&'static str> {
@@ -393,16 +671,9 @@ impl Actor {
             .unwrap_or_default()
     }
 
-    /// Asks Node, right before reading, which files of this exposure are still missing; each
-    /// returned plan is a member that will receive the card file.
-    fn prepare_card_group(
-        &self,
-        binding: &Binding,
-        objects: &[CardObject],
-    ) -> TResult<Vec<Option<MemberPlan>>> {
-        let device = self.device.clone().unwrap_or_default();
-        // Members whose photo may still arrive by another way are left alone.
-        let mut exclude: Vec<String> = self
+    /// Members whose photo may still arrive by another way; their card copies wait.
+    fn unready_members(&self) -> Vec<String> {
+        let mut members: Vec<String> = self
             .inner
             .recovery
             .lock()
@@ -410,28 +681,49 @@ impl Actor {
             .keys()
             .cloned()
             .collect();
-        exclude.extend(self.late_claims.values().map(|c| c.plan.member_id.clone()));
+        members.extend(self.late_claims.values().map(|c| c.plan.member_id.clone()));
+        members
+    }
+
+    /// Asks Node, right before reading, which files of this exposure are still missing; each
+    /// returned plan is a member that will receive the card file.
+    fn prepare_card_group(
+        &self,
+        binding: &Binding,
+        group: usize,
+        objects: &[CardObject],
+    ) -> TResult<Prepared> {
         let reply = node_blocking(
             &self.inner.app,
             "tether-backfill",
             json!([binding.shoot_id, "prepare", {
-                "body": self.body_key(),
+                "camera": self.card_camera(),
                 "hostRoles": self.host_roles(),
                 "epoch": self.epoch,
-                "camera": camera_snapshot(&device, &ExposureSnapshot::default(), None),
-                "exclude": exclude,
+                "exclude": self.unready_members(),
                 "objects": objects.iter().map(card_object_json).collect::<Vec<_>>(),
             }]),
         )?;
         let exposure_id = reply["exposureId"].as_str().map(String::from);
-        let members = reply["members"].as_array().cloned().unwrap_or_default();
-        let mut plans = Vec::with_capacity(objects.len());
+        let names = |field: &str| -> HashMap<(u64, u64), Value> {
+            reply[field]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|m| {
+                    Some(((m["storageId"].as_u64()?, m["handle"].as_u64()?), m.clone()))
+                })
+                .collect()
+        };
+        let (members, deferred) = (names("members"), names("deferred"));
+        let mut prepared = Prepared {
+            group,
+            plans: Vec::with_capacity(objects.len()),
+            deferred: Vec::with_capacity(objects.len()),
+        };
         for object in objects {
-            let member = members.iter().find(|m| {
-                m["handle"].as_u64() == Some(object.handle as u64)
-                    && m["storageId"].as_u64() == Some(object.storage_id as u64)
-            });
-            let plan = match (member, &exposure_id) {
+            let key = (object.storage_id as u64, object.handle as u64);
+            let plan = match (members.get(&key), &exposure_id) {
                 (Some(m), Some(exposure_id)) => Some(MemberPlan {
                     exposure_id: exposure_id.clone(),
                     member_id: str_field(m, "memberId")?,
@@ -442,21 +734,19 @@ impl Actor {
                 }),
                 _ => None,
             };
-            plans.push(plan);
+            prepared.plans.push(plan);
+            prepared.deferred.push(deferred.contains_key(&key));
         }
-        Ok(plans)
+        Ok(prepared)
     }
 
-    /// Reads one card file into its member's stage file and publishes it like a live capture.
-    fn pull_card_object(
+    /// Opens the member's stage file for a card read. The outer error stops the pass.
+    fn open_card_read(
         &mut self,
         binding: &Binding,
         object: &CardObject,
         plan: MemberPlan,
-    ) -> std::result::Result<Outcome, Stop> {
-        if !matches!(plan.status.as_str(), "announced" | "receiving") {
-            return Ok(Outcome::Present);
-        }
+    ) -> std::result::Result<std::result::Result<Reading, Outcome>, String> {
         let app = self.inner.app.clone();
         let shoot = binding.shoot_id.as_str();
         let failed = |e: TetherError| {
@@ -470,42 +760,93 @@ impl Actor {
                     "The capture disk is almost full. Free space or choose another folder; the photo stays on the card.",
                 );
                 failed(e.clone());
-                return Err(Stop::Error(e.message));
+                return Err(e.message);
             }
         }
-        let limit = plan.declared.unwrap_or(0).max(MAX_CAPTURE_BYTES);
-        let writer = transfer::stage_path(&binding.root, &plan.stage_rel)
-            .and_then(|path| StageWriter::create(path, limit));
-        let mut writer = match writer {
-            Ok(writer) => writer,
-            Err(e) => return Ok(failed(TetherError::from_transfer(e))),
+        let Some(session) = self.session.as_ref() else {
+            return Ok(Err(Outcome::Deferred));
         };
-        let device = self.device.clone().unwrap_or_default();
-        let Some(session) = self.session.as_mut() else {
-            failed(TetherError::new("CAMERA_LOST", "The camera disconnected."));
-            return Err(Stop::Interrupted);
+        let read = match CardRead::new(session, object, MAX_CAPTURE_BYTES) {
+            Ok(read) => read,
+            Err(message) => return Ok(Err(failed(TetherError::new("UNSUPPORTED", message)))),
+        };
+        let wifi = self.device.as_ref().is_some_and(|d| d.wifi);
+        let declared = object.info.compressed_size as u64;
+        let writer = transfer::stage_path(&binding.root, &plan.stage_rel)
+            .and_then(|path| StageWriter::create(path, declared.max(MAX_CAPTURE_BYTES)));
+        match writer {
+            Ok(writer) => Ok(Ok(Reading {
+                item: 0,
+                object: object.clone(),
+                plan,
+                read,
+                writer,
+                timeout: card::whole_read_timeout(declared, wifi),
+                started: Instant::now(),
+            })),
+            Err(e) => Ok(Err(failed(TetherError::from_transfer(e)))),
+        }
+    }
+
+    /// Reads the next part of the card file in progress.
+    fn continue_read(&mut self, mut job: Backfill, mut reading: Reading) {
+        let (Some(binding), Some(session)) = (self.binding(), self.session.as_mut()) else {
+            put_reading(&mut job, reading);
+            return self.finish_backfill(job, "interrupted");
         };
         // An orphan left by any other transaction is not this file; the card keeps its own.
         drop(session.transport_mut().take_orphan());
         self.inner.receiving.fetch_add(1, Ordering::SeqCst);
-        let started = Instant::now();
-        let read = session.read_object(object.handle, &object.info, &mut writer);
+        let step = reading
+            .read
+            .step(session, &mut reading.writer, reading.timeout);
         self.inner.receiving.fetch_sub(1, Ordering::SeqCst);
         drop(session.transport_mut().take_orphan());
-        let read = match read {
-            Ok(Some(read)) => read,
-            Ok(None) => {
-                drop(writer);
-                return Ok(failed(TetherError::new(
-                    "INCOMPLETE",
-                    format!(
-                        "{} could not be read from the camera card; it stays there.",
-                        plan.name
+        let object = reading.object.clone();
+        let app = self.inner.app.clone();
+        let shoot = binding.shoot_id.clone();
+        let fail = |reading: Reading, e: TetherError| {
+            drop(reading.writer);
+            journal_issue(&app, &shoot, &reading.plan.member_id, &e);
+            Outcome::Failed
+        };
+        let outcome = match step {
+            Ok(ReadStep::Yield) => {
+                put_reading(&mut job, reading);
+                self.backfill = Some(job);
+                return;
+            }
+            Ok(ReadStep::More) => {
+                self.card_busy = true;
+                put_reading(&mut job, reading);
+                self.backfill = Some(job);
+                return;
+            }
+            Ok(ReadStep::Gone) => {
+                let name = reading.plan.name.clone();
+                fail(
+                    reading,
+                    TetherError::new(
+                        "INCOMPLETE",
+                        format!("{name} could not be read from the camera card; it stays there."),
                     ),
-                )));
+                )
+            }
+            Ok(ReadStep::Done { bytes, declared }) if bytes != declared => {
+                let name = reading.plan.name.clone();
+                fail(
+                    reading,
+                    TetherError::new(
+                        "INCOMPLETE",
+                        format!("The camera card sent {bytes} of {declared} bytes of {name}; the photo stays on the card."),
+                    ),
+                )
+            }
+            Ok(ReadStep::Done { bytes, .. }) => {
+                self.card_busy = true;
+                self.publish_card_file(&binding, &object, reading, bytes)
             }
             Err(e) => {
-                drop(writer);
                 let error = if matches!(e, SessionError::Removed { .. }) {
                     TetherError::new(
                         "CAMERA_LOST",
@@ -514,46 +855,53 @@ impl Actor {
                 } else {
                     TetherError::from_session(e_clone(&e))
                 };
-                failed(error);
-                return if self.handle_session_error(e) {
-                    Err(Stop::Interrupted)
-                } else {
-                    Ok(Outcome::Failed)
-                };
+                fail(reading, error);
+                job.note_unsettled(&object);
+                if let Phase::Pulling { queue, .. } = &mut job.phase {
+                    queue.advance(Outcome::Failed);
+                }
+                return self.card_error(job, e);
             }
         };
-        if !read.complete() {
-            drop(writer);
-            return Ok(failed(TetherError::new(
-                "INCOMPLETE",
-                format!(
-                    "The camera card sent {} of {} bytes of {}; the photo stays on the card.",
-                    read.bytes,
-                    read.declared.unwrap_or(0),
-                    plan.name
-                ),
-            )));
-        }
+        self.advance(job, &object, outcome);
+    }
+
+    /// Verifies and journals a complete card file, then publishes it like a live capture.
+    fn publish_card_file(
+        &mut self,
+        binding: &Binding,
+        object: &CardObject,
+        reading: Reading,
+        bytes: u64,
+    ) -> Outcome {
+        let Reading {
+            plan,
+            writer,
+            started,
+            ..
+        } = reading;
+        let app = self.inner.app.clone();
+        let shoot = binding.shoot_id.as_str();
+        let failed = |e: TetherError| {
+            journal_issue(&app, shoot, &plan.member_id, &e);
+            Outcome::Failed
+        };
         let stage = writer.path().to_path_buf();
         let receipt = match writer.finish() {
             Ok(receipt) => receipt,
-            Err(e) => return Ok(failed(TetherError::from_transfer(e))),
+            Err(e) => return failed(TetherError::from_transfer(e)),
         };
         let seconds = started.elapsed().as_secs_f64().max(1e-3);
-        self.emit_transfer(
-            &plan,
-            "staged",
-            read.bytes,
-            Some(read.bytes as f64 / 1e6 / seconds),
-        );
+        self.emit_transfer(&plan, "staged", bytes, Some(bytes as f64 / 1e6 / seconds));
         if let Err(e) = transfer::validate_staged_signature(&stage, &plan.name) {
-            return Ok(failed(TetherError::from_transfer(e)));
+            return failed(TetherError::from_transfer(e));
         }
+        let device = self.device.clone().unwrap_or_default();
         let shot = camera_snapshot(&device, &ExposureSnapshot::default(), Some(&object.info));
         journal_staged(&app, shoot, &plan, &receipt, &shot);
         crate::logs::write(&format!(
             "tether backfill pulled {} ({} bytes)",
-            plan.name, read.bytes
+            plan.name, bytes
         ));
         spawn_publish(
             self.inner.clone(),
@@ -563,43 +911,86 @@ impl Actor {
             shot,
             self.epoch,
         );
-        Ok(Outcome::Pulled)
+        Outcome::Pulled
+    }
+
+    /// A card transaction failed. A camera that keeps failing card reads is not read again by
+    /// itself after a reconnect.
+    fn card_error(&mut self, job: Backfill, e: SessionError) {
+        let message = TetherError::from_session(e_clone(&e)).message;
+        if !matches!(e, SessionError::Removed { .. }) {
+            self.card_failed.insert(job.body.clone());
+        }
+        let ended = self.handle_session_error(e);
+        let state = if ended { "interrupted" } else { "error" };
+        self.finish_backfill_with(job, state, Some(&message));
     }
 
     fn finish_backfill(&mut self, job: Backfill, state: &str) {
-        let clean = match &job.phase {
-            Phase::Pulling { queue, .. } => queue.failed == 0,
-            Phase::Scanning(_) => false,
-        };
-        if state == "done" && clean {
-            if let (Some(through), Some(binding)) = (&job.newest, self.binding()) {
-                if let Err(e) = node_blocking(
-                    &self.inner.app,
-                    "tether-backfill",
-                    json!([binding.shoot_id, "synced", { "through": through }]),
-                ) {
-                    crate::logs::write(&format!(
-                        "tether backfill synced {}: {}",
-                        e.code, e.message
-                    ));
-                }
-            }
-        }
-        self.emit_backfill(&job, state, None);
+        self.finish_backfill_with(job, state, None);
     }
 
-    fn stop_backfill(&mut self, job: Backfill, stop: Stop) {
-        match stop {
-            Stop::Interrupted => self.emit_backfill(&job, "interrupted", None),
-            Stop::Error(message) => self.emit_backfill(&job, "error", Some(&message)),
+    fn finish_backfill_with(&mut self, job: Backfill, state: &str, message: Option<&str>) {
+        self.release_unread(&job);
+        if state != "done" {
+            self.emit_backfill(&job, state, message);
+            return;
+        }
+        self.card_failed.remove(&job.body);
+        if let (Some(through), Some(binding)) = (job.synced_through(), self.binding()) {
+            if let Err(e) = node_blocking(
+                &self.inner.app,
+                "tether-backfill",
+                json!([binding.shoot_id, "synced", { "camera": self.card_camera(), "through": through }]),
+            ) {
+                crate::logs::write(&format!("tether backfill synced {}: {}", e.code, e.message));
+            }
+        }
+        if job.listed == 0 {
+            self.emit_backfill(&job, "empty", Some(EMPTY));
+        } else {
+            self.emit_backfill(&job, "done", None);
+        }
+    }
+
+    /// Members prepared for files the pass will not read now wait for the next pull.
+    fn release_unread(&self, job: &Backfill) {
+        let Phase::Pulling {
+            queue,
+            prepared: Some(prepared),
+            reading,
+            ..
+        } = &job.phase
+        else {
+            return;
         };
+        let from = match (reading, queue.next()) {
+            (Some(read), _) => read.item,
+            (None, PullStep::Item { group, item }) if group == prepared.group => item,
+            _ => return,
+        };
+        let Some(shoot) = &self.shoot_id else {
+            return;
+        };
+        let e = TetherError::new(
+            "INCOMPLETE",
+            "Not read from the camera card yet; it stays there for the next pull.",
+        );
+        for plan in prepared.plans[from..].iter().flatten() {
+            if matches!(plan.status.as_str(), "announced" | "receiving") {
+                journal_issue(&self.inner.app, shoot, &plan.member_id, &e);
+            }
+        }
     }
 
     /// Ends a running pass; the photos not yet pulled stay on the card for the next one.
     pub(super) fn end_backfill(&mut self, state: &str, reason: Option<&str>) -> Value {
         self.backfill_due = None;
         match self.backfill.take() {
-            Some(job) => self.emit_backfill(&job, state, reason),
+            Some(job) => {
+                self.release_unread(&job);
+                self.emit_backfill(&job, state, reason)
+            }
             None => self.backfill_payload(None, "idle", None),
         }
     }
@@ -619,7 +1010,7 @@ impl Actor {
         let mut payload = json!({
             "v": 1,
             "shootId": self.shoot_id,
-            "epoch": self.epoch,
+            "epoch": job.map_or(self.epoch, |j| j.epoch),
             "state": state,
             "storageAvailable": state != "unavailable",
             "message": message,
@@ -627,35 +1018,35 @@ impl Actor {
         let Some(job) = job else {
             return payload;
         };
+        payload["pass"] = job.pass.into();
         payload["auto"] = job.auto.into();
         payload["paused"] = job.paused.into();
         payload["already"] = job.already.into();
+        payload["held"] = job.held.into();
+        payload["truncated"] = job.truncated.into();
         match &job.phase {
             Phase::Scanning(scan) => {
                 payload["scanned"] = scan.inspected.into();
                 payload["listed"] = scan.listed.into();
                 payload["found"] = scan.found.len().into();
             }
+            Phase::Planning { objects, .. } => {
+                payload["listed"] = job.listed.into();
+                payload["found"] = objects.len().into();
+            }
             Phase::Pulling { queue, .. } => {
                 let (current, total) = queue.progress();
+                payload["listed"] = job.listed.into();
                 payload["current"] = current.into();
                 payload["total"] = total.into();
                 payload["shots"] = queue.shots.into();
                 payload["pulled"] = queue.pulled.into();
                 payload["failed"] = queue.failed.into();
+                payload["deferred"] = queue.deferred.into();
                 payload["present"] = queue.present.into();
             }
         }
         payload
-    }
-}
-
-fn job_state(job: &Backfill) -> &'static str {
-    match (&job.phase, job.paused) {
-        (Phase::Pulling { queue, .. }, _) if queue.cancelling() => "cancelling",
-        (_, true) => "paused",
-        (Phase::Scanning(_), false) => "scanning",
-        (Phase::Pulling { .. }, false) => "pulling",
     }
 }
 

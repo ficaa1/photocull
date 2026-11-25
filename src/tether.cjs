@@ -37,8 +37,15 @@ const secondsWall = seconds => { const d = new Date(seconds * 1000); return `${d
 const digest = text => createHash('sha256').update(text).digest('hex');
 // How far before the shoot's start, on the camera's clock, a card photo still counts as missed.
 const CARD_SLACK = 60, CARD_SLACK_UNKNOWN = 300;
+// Seconds from a test shot's release, on the camera's clock, within which its frame was taken.
+const TEST_EARLY = 2, TEST_LATE = 40;
 // Member codes left by a transfer that never completed; the card copy may stand in for them.
 const RETAKE = new Set(['CAMERA_LOST', 'INCOMPLETE', 'IO_ERROR', 'NO_SPACE']);
+const reopenable = m => !m.sha256 && (['announced', 'receiving'].includes(m.status) || m.status === 'held' && RETAKE.has(m.code));
+const bodyKeyOf = snapshot => snapshot.bodyId ? createHash('sha256').update(`photocull-body:${snapshot.model ?? ''}:${snapshot.bodyId}`).digest('hex').slice(0, 32) : null;
+const stemOf = name => fold(path.basename(name, path.extname(name)));
+// What card keys and the synced mark are filed under: the body, or its model when it has no serial.
+const cardBody = camera => bodyKeyOf(camera) ?? `model:${camera.model ?? ''}`;
 function only(value, allowed, field) {
   if (!isPlain(value)) fail('UNSUPPORTED', `Invalid ${field}.`, { field });
   const unknown = Object.keys(value).find(key => !allowed.includes(key));
@@ -280,7 +287,7 @@ class TetherService {
     this.activeShoot = shoot.shootId;
     return this.tx(shoot.shootId, async (draft, events) => {
       const s = draft.shoot;
-      if (!s.backfill || s.closedAt) s.backfill = { startedAt: wallClock(this.now()), syncedThrough: null };
+      if (!s.backfill || s.closedAt) s.backfill = { startedAt: wallClock(this.now()), synced: {} };
       Object.assign(s, { session: opened.id, recursive: opened.recursive, closedAt: null });
       if (!s.recursive && s.activeRelDir) s.activeRelDir = '';
       s.activeDirId = await this.directoryIdentity(s, s.activeRelDir).catch(() => null);
@@ -509,7 +516,7 @@ class TetherService {
       if (Math.abs(c.next) > LIMIT) fail('INCOMPLETE', 'The capture counter is exhausted. Set the next number or reset it.', { field: 'counter' });
       const request = requestId ? ledger.requests[id(requestId, 'requestId')] : null;
       if (requestId && !request) fail('STALE_REV', 'Unknown capture request.', { field: 'requestId' });
-      const bodyKey = snapshot.bodyId ? createHash('sha256').update(`photocull-body:${snapshot.model ?? ''}:${snapshot.bodyId}`).digest('hex').slice(0, 32) : null;
+      const bodyKey = bodyKeyOf(snapshot);
       const cameraCounter = bodyKey ? await this.allocateCameraCounter(bodyKey, kept.length ? key : null) : null;
       // Only a released shutter still waiting for its photo is answered by this exposure; one that
       // timed out never claims it once a newer shutter was released.
@@ -875,36 +882,51 @@ class TetherService {
 
   // Missed shots on the camera card. Nothing here touches the card: Rust lists and reads it, and
   // every file it pulls goes through the ordinary member journal, reservation and publication.
+  // Clock offsets, matches and the synced mark all belong to one camera body.
   backfill(shootId, op, detail = {}) {
-    if (op === 'window') return this.cardWindow(this.ledger(shootId));
+    if (op === 'window') return this.cardWindow(this.ledger(shootId), cameraSnapshot(only(detail, ['camera'], 'card window').camera ?? {}));
     if (op === 'plan') return this.cardPlan(this.ledger(shootId), detail);
     if (op === 'prepare') return this.cardPrepare(shootId, detail);
     if (op === 'synced') return this.tx(shootId, async ledger => {
-      only(detail, ['through'], 'card sync');
+      only(detail, ['camera', 'through'], 'card sync');
       if (wallSeconds(detail.through) === null) fail('UNSUPPORTED', 'Invalid capture time.', { field: 'through' });
-      const mark = ledger.shoot.backfill;
-      if (mark && (!mark.syncedThrough || detail.through > mark.syncedThrough)) mark.syncedThrough = detail.through;
-      return { syncedThrough: mark?.syncedThrough ?? null };
+      const camera = cameraSnapshot(detail.camera ?? {}), bodyKey = bodyKeyOf(camera), body = cardBody(camera), mark = ledger.shoot.backfill;
+      if (!mark) return { syncedThrough: null };
+      // Never past a photo of this body whose bytes have not reached the computer.
+      let through = detail.through;
+      const index = this.cardIndex(ledger, bodyKey);
+      for (const [captureTime, exposures] of index.bySecond) {
+        if (captureTime <= through && exposures.some(e => index.members(e.exposureId).some(m => ['raw', 'jpeg'].includes(m.role) && reopenable(m)))) through = secondsWall(wallSeconds(captureTime) - 1);
+      }
+      mark.synced ??= {};
+      if (!mark.synced[body] || through > mark.synced[body]) mark.synced[body] = through;
+      return { syncedThrough: mark.synced[body] };
     });
     fail('UNSUPPORTED', 'Unknown backfill operation.', { field: 'op' });
   }
 
+  // Median camera-minus-computer clock offset this body's tethered shots showed, or null.
+  cardOffset(ledger, bodyKey) {
+    const offsets = Object.values(ledger.exposures).filter(e => !e.providerShotKey?.startsWith('card:') && (e.stableCameraKey ?? null) === bodyKey && e.captureTime && e.hostTime)
+      .sort((a, b) => b.ordinal - a.ordinal).slice(0, 25).map(e => wallSeconds(e.captureTime) - wallSeconds(e.hostTime)).filter(Number.isFinite);
+    return offsets.length ? median(offsets) : null;
+  }
+
   // The earliest camera time a missed shot can have: this session's start moved onto the camera's
-  // clock by the offset its tethered shots showed, or the newest time a full pass already settled.
-  cardWindow(ledger) {
+  // clock, or the newest time a full pass already settled for this body.
+  cardWindow(ledger, camera) {
     const mark = ledger.shoot.backfill, start = wallSeconds(mark?.startedAt);
     if (start === null) return { since: null };
-    const offsets = Object.values(ledger.exposures).filter(e => !e.providerShotKey?.startsWith('card:') && e.captureTime && e.hostTime)
-      .sort((a, b) => b.ordinal - a.ordinal).slice(0, 25).map(e => wallSeconds(e.captureTime) - wallSeconds(e.hostTime)).filter(Number.isFinite);
-    let since = start + (offsets.length ? median(offsets) - CARD_SLACK : -CARD_SLACK_UNKNOWN);
-    const synced = wallSeconds(mark.syncedThrough);
+    const offset = this.cardOffset(ledger, bodyKeyOf(camera));
+    let since = start + (offset === null ? -CARD_SLACK_UNKNOWN : offset - CARD_SLACK);
+    const synced = wallSeconds(mark.synced?.[cardBody(camera)]);
     if (synced !== null) since = Math.max(since, synced - CARD_SLACK);
     return { since: secondsWall(Math.floor(since)) };
   }
 
   cardListing(detail) {
-    only(detail, ['body', 'hostRoles', 'objects', 'epoch', 'camera', 'exclude'], 'card listing');
-    const body = shortText(detail.body ?? '', 128, 'body');
+    only(detail, ['camera', 'hostRoles', 'objects', 'epoch', 'exclude', 'testShots', 'testReleases'], 'card listing');
+    const camera = cameraSnapshot(detail.camera ?? {});
     const hostRoles = Array.isArray(detail.hostRoles) ? detail.hostRoles.filter(r => r === 'raw' || r === 'jpeg') : [];
     const objects = (Array.isArray(detail.objects) ? detail.objects : fail('UNSUPPORTED', 'Invalid card listing.', { field: 'objects' })).map(o => {
       only(o, ['handle', 'storageId', 'name', 'role', 'bytes', 'captureTime'], 'card object');
@@ -915,14 +937,22 @@ class TetherService {
       if (wallSeconds(o.captureTime) === null) fail('UNSUPPORTED', 'Invalid capture time.', { field: 'captureTime' });
       return { handle: o.handle, storageId: o.storageId, name, role, bytes: o.bytes, captureTime: o.captureTime };
     }).filter(Boolean);
-    return { body, hostRoles, objects };
+    const list = (value, field) => value === undefined ? [] : Array.isArray(value) ? value : fail('UNSUPPORTED', `Invalid ${field}.`, { field });
+    const exclude = list(detail.exclude, 'exclude').filter(x => typeof x === 'string');
+    const testShots = list(detail.testShots, 'testShots').map(t => {
+      only(t, ['captureTime', 'stem'], 'test shot');
+      if (wallSeconds(t.captureTime) === null || typeof t.stem !== 'string') fail('UNSUPPORTED', 'Invalid test shot.', { field: 'testShots' });
+      return `${t.captureTime}\0${fold(t.stem)}`;
+    });
+    const testReleases = list(detail.testReleases, 'testReleases').map(at => Number.isSafeInteger(at) && at > 0 ? at : fail('UNSUPPORTED', 'Invalid test release.', { field: 'testReleases' }));
+    return { camera, bodyKey: bodyKeyOf(camera), body: cardBody(camera), hostRoles, objects, exclude, testShots: new Set(testShots), testReleases };
   }
 
   // One exposure per capture second and file stem, RAW first; ordered oldest first.
   cardGroups(body, objects) {
     const groups = new Map();
     for (const o of objects) {
-      const stem = fold(path.basename(o.name, path.extname(o.name))), at = `${o.captureTime}\0${stem}`;
+      const stem = stemOf(o.name), at = `${o.captureTime}\0${stem}`;
       if (!groups.has(at)) groups.set(at, { key: `card:${digest(`${body}\0${o.captureTime}\0${stem}`).slice(0, 40)}`, captureTime: o.captureTime, stem, objects: [] });
       const group = groups.get(at);
       if (!group.objects.some(x => x.role === o.role)) group.objects.push({ ...o, objectKey: `${group.key}:${digest(fold(o.name)).slice(0, 16)}` });
@@ -931,50 +961,90 @@ class TetherService {
     return [...groups.values()].sort((a, b) => a.captureTime < b.captureTime ? -1 : a.captureTime > b.captureTime ? 1 : a.stem < b.stem ? -1 : 1);
   }
 
-  // What the ledger already holds of a card exposure. A file is present when a member of the same
-  // capture second and role has its stem or size; one whose transfer never completed is reopened.
-  cardTarget(ledger, group, hostRoles, exclude = []) {
-    const members = Object.values(ledger.members), sameStem = m => fold(path.basename(m.originalName, path.extname(m.originalName))) === group.stem;
-    const sized = (m, o) => o.bytes > 0 && [m.declaredBytes, m.receivedBytes].includes(o.bytes);
-    const exposure = Object.values(ledger.exposures).find(e => e.providerShotKey === group.key)
-      ?? Object.values(ledger.exposures).find(e => e.captureTime === group.captureTime && members.some(m => m.exposureId === e.exposureId && (sameStem(m) || group.objects.some(o => o.role === m.role && sized(m, o)))));
-    const wanted = exposure ? exposure.expectedHostRoles : hostRoles.some(r => group.objects.some(o => o.role === r)) ? hostRoles : group.objects.map(o => o.role);
-    const reopenable = m => !exclude.includes(m.memberId) && !m.sha256 && (['announced', 'receiving'].includes(m.status) || m.status === 'held' && RETAKE.has(m.code));
-    const todo = [];
-    let present = 0;
-    for (const object of group.objects.filter(o => wanted.includes(o.role))) {
-      const own = exposure ? members.filter(m => m.exposureId === exposure.exposureId && m.role === object.role) : [];
-      if (own.some(m => !reopenable(m))) { present++; continue; }
-      const member = own.find(m => m.providerObjectKey === object.objectKey) ?? own[0];
-      todo.push({ object, memberId: member?.memberId ?? null });
+  // Exposures by provider key and, for one body, by capture second; members by exposure.
+  cardIndex(ledger, bodyKey) {
+    const members = new Map(), byKey = new Map(), bySecond = new Map();
+    for (const m of Object.values(ledger.members)) members.set(m.exposureId, [...members.get(m.exposureId) ?? [], m]);
+    for (const e of Object.values(ledger.exposures).sort((a, b) => a.ordinal - b.ordinal)) {
+      if (e.providerShotKey) byKey.set(e.providerShotKey, e);
+      if (e.captureTime && (e.stableCameraKey ?? null) === bodyKey) bySecond.set(e.captureTime, [...bySecond.get(e.captureTime) ?? [], e]);
     }
-    return { exposure, wanted, todo, present };
+    return { members: exposureId => members.get(exposureId) ?? [], byKey, bySecond };
   }
 
-  cardPlan(ledger, detail) {
-    const { body, hostRoles, objects } = this.cardListing(detail);
-    const groups = [];
+  // What the ledger already holds of a card exposure. Its exposure is this body's one of the same
+  // capture second holding a file of the same stem, or one that has no file yet: a burst writes
+  // several frames a second, often of equal size. A member whose transfer never completed is
+  // reopened; one whose photo may still arrive another way is deferred.
+  cardTarget(index, group, hostRoles, exclude) {
+    const candidates = index.bySecond.get(group.captureTime) ?? [], own = e => index.members(e.exposureId);
+    const exposure = index.byKey.get(group.key) ?? candidates.find(e => own(e).some(m => stemOf(m.originalName) === group.stem))
+      ?? candidates.find(e => !e.providerShotKey?.startsWith('card:') && !own(e).length);
+    const roles = group.objects.map(o => o.role), offered = hostRoles.filter(r => roles.includes(r)), visible = offered.length ? offered : roles;
+    // A card exposure expects every role the card shows, whichever pass first saw it.
+    const wanted = !exposure ? visible : exposure.providerShotKey === group.key ? [...new Set([...exposure.expectedHostRoles, ...visible])] : exposure.expectedHostRoles;
+    const objects = group.objects.filter(o => wanted.includes(o.role)), todo = [], deferred = [];
     let present = 0;
+    for (const object of objects) {
+      const mine = exposure ? own(exposure).filter(m => m.role === object.role) : [];
+      if (mine.some(m => exclude.includes(m.memberId))) { deferred.push(object); continue; }
+      if (mine.some(m => !reopenable(m))) { present++; continue; }
+      const member = mine.find(m => m.providerObjectKey === object.objectKey) ?? mine.find(m => stemOf(m.originalName) === group.stem) ?? mine[0];
+      todo.push({ object, memberId: member?.memberId ?? null });
+    }
+    return { exposure, wanted, objects, todo, deferred, present };
+  }
+
+  // Which card exposures to pull, each with all of its photo files so a pair stays one exposure.
+  // `unsettled` capture times must stay inside the next pass's window.
+  cardPlan(ledger, detail) {
+    const { bodyKey, body, hostRoles, objects, exclude, testShots, testReleases } = this.cardListing(detail);
+    const index = this.cardIndex(ledger, bodyKey), open = [];
+    let present = 0, tested = 0;
     for (const group of this.cardGroups(body, objects)) {
-      const target = this.cardTarget(ledger, group, hostRoles);
-      if (target.todo.length) groups.push({ captureTime: group.captureTime, objects: target.todo.map(t => t.object) });
+      // A test shot known by its own capture time and name never joins the shoot.
+      if (testShots.has(`${group.captureTime}\0${group.stem}`)) { tested++; continue; }
+      const target = this.cardTarget(index, group, hostRoles, exclude);
+      if (target.todo.length || target.deferred.length) open.push({ group, target });
       else if (target.present) present++;
     }
-    return { groups, present };
+    // A test shot released but never delivered has no name to match: the first frame taken after
+    // its release stays on the card, or every frame near it while this body's clock is unknown.
+    const offset = this.cardOffset(ledger, bodyKey), held = new Set(), consumed = [];
+    for (const at of testReleases) {
+      const released = wallSeconds(wallClock(new Date(at))), pullable = open.filter(o => o.target.todo.length && !held.has(o));
+      if (offset === null) {
+        for (const o of pullable) if (Math.abs(wallSeconds(o.group.captureTime) - released) <= CARD_SLACK_UNKNOWN) held.add(o);
+        continue;
+      }
+      const first = pullable.find(o => { const d = wallSeconds(o.group.captureTime) - released - offset; return d >= -TEST_EARLY && d <= TEST_LATE; });
+      if (first) { held.add(first); consumed.push(at); }
+    }
+    const groups = [], unsettled = [];
+    for (const o of open) {
+      if (held.has(o) || o.target.deferred.length) unsettled.push(o.group.captureTime);
+      if (!held.has(o) && o.target.todo.length) groups.push({ captureTime: o.group.captureTime, objects: o.target.objects.map(({ objectKey, ...x }) => x) });
+    }
+    return { groups, present, tested, held: held.size, unsettled, consumed };
   }
 
   // Re-checks one exposure right before its files are read, then creates or reopens its members.
   async cardPrepare(shootId, detail) {
-    const { body, hostRoles, objects } = this.cardListing(detail), exclude = Array.isArray(detail.exclude) ? detail.exclude.filter(x => typeof x === 'string') : [];
-    const [group, ...rest] = this.cardGroups(body, objects);
+    const listing = this.cardListing(detail), { bodyKey, hostRoles, exclude } = listing;
+    const [group, ...rest] = this.cardGroups(listing.body, listing.objects);
     if (!group || rest.length) fail('UNSUPPORTED', 'A card exposure is one capture.', { field: 'objects' });
-    const first = this.cardTarget(this.ledger(shootId), group, hostRoles, exclude);
-    if (!first.todo.length) return { exposureId: first.exposure?.exposureId ?? null, members: [] };
+    const handles = objects => objects.map(o => ({ handle: o.handle, storageId: o.storageId }));
+    const first = this.cardTarget(this.cardIndex(this.ledger(shootId), bodyKey), group, hostRoles, exclude);
+    if (!first.todo.length) return { exposureId: first.exposure?.exposureId ?? null, members: [], deferred: handles(first.deferred) };
     const exposureId = first.exposure?.exposureId
-      ?? (await this.accept(shootId, detail.epoch, null, { key: group.key }, first.wanted.filter(r => group.objects.some(o => o.role === r)), { ...(isPlain(detail.camera) ? detail.camera : {}), captureTime: group.captureTime })).exposureId;
+      ?? (await this.accept(shootId, detail.epoch, null, { key: group.key }, first.wanted, { ...listing.camera, captureTime: group.captureTime })).exposureId;
     return this.tx(shootId, async ledger => {
       const exposure = ledger.exposures[exposureId];
-      const { todo } = this.cardTarget(ledger, group, hostRoles, exclude), members = [];
+      const { todo, wanted, deferred } = this.cardTarget(this.cardIndex(ledger, bodyKey), group, hostRoles, exclude), members = [];
+      if (exposure.providerShotKey === group.key) for (const role of wanted.filter(r => !exposure.expectedHostRoles.includes(r))) {
+        exposure.expectedHostRoles.push(role);
+        if (exposure.status === 'complete') exposure.status = 'availablePartial';
+      }
       for (const { object, memberId } of todo) {
         let member = memberId && ledger.members[memberId];
         if (member?.status === 'held') Object.assign(member, { status: 'announced', code: null, reason: null, heldFrom: null, finalRelPath: null, claimId: null });
@@ -986,7 +1056,7 @@ class TetherService {
       }
       const open = Object.values(ledger.members).filter(m => m.exposureId === exposure.exposureId);
       if (['accepted', 'needsAttention'].includes(exposure.status) && members.length && !open.some(m => m.status === 'held')) exposure.status = 'transferring';
-      return { exposureId: exposure.exposureId, members };
+      return { exposureId: exposure.exposureId, members, deferred: handles(deferred) };
     });
   }
 

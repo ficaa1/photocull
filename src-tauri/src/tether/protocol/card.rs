@@ -2,12 +2,17 @@
 //! for photos taken since the shoot began, and the pull queue that yields to live captures. Only
 //! read operations exist here; nothing on the card is ever deleted or changed.
 
-use super::ptp::{self, format, FileKind, ObjectInfo};
+use super::codec::QueueSignal;
+use super::ptp::{self, format, op, FileKind, ObjectInfo};
 use super::session::{Result, SonySession};
 use super::transport::PtpTransport;
+use std::time::Duration;
 
-/// Consecutive photos older than the window, newest first, after which a storage is done.
-pub const OLDER_RUN_LIMIT: usize = 64;
+/// Objects inspected per pass, newest handle first. Handles say nothing certain about capture
+/// order, so every listed object up to this cap is read.
+pub const MAX_INVENTORY: usize = 4096;
+/// One GetPartialObject, so a shutter or Cancel waits for this much at most.
+pub const READ_CHUNK: u32 = 2 << 20;
 
 const NOT_LISTED: &str = "This connection does not show the camera’s memory card. Sony cameras in PC Remote mode often keep the card hidden; nothing was changed.";
 const NO_CARD: &str = "No readable memory card is visible over this connection.";
@@ -22,6 +27,17 @@ pub fn capture_stamp(info: &ObjectInfo) -> Option<String> {
     info.capture_date_parts().map(|(d, t)| format!("{d}T{t}"))
 }
 
+/// A live capture the camera has announced or queued goes before any card read.
+pub fn live_capture_waiting<T: PtpTransport>(session: &SonySession<T>) -> bool {
+    session.object_announced() || session.queue_signal() != QueueSignal::Empty
+}
+
+/// GetObject reports no progress, so a whole-file read gets the time a slow link needs for it.
+pub fn whole_read_timeout(declared: u64, wifi: bool) -> Duration {
+    let floor: u64 = if wifi { 1 << 20 } else { 4 << 20 };
+    (Duration::from_secs(10) + Duration::from_secs(declared / floor)).min(Duration::from_secs(120))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CardObject {
     pub storage_id: u32,
@@ -31,127 +47,254 @@ pub struct CardObject {
     pub stamp: String,
 }
 
-#[derive(Debug)]
-pub enum CardAccess {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanStep {
+    /// A live capture is waiting; nothing was sent.
+    Yield,
+    Working,
+    Done,
     /// The card cannot be read over this connection; the reason is for the photographer.
     Unavailable(&'static str),
-    Listed(CardScan),
 }
 
-/// Reads ObjectInfo a few objects at a time so the camera worker can serve live captures between
-/// steps. Each storage is read newest handle first and ends after a long run of older photos.
+#[derive(Debug)]
+enum Stage {
+    Storages,
+    Handles(Vec<u32>),
+    Objects,
+}
+
+/// Lists the card one transaction per step so the camera worker serves live captures between
+/// steps: storage IDs, then each storage's handles, then ObjectInfo newest handle first.
 #[derive(Debug)]
 pub struct CardScan {
-    /// `(storage, handle)` per storage in ascending handle order; taken from the end.
-    pending: Vec<Vec<(u32, u32)>>,
     since: Option<String>,
-    older_run: usize,
+    stage: Stage,
+    /// `(handle, storage)` in ascending order; taken from the end.
+    pending: Vec<(u32, u32)>,
     pub storages: Vec<u32>,
     pub listed: usize,
     pub inspected: usize,
+    /// More objects were listed than one pass inspects.
+    pub truncated: bool,
     pub found: Vec<CardObject>,
+    /// RAW or JPEG files without a capture time.
     pub undated: usize,
+    /// Objects whose ObjectInfo the camera refused.
+    pub refused: usize,
 }
 
 impl CardScan {
-    /// Lists card storages and their objects. Refusals become `Unavailable`; only transport
-    /// failures are errors.
-    pub fn open<T: PtpTransport>(
-        session: &mut SonySession<T>,
-        since: Option<String>,
-    ) -> Result<CardAccess> {
-        let Some(ids) = session.storage_ids()? else {
-            return Ok(CardAccess::Unavailable(NOT_LISTED));
-        };
-        let storages: Vec<u32> = ids.into_iter().filter(|id| is_card_storage(*id)).collect();
-        let mut pending = Vec::new();
-        let mut readable = Vec::new();
-        for storage in &storages {
-            let Some(mut handles) = session.object_handles(*storage)? else {
-                continue;
-            };
-            handles.retain(|h| *h != 0 && *h >> 16 != 0xFFFF);
-            handles.sort_unstable();
-            handles.dedup();
-            readable.push(*storage);
-            pending.push(handles.into_iter().map(|h| (*storage, h)).collect());
-        }
-        if readable.is_empty() {
-            return Ok(CardAccess::Unavailable(if storages.is_empty() {
-                NOT_LISTED
-            } else {
-                NO_CARD
-            }));
-        }
-        let listed = pending.iter().map(Vec::len).sum();
-        Ok(CardAccess::Listed(CardScan {
-            pending,
+    pub fn new(since: Option<String>) -> Self {
+        CardScan {
             since,
-            older_run: 0,
-            storages: readable,
-            listed,
+            stage: Stage::Storages,
+            pending: Vec::new(),
+            storages: Vec::new(),
+            listed: 0,
             inspected: 0,
+            truncated: false,
             found: Vec::new(),
             undated: 0,
-        }))
+            refused: 0,
+        }
     }
 
-    pub fn finished(&self) -> bool {
-        self.pending.is_empty()
+    /// Whether some listed object's capture time is unknown after the scan.
+    pub fn blind(&self) -> bool {
+        self.truncated || self.undated > 0 || self.refused > 0
     }
 
-    /// Inspects up to `batch` objects; true once the scan is complete.
-    pub fn step<T: PtpTransport>(
+    /// Sends at most one read-only transaction. Refusals become `Unavailable`; only transport
+    /// failures are errors.
+    pub fn step<T: PtpTransport>(&mut self, session: &mut SonySession<T>) -> Result<ScanStep> {
+        if live_capture_waiting(session) {
+            return Ok(ScanStep::Yield);
+        }
+        match &mut self.stage {
+            Stage::Storages => {
+                let Some(mut ids) = session.storage_ids()? else {
+                    return Ok(ScanStep::Unavailable(NOT_LISTED));
+                };
+                ids.retain(|id| is_card_storage(*id));
+                ids.sort_unstable();
+                ids.dedup();
+                if ids.is_empty() {
+                    return Ok(ScanStep::Unavailable(NOT_LISTED));
+                }
+                ids.reverse();
+                self.stage = Stage::Handles(ids);
+                Ok(ScanStep::Working)
+            }
+            Stage::Handles(left) => {
+                let Some(storage) = left.pop() else {
+                    return Ok(ScanStep::Working);
+                };
+                if let Some(handles) = session.object_handles(storage)? {
+                    self.storages.push(storage);
+                    self.pending.extend(
+                        handles
+                            .into_iter()
+                            .filter(|h| *h != 0 && *h >> 16 != 0xFFFF)
+                            .map(|h| (h, storage)),
+                    );
+                }
+                if !left.is_empty() {
+                    return Ok(ScanStep::Working);
+                }
+                if self.storages.is_empty() {
+                    return Ok(ScanStep::Unavailable(NO_CARD));
+                }
+                self.pending.sort_unstable();
+                self.pending.dedup_by_key(|(handle, _)| *handle);
+                self.listed = self.pending.len();
+                if self.listed > MAX_INVENTORY {
+                    self.truncated = true;
+                    self.pending.drain(..self.listed - MAX_INVENTORY);
+                }
+                self.stage = Stage::Objects;
+                Ok(if self.pending.is_empty() {
+                    ScanStep::Done
+                } else {
+                    ScanStep::Working
+                })
+            }
+            Stage::Objects => {
+                if let Some((handle, storage_id)) = self.pending.pop() {
+                    self.inspect(session, handle, storage_id)?;
+                }
+                Ok(if self.pending.is_empty() {
+                    ScanStep::Done
+                } else {
+                    ScanStep::Working
+                })
+            }
+        }
+    }
+
+    fn inspect<T: PtpTransport>(
         &mut self,
         session: &mut SonySession<T>,
-        batch: usize,
-    ) -> Result<bool> {
-        for _ in 0..batch {
-            let Some(storage) = self.pending.last_mut() else {
-                break;
-            };
-            let Some((storage_id, handle)) = storage.pop() else {
-                self.pending.pop();
-                self.older_run = 0;
-                continue;
-            };
-            self.inspected += 1;
-            let Some(info) = session.object_info(handle)? else {
-                continue;
-            };
-            if info.object_format == format::ASSOCIATION || info.association_type != 0 {
-                continue;
-            }
-            let kind = ptp::kind_from_info(info.object_format, &info.filename);
-            if !matches!(kind, FileKind::Raw | FileKind::Jpeg) {
-                continue;
-            }
-            let Some(stamp) = capture_stamp(&info) else {
-                self.undated += 1;
-                continue;
-            };
-            if self.since.as_ref().is_some_and(|since| stamp < *since) {
-                self.older_run += 1;
-                if self.older_run >= OLDER_RUN_LIMIT {
-                    self.pending.pop();
-                    self.older_run = 0;
-                }
-                continue;
-            }
-            self.older_run = 0;
-            self.found.push(CardObject {
-                storage_id,
-                handle,
-                info,
-                kind,
-                stamp,
-            });
+        handle: u32,
+        storage_id: u32,
+    ) -> Result<()> {
+        self.inspected += 1;
+        let Some(info) = session.object_info(handle)? else {
+            self.refused += 1;
+            return Ok(());
+        };
+        if info.object_format == format::ASSOCIATION || info.association_type != 0 {
+            return Ok(());
         }
-        if self.pending.last().is_some_and(Vec::is_empty) {
-            self.pending.pop();
-            self.older_run = 0;
+        let kind = ptp::kind_from_info(info.object_format, &info.filename);
+        if !matches!(kind, FileKind::Raw | FileKind::Jpeg) {
+            return Ok(());
         }
-        Ok(self.pending.is_empty())
+        let Some(stamp) = capture_stamp(&info) else {
+            self.undated += 1;
+            return Ok(());
+        };
+        if self.since.as_ref().is_some_and(|since| stamp < *since) {
+            return Ok(());
+        }
+        self.found.push(CardObject {
+            storage_id,
+            handle,
+            info,
+            kind,
+            stamp,
+        });
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadStep {
+    /// A live capture is waiting; nothing was sent.
+    Yield,
+    More,
+    /// The camera stopped sending; `bytes` may fall short of `declared`.
+    Done {
+        bytes: u64,
+        declared: u64,
+    },
+    /// The object is gone or the camera refused it.
+    Gone,
+}
+
+/// Reads one card file a chunk per step where the camera offers GetPartialObject, otherwise in
+/// one GetObject with a size-bound timeout.
+#[derive(Debug)]
+pub struct CardRead {
+    handle: u32,
+    declared: u64,
+    offset: u64,
+    partial: bool,
+}
+
+impl CardRead {
+    /// Refuses, before anything is read, a file larger than `max` or of unknown size.
+    // ImageCaptureCore hands over a whole GetObject payload in memory before Rust sees its size.
+    pub fn new<T: PtpTransport>(
+        session: &SonySession<T>,
+        object: &CardObject,
+        max: u64,
+    ) -> std::result::Result<Self, String> {
+        let declared = object.info.compressed_size;
+        if declared == 0 || declared == u32::MAX || declared as u64 > max {
+            return Err(format!(
+                "{} is too large or of unknown size to read from the camera card; it stays there.",
+                object.info.filename
+            ));
+        }
+        Ok(CardRead {
+            handle: object.handle,
+            declared: declared as u64,
+            offset: 0,
+            partial: session
+                .device()
+                .is_some_and(|d| d.supports(op::GET_PARTIAL_OBJECT)),
+        })
+    }
+
+    pub fn step<T: PtpTransport, W: std::io::Write + Send>(
+        &mut self,
+        session: &mut SonySession<T>,
+        sink: &mut W,
+        whole_timeout: Duration,
+    ) -> Result<ReadStep> {
+        if live_capture_waiting(session) {
+            return Ok(ReadStep::Yield);
+        }
+        let done = |bytes| ReadStep::Done {
+            bytes,
+            declared: self.declared,
+        };
+        if !self.partial {
+            return Ok(
+                match session.read_object(self.handle, sink, whole_timeout)? {
+                    Some(bytes) => done(bytes),
+                    None => ReadStep::Gone,
+                },
+            );
+        }
+        let len = (self.declared - self.offset).min(READ_CHUNK as u64) as u32;
+        match session.read_object_part(self.handle, self.offset as u32, len, sink)? {
+            // A body that lists GetPartialObject but refuses it still serves GetObject.
+            None if self.offset == 0 => {
+                self.partial = false;
+                Ok(ReadStep::More)
+            }
+            None => Ok(done(self.offset)),
+            Some(n) => {
+                self.offset += n;
+                Ok(if n == 0 || self.offset >= self.declared {
+                    done(self.offset)
+                } else {
+                    ReadStep::More
+                })
+            }
+        }
     }
 }
 
@@ -162,8 +305,6 @@ pub enum PullStep {
         group: usize,
         item: usize,
     },
-    /// A live capture is in flight; it goes first.
-    Wait,
     Paused,
     Cancelled,
     Finished,
@@ -175,10 +316,12 @@ pub enum Outcome {
     Failed,
     /// Already on the computer when its turn came.
     Present,
+    /// Left for later: its photo may still arrive another way.
+    Deferred,
 }
 
 /// Pulls exposure groups one object at a time. Pause and Cancel take effect between groups, so a
-/// RAW+JPEG pair is never split by them; a live capture waits for at most one object.
+/// RAW+JPEG pair is never split by them.
 #[derive(Debug, Clone)]
 pub struct PullQueue {
     sizes: Vec<usize>,
@@ -192,6 +335,7 @@ pub struct PullQueue {
     pub pulled: usize,
     pub failed: usize,
     pub present: usize,
+    pub deferred: usize,
 }
 
 impl PullQueue {
@@ -208,10 +352,11 @@ impl PullQueue {
             pulled: 0,
             failed: 0,
             present: 0,
+            deferred: 0,
         }
     }
 
-    pub fn next(&self, live_busy: bool) -> PullStep {
+    pub fn next(&self) -> PullStep {
         if self.group >= self.sizes.len() {
             return PullStep::Finished;
         }
@@ -222,9 +367,6 @@ impl PullQueue {
             if self.paused {
                 return PullStep::Paused;
             }
-        }
-        if live_busy {
-            return PullStep::Wait;
         }
         PullStep::Item {
             group: self.group,
@@ -244,6 +386,7 @@ impl PullQueue {
             }
             Outcome::Failed => self.failed += 1,
             Outcome::Present => self.present += 1,
+            Outcome::Deferred => self.deferred += 1,
         }
         self.item += 1;
         if self.item >= self.sizes[self.group] {
@@ -266,10 +409,6 @@ impl PullQueue {
         self.paused = paused;
     }
 
-    pub fn paused(&self) -> bool {
-        self.paused
-    }
-
     pub fn cancel(&mut self) {
         self.cancelling = true;
     }
@@ -282,10 +421,6 @@ impl PullQueue {
     pub fn progress(&self) -> (usize, usize) {
         let total = self.sizes.len();
         ((self.group + 1).min(total), total)
-    }
-
-    pub fn groups_done(&self) -> usize {
-        self.group.min(self.sizes.len())
     }
 }
 
@@ -306,39 +441,48 @@ mod tests {
     }
 
     #[test]
-    fn a_live_capture_waits_for_at_most_one_object_and_pairs_are_never_split() {
+    fn pause_and_cancel_wait_for_the_pair_in_progress() {
         let mut q = PullQueue::new(vec![2, 1, 0, 2]);
         assert_eq!(q.progress(), (1, 3));
-        assert_eq!(q.next(false), PullStep::Item { group: 0, item: 0 });
-        assert_eq!(q.next(true), PullStep::Wait);
+        assert_eq!(q.next(), PullStep::Item { group: 0, item: 0 });
         q.advance(Outcome::Pulled);
-        // Pause and Cancel wait for the JPEG of the pair in progress.
         q.set_paused(true);
         q.cancel();
-        assert_eq!(q.next(false), PullStep::Item { group: 0, item: 1 });
+        assert_eq!(q.next(), PullStep::Item { group: 0, item: 1 });
         q.advance(Outcome::Failed);
-        assert_eq!((q.shots, q.pulled, q.failed, q.groups_done()), (1, 1, 1, 1));
-        assert_eq!(q.next(false), PullStep::Cancelled);
+        assert_eq!((q.shots, q.pulled, q.failed), (1, 1, 1));
+        assert_eq!(q.next(), PullStep::Cancelled);
 
         let mut q = PullQueue::new(vec![1, 2, 2]);
         q.set_paused(true);
-        assert_eq!(q.next(false), PullStep::Paused);
+        assert_eq!(q.next(), PullStep::Paused);
         q.set_paused(false);
-        assert_eq!(q.next(false), PullStep::Item { group: 0, item: 0 });
+        assert_eq!(q.next(), PullStep::Item { group: 0, item: 0 });
         q.finish_group(Outcome::Present);
         assert_eq!(q.progress(), (2, 3));
-        q.advance(Outcome::Present);
+        q.advance(Outcome::Deferred);
         q.advance(Outcome::Pulled);
         q.finish_group(Outcome::Failed);
-        assert_eq!(q.next(false), PullStep::Finished);
+        assert_eq!(q.next(), PullStep::Finished);
         assert_eq!(
-            (q.shots, q.pulled, q.failed, q.present, q.groups_done()),
-            (1, 1, 2, 2, 3)
+            (q.shots, q.pulled, q.failed, q.present, q.deferred),
+            (1, 1, 2, 1, 1)
         );
         // Nothing more is counted once finished.
         q.advance(Outcome::Pulled);
         q.finish_group(Outcome::Pulled);
         assert_eq!(q.pulled, 1);
-        assert_eq!(PullQueue::new(vec![]).next(false), PullStep::Finished);
+        assert_eq!(PullQueue::new(vec![]).next(), PullStep::Finished);
+    }
+
+    #[test]
+    fn a_whole_file_read_gets_more_time_on_a_slower_link_within_a_bound() {
+        let raw = 60 << 20;
+        assert_eq!(whole_read_timeout(raw, false), Duration::from_secs(25));
+        assert_eq!(whole_read_timeout(raw, true), Duration::from_secs(70));
+        assert_eq!(
+            whole_read_timeout(u32::MAX as u64, true),
+            Duration::from_secs(120)
+        );
     }
 }

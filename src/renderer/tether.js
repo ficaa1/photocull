@@ -1600,15 +1600,27 @@
 
     // ---- Missed shots: photos the camera saved to its card but never sent. The card is only read. ----
     receiveBackfill(event) {
-      const shots = n => `${n} missed shot${n === 1 ? '' : 's'}`, failed = event.failed ? ` ${event.failed} file${event.failed === 1 ? '' : 's'} could not be read and stay${event.failed === 1 ? 's' : ''} on the card.` : '';
+      // Each pass replaces the last; a late event from an earlier or ended pass changes nothing.
+      const current = this.backfill.pass ?? 0, pass = event.pass ?? current, running = ['scanning', 'pulling', 'paused', 'cancelling'];
+      if (pass < current || pass === current && current && !running.includes(this.backfill.state) && running.includes(event.state)) return;
+      const base = pass === current ? this.backfill : { state: 'idle', note: '', busy: this.backfill.busy };
+      const count = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+      const shots = n => count(n, 'missed shot');
+      const extra = [
+        event.failed ? `${count(event.failed, 'file')} could not be read and stay${event.failed === 1 ? 's' : ''} on the card.` : '',
+        event.deferred ? `${count(event.deferred, 'file')} still on ${event.deferred === 1 ? 'its' : 'their'} way from the live connection; the next pull checks again.` : '',
+        event.held ? `${count(event.held, 'frame')} taken around a Test Shot stay${event.held === 1 ? 's' : ''} on the card.` : '',
+        event.truncated ? 'The card holds more files than one pass compares; only the newest were checked.' : '',
+      ].filter(Boolean).map(text => ` ${text}`).join('');
       const note = {
-        done: event.total ? `Pulled ${shots(event.shots ?? 0)} from the card.${failed}` : 'Nothing missed: every shot on the card is already here.',
+        done: (event.total ? `Pulled ${shots(event.shots ?? 0)} from the card.` : 'Nothing missed: every shot on the card is already here.') + extra,
+        empty: event.message || 'The card shows no photos over this connection.',
         cancelled: `Stopped. Pulled ${shots(event.shots ?? 0)}; the rest stay on the card.`,
         interrupted: 'The camera disconnected; missed shots stay on the card for the next pull.',
         unavailable: event.message || 'This connection does not show the camera’s memory card.',
         error: `Missed shots were not pulled: ${event.message || 'the card could not be read'}. They stay on the card.`,
       }[event.state];
-      this.backfill = { ...this.backfill, ...event, note: note ?? this.backfill.note };
+      this.backfill = { ...base, ...event, pass, note: note ?? base.note };
       // An automatic pass speaks up only when it brought something in.
       if (note && event.state !== 'interrupted' && (!event.auto || event.state === 'done' && event.shots)) this.host.toast(note);
       this.renderBackfill();

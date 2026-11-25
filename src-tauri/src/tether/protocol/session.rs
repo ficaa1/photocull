@@ -222,20 +222,6 @@ pub enum DrainStep<W> {
     },
 }
 
-/// One stored object read from the card.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StoredRead {
-    pub kind: FileKind,
-    pub bytes: u64,
-    pub declared: Option<u64>,
-}
-
-impl StoredRead {
-    pub fn complete(&self) -> bool {
-        self.declared.map_or(true, |d| d == self.bytes)
-    }
-}
-
 /// Responses with which a body declines a storage request without failing the session.
 fn refused(code: u16) -> bool {
     matches!(
@@ -1536,47 +1522,61 @@ impl<T: PtpTransport> SonySession<T> {
         Ok(Some(ObjectInfo::parse(&data)?))
     }
 
-    /// Streams a stored object into `sink`; the camera keeps it. `None` when it is gone or
-    /// refused. The capture queue is never read here: its objects leave the camera once sent.
+    /// Streams a whole stored object into `sink`; the camera keeps it. The byte count, or `None`
+    /// when it is gone or refused. The capture queue is never read here: its objects leave the
+    /// camera once sent.
     pub fn read_object<W: Write + Send>(
         &mut self,
         object: u32,
-        info: &ObjectInfo,
         sink: &mut W,
-    ) -> Result<Option<StoredRead>> {
+        timeout: Duration,
+    ) -> Result<Option<u64>> {
+        self.read_stored(
+            op::GET_OBJECT,
+            &[object],
+            self.config.max_object_bytes,
+            sink,
+            timeout,
+        )
+    }
+
+    /// Streams up to `len` bytes of a stored object from `offset`, as GetPartialObject allows.
+    pub fn read_object_part<W: Write + Send>(
+        &mut self,
+        object: u32,
+        offset: u32,
+        len: u32,
+        sink: &mut W,
+    ) -> Result<Option<u64>> {
+        let timeout = self.config.command_timeout;
+        self.read_stored(
+            op::GET_PARTIAL_OBJECT,
+            &[object, offset, len],
+            len as u64,
+            sink,
+            timeout,
+        )
+    }
+
+    fn read_stored<W: Write + Send>(
+        &mut self,
+        opcode: u16,
+        params: &[u32],
+        limit: u64,
+        sink: &mut W,
+        timeout: Duration,
+    ) -> Result<Option<u64>> {
         self.require_ready()?;
-        if is_pseudo_handle(object) {
+        if is_pseudo_handle(params[0]) {
             return Err(SessionError::InvalidValue(
                 "Card reads take stored objects only.".into(),
             ));
         }
-        let declared = (info.compressed_size != u32::MAX).then_some(info.compressed_size as u64);
-        let limit = self.config.max_object_bytes.max(declared.unwrap_or(0));
-        let mut tee = HeadTee {
-            inner: sink,
-            head: Vec::with_capacity(16),
-        };
-        let reply = self.raw(
-            op::GET_OBJECT,
-            &[object],
-            DataPhase::In {
-                sink: &mut tee,
-                limit,
-            },
-            self.config.transfer_timeout,
-        )?;
-        let head = std::mem::take(&mut tee.head);
+        let reply = self.raw(opcode, params, DataPhase::In { sink, limit }, timeout)?;
         match reply.code {
-            resp::OK => Ok(Some(StoredRead {
-                kind: ptp::classify(info.object_format, &info.filename, &head),
-                bytes: reply.bytes_in,
-                declared,
-            })),
+            resp::OK => Ok(Some(reply.bytes_in)),
             code if refused(code) => Ok(None),
-            code => Err(SessionError::Response {
-                opcode: op::GET_OBJECT,
-                code,
-            }),
+            code => Err(SessionError::Response { opcode, code }),
         }
     }
 
@@ -2658,17 +2658,25 @@ mod tests {
         s.transport().finish();
     }
 
-    fn m3_listing_storage() -> SonySession<ScriptedTransport> {
+    /// A body that lists its card, with nothing waiting in the capture queue.
+    fn m3_listing_storage_with(extra: &[u16]) -> SonySession<ScriptedTransport> {
+        let mut info = device_info_with_storage("ILCE-7M3");
+        info.operations.extend_from_slice(extra);
+        let idle = with_current(m3_descriptors(), prop::OBJECT_IN_MEMORY, PropValue::U16(0));
         let mut t = ScriptedTransport::new();
         m3_handshake_as(
             &mut t,
-            device_info_with_storage("ILCE-7M3"),
-            m3_snapshot_payload(),
+            info,
+            codec::encode_snapshot(&idle, Grammar::SingleList),
         );
         let mut s = SonySession::new(t, SessionConfig::default());
         s.connect().unwrap();
         s.transport_mut().sent.clear();
         s
+    }
+
+    fn m3_listing_storage() -> SonySession<ScriptedTransport> {
+        m3_listing_storage_with(&[])
     }
 
     fn refuse(t: &mut ScriptedTransport, opcode: u16, params: &[u32], code: u16) {
@@ -2684,18 +2692,57 @@ mod tests {
     fn assert_read_only(s: &SonySession<ScriptedTransport>) {
         for sent in &s.transport().sent {
             assert!(
-                matches!(sent.opcode, 0x1004 | 0x1007 | 0x1008 | 0x1009) && sent.out.is_none(),
+                matches!(sent.opcode, 0x1004 | 0x1007 | 0x1008 | 0x1009 | 0x101B)
+                    && sent.out.is_none(),
                 "{:04X} is not a card read",
                 sent.opcode
             );
         }
     }
 
+    /// Runs a scan to its end, checking that no step sends more than one operation; only a
+    /// DeviceBusy retry repeats it.
+    fn scan_to_end(
+        s: &mut SonySession<ScriptedTransport>,
+        scan: &mut card::CardScan,
+    ) -> card::ScanStep {
+        loop {
+            let before = s.transport().sent.len();
+            let step = scan.step(s).unwrap();
+            let mut ops: Vec<_> = s.transport().sent[before..]
+                .iter()
+                .map(|x| (x.opcode, x.params.clone()))
+                .collect();
+            ops.dedup();
+            assert!(ops.len() <= 1, "one operation per step: {ops:04X?}");
+            if step != card::ScanStep::Working {
+                return step;
+            }
+        }
+    }
+
+    fn capture_announced(s: &mut SonySession<ScriptedTransport>) {
+        let generation = s.transport().generation();
+        s.transport_mut().schedule(
+            Duration::ZERO,
+            TransportEvent::Ptp {
+                generation,
+                code: ptp::event::SONY_OBJECT_ADDED,
+                params: vec![handle::CAPTURE],
+            },
+        );
+        s.process_events();
+    }
+
     #[test]
     fn pc_remote_without_storage_operations_reads_nothing_from_the_card() {
-        let mut s = m3(m3_descriptors());
-        let access = card::CardScan::open(&mut s, None).unwrap();
-        assert!(matches!(access, card::CardAccess::Unavailable(m) if m.contains("PC Remote")));
+        let mut s = m3(with_current(
+            m3_descriptors(),
+            prop::OBJECT_IN_MEMORY,
+            PropValue::U16(0),
+        ));
+        let step = card::CardScan::new(None).step(&mut s).unwrap();
+        assert!(matches!(step, card::ScanStep::Unavailable(m) if m.contains("PC Remote")));
         assert!(
             s.transport().sent.is_empty(),
             "no unadvertised operation is sent"
@@ -2725,9 +2772,10 @@ mod tests {
             resp::STORE_NOT_AVAILABLE,
         );
         for expected in ["PC Remote", "PC Remote", "No readable memory card"] {
-            match card::CardScan::open(&mut s, None).unwrap() {
-                card::CardAccess::Unavailable(m) => assert!(m.contains(expected), "{m}"),
-                card::CardAccess::Listed(_) => panic!("no card is listed"),
+            let mut scan = card::CardScan::new(None);
+            match scan_to_end(&mut s, &mut scan) {
+                card::ScanStep::Unavailable(m) => assert!(m.contains(expected), "{m}"),
+                other => panic!("no card is listed: {other:?}"),
             }
             assert_eq!(s.state(), ConnectionState::Ready);
         }
@@ -2743,27 +2791,28 @@ mod tests {
             Err(TransportError::Removed),
         );
         assert!(matches!(
-            card::CardScan::open(&mut s, None),
+            card::CardScan::new(None).step(&mut s),
             Err(SessionError::Removed { .. })
         ));
         assert_eq!(s.state(), ConnectionState::Removed);
     }
 
     #[test]
-    fn card_scan_keeps_raw_and_jpeg_shot_since_the_window_newest_first() {
+    fn card_scan_reads_one_object_per_step_and_keeps_raw_and_jpeg_since_the_window() {
         let mut s = m3_listing_storage();
         let t = s.transport_mut();
+        // The same card listed twice is read once.
         expect_in(
             t,
             op::GET_STORAGE_IDS,
             &[],
-            handle_list(&[0x0001_0001, 0x0002_0000, 0xFFFF_C001]),
+            handle_list(&[0x0001_0001, 0x0002_0000, 0xFFFF_C001, 0x0001_0001]),
         );
         expect_in(
             t,
             op::GET_OBJECT_HANDLES,
             &[0x0001_0001, 0, 0],
-            handle_list(&[7, 2, 3, 4, 5, 6, 1, 0xFFFF_C001]),
+            handle_list(&[7, 2, 3, 4, 5, 6, 1, 0xFFFF_C001, 5]),
         );
         let infos = [
             (7, card_info(0x3801, "DSC00045.JPG", 4000, "")),
@@ -2789,16 +2838,9 @@ mod tests {
         for (handle, info) in infos {
             expect_in(t, op::GET_OBJECT_INFO, &[handle], info);
         }
-        let mut scan = match card::CardScan::open(&mut s, Some("20261125T140000".into())).unwrap() {
-            card::CardAccess::Listed(scan) => scan,
-            card::CardAccess::Unavailable(m) => panic!("{m}"),
-        };
+        let mut scan = card::CardScan::new(Some("20261125T140000".into()));
+        assert_eq!(scan_to_end(&mut s, &mut scan), card::ScanStep::Done);
         assert_eq!((scan.storages.clone(), scan.listed), (vec![0x0001_0001], 7));
-        let mut steps = 0;
-        while !scan.step(&mut s, 3).unwrap() {
-            steps += 1;
-        }
-        assert_eq!(steps, 2);
         let found: Vec<_> = scan
             .found
             .iter()
@@ -2813,54 +2855,132 @@ mod tests {
             ]
         );
         assert_eq!((scan.undated, scan.inspected), (1, 7));
+        assert!(scan.blind(), "an undated photo cannot be placed in time");
         assert_read_only(&s);
         s.transport().finish();
     }
 
     #[test]
-    fn a_long_run_of_older_photos_ends_the_storage_early() {
+    fn a_new_photo_at_a_low_handle_is_found_behind_older_ones_up_to_the_inventory_cap() {
         let mut s = m3_listing_storage();
         let t = s.transport_mut();
         expect_in(t, op::GET_STORAGE_IDS, &[], handle_list(&[0x0001_0001]));
-        let handles: Vec<u32> = (1..=200).collect();
+        // A new folder can take handles below every photo already on the card.
+        let total = card::MAX_INVENTORY as u32 + 2;
+        let handles: Vec<u32> = (1..=total).collect();
         expect_in(
             t,
             op::GET_OBJECT_HANDLES,
             &[0x0001_0001, 0, 0],
             handle_list(&handles),
         );
+        for handle in (3..=total).rev() {
+            let info = if handle == 3 {
+                card_info(0xB101, "DSC00201.ARW", 9000, "20261125T150000")
+            } else {
+                card_info(0xB101, "DSC00001.ARW", 9000, "20261101T090000")
+            };
+            expect_in(t, op::GET_OBJECT_INFO, &[handle], info);
+        }
+        let mut scan = card::CardScan::new(Some("20261125T140000".into()));
+        assert_eq!(scan_to_end(&mut s, &mut scan), card::ScanStep::Done);
+        assert_eq!(scan.found.iter().map(|o| o.handle).collect::<Vec<_>>(), [3]);
+        assert_eq!(
+            (scan.listed, scan.inspected, scan.truncated),
+            (total as usize, card::MAX_INVENTORY, true)
+        );
+        assert!(scan.blind(), "the two oldest handles were never read");
+        s.transport().finish();
+    }
+
+    #[test]
+    fn card_work_yields_to_a_live_capture_between_transactions() {
+        let mut s = m3_listing_storage_with(&[op::GET_PARTIAL_OBJECT]);
+        let chunk = card::READ_CHUNK;
+        let raw = arw_file(chunk as usize * 2 + 500);
+        let size = raw.len() as u32;
+        let info = card_info(0xB101, "DSC00044.ARW", size, "20261125T143020");
+        let jpegs = [jpeg_file(700), jpeg_file(800)];
+        let t = s.transport_mut();
+        let live = |t: &mut ScriptedTransport, n: usize| {
+            let name = format!("DSC0005{n}.JPG");
+            let len = jpegs[n].len() as u32;
+            t.enqueue_object(
+                object_info(0x3801, &name, len, 50 + n as u32),
+                jpegs[n].clone(),
+            );
+            t.push(Step::CaptureInfo).push(Step::CaptureObject);
+        };
+        let part = |t: &mut ScriptedTransport, offset: u32, len: u32| {
+            let bytes = raw[offset as usize..(offset + len) as usize].to_vec();
+            expect_in(t, op::GET_PARTIAL_OBJECT, &[5, offset, len], bytes);
+        };
+        expect_in(t, op::GET_STORAGE_IDS, &[], handle_list(&[0x0001_0001]));
+        live(t, 0);
         expect_in(
             t,
-            op::GET_OBJECT_INFO,
-            &[200],
-            card_info(0xB101, "DSC00200.ARW", 9000, "20261125T150000"),
+            op::GET_OBJECT_HANDLES,
+            &[0x0001_0001, 0, 0],
+            handle_list(&[5]),
         );
-        for handle in (200 - card::OLDER_RUN_LIMIT as u32..200).rev() {
-            expect_in(
-                t,
-                op::GET_OBJECT_INFO,
-                &[handle],
-                card_info(0xB101, "DSC00001.ARW", 9000, "20261101T090000"),
-            );
-        }
-        let card::CardAccess::Listed(mut scan) =
-            card::CardScan::open(&mut s, Some("20261125T140000".into())).unwrap()
-        else {
-            panic!("the card is listed");
-        };
-        while !scan.step(&mut s, 16).unwrap() {}
-        assert_eq!(scan.found.len(), 1);
-        assert_eq!(scan.inspected, card::OLDER_RUN_LIMIT + 1);
+        expect_in(t, op::GET_OBJECT_INFO, &[5], info.clone());
+        part(t, 0, chunk);
+        live(t, 1);
+        part(t, chunk, chunk);
+        part(t, chunk * 2, 500);
+        // A shot announced while the card is busy sends nothing more to the card until the
+        // photo is drained.
+        let preempt =
+            |s: &mut SonySession<ScriptedTransport>,
+             n: usize,
+             step: &mut dyn FnMut(&mut SonySession<ScriptedTransport>) -> bool| {
+                capture_announced(s);
+                let sent = s.transport().sent.len();
+                assert!(step(s), "card work yields");
+                assert_eq!(s.transport().sent.len(), sent);
+                let live = s.drain_one(|_, _| Ok(Vec::new())).unwrap();
+                assert!(
+                    matches!(live, DrainStep::Object(o, b) if o.kind == FileKind::Jpeg && b == jpegs[n])
+                );
+            };
+
+        let mut scan = card::CardScan::new(Some("20261125T140000".into()));
+        assert_eq!(scan.step(&mut s).unwrap(), card::ScanStep::Working);
+        preempt(&mut s, 0, &mut |s| {
+            scan.step(s).unwrap() == card::ScanStep::Yield
+        });
+        assert_eq!(scan_to_end(&mut s, &mut scan), card::ScanStep::Done);
+        let object = scan.found.pop().unwrap();
+        assert_eq!(object.info, ObjectInfo::parse(&info).unwrap());
+
+        let mut read = card::CardRead::new(&s, &object, 512 << 20).unwrap();
+        let mut sink = Vec::new();
+        let timeout = card::whole_read_timeout(size as u64, false);
+        assert_eq!(
+            read.step(&mut s, &mut sink, timeout).unwrap(),
+            card::ReadStep::More
+        );
+        preempt(&mut s, 1, &mut |s| {
+            read.step(s, &mut sink, timeout).unwrap() == card::ReadStep::Yield
+        });
+        assert_eq!(
+            read.step(&mut s, &mut sink, timeout).unwrap(),
+            card::ReadStep::More
+        );
+        assert_eq!(
+            read.step(&mut s, &mut sink, timeout).unwrap(),
+            card::ReadStep::Done {
+                bytes: size as u64,
+                declared: size as u64
+            }
+        );
+        assert_eq!(sink, raw);
         s.transport().finish();
     }
 
     #[test]
     fn stored_objects_stream_to_the_sink_and_stay_on_the_card() {
-        let mut s = m3(with_current(
-            m3_descriptors(),
-            prop::OBJECT_IN_MEMORY,
-            PropValue::U16(0x8001),
-        ));
+        let mut s = m3_listing_storage();
         let raw = arw_file(9000);
         let t = s.transport_mut();
         expect_in(
@@ -2880,42 +3000,97 @@ mod tests {
         );
         refuse(t, op::GET_OBJECT, &[9], resp::INVALID_OBJECT_HANDLE);
         refuse(t, op::GET_OBJECT_INFO, &[9], resp::INVALID_OBJECT_HANDLE);
-        let info = s.object_info(5).unwrap().unwrap();
+        let object = |handle, info: Vec<u8>| card::CardObject {
+            storage_id: 0x0001_0001,
+            handle,
+            info: ObjectInfo::parse(&info).unwrap(),
+            kind: FileKind::Raw,
+            stamp: String::new(),
+        };
+        let timeout = Duration::from_secs(10);
+        let stored = object(
+            5,
+            card_info(0xB101, "DSC00044.ARW", 9000, "20261125T143020"),
+        );
+        assert_eq!(s.object_info(5).unwrap().unwrap(), stored.info);
         let mut sink = Vec::new();
-        let read = s.read_object(5, &info, &mut sink).unwrap().unwrap();
+        let mut read = card::CardRead::new(&s, &stored, 512 << 20).unwrap();
         assert_eq!(
-            read,
-            StoredRead {
-                kind: FileKind::Raw,
+            read.step(&mut s, &mut sink, timeout).unwrap(),
+            card::ReadStep::Done {
                 bytes: 9000,
-                declared: Some(9000)
+                declared: 9000
             }
         );
-        assert!(read.complete());
         assert_eq!(sink, raw);
 
-        let info =
-            ObjectInfo::parse(&card_info(0x3801, "DSC00044.JPG", 3000, "20261125T143020")).unwrap();
+        let short = object(4, card_info(0x3801, "DSC00044.JPG", 3000, ""));
         let mut sink = Vec::new();
-        let read = s.read_object(4, &info, &mut sink).unwrap().unwrap();
+        let mut read = card::CardRead::new(&s, &short, 512 << 20).unwrap();
         assert_eq!(
-            (read.kind, read.bytes, read.complete()),
-            (FileKind::Jpeg, 1200, false)
+            read.step(&mut s, &mut sink, timeout).unwrap(),
+            card::ReadStep::Done {
+                bytes: 1200,
+                declared: 3000
+            }
         );
         assert_eq!(sink, &jpeg[..1200]);
-        assert!(s.read_object(9, &info, &mut Vec::new()).unwrap().is_none());
+        let gone = object(9, card_info(0x3801, "DSC00046.JPG", 3000, ""));
+        let mut read = card::CardRead::new(&s, &gone, 512 << 20).unwrap();
+        assert_eq!(
+            read.step(&mut s, &mut Vec::new(), timeout).unwrap(),
+            card::ReadStep::Gone
+        );
         assert!(s.object_info(9).unwrap().is_none());
+        // Files over the limit or of unknown size are refused before anything is read.
+        for size in [9001, u32::MAX, 0] {
+            let big = object(6, card_info(0xB101, "DSC00047.ARW", size, ""));
+            assert!(card::CardRead::new(&s, &big, 9000).is_err());
+        }
         // The capture queue and Live View are never read as card objects.
         for pseudo in [handle::CAPTURE, handle::LIVE_VIEW] {
-            assert!(s.read_object(pseudo, &info, &mut Vec::new()).is_err());
+            assert!(s.read_object(pseudo, &mut Vec::new(), timeout).is_err());
             assert!(s.object_info(pseudo).is_err());
         }
-        assert_eq!(
-            s.object_in_memory(),
-            0x8001,
-            "the capture queue is untouched"
-        );
         assert!(!s.object_announced());
+        assert_read_only(&s);
+        s.transport().finish();
+    }
+
+    #[test]
+    fn a_body_that_refuses_partial_reads_is_read_whole() {
+        let mut s = m3_listing_storage_with(&[op::GET_PARTIAL_OBJECT]);
+        let raw = arw_file(9000);
+        let t = s.transport_mut();
+        refuse(
+            t,
+            op::GET_PARTIAL_OBJECT,
+            &[5, 0, 9000],
+            resp::OPERATION_NOT_SUPPORTED,
+        );
+        expect_in(t, op::GET_OBJECT, &[5], raw.clone());
+        let object = card::CardObject {
+            storage_id: 0x0001_0001,
+            handle: 5,
+            info: ObjectInfo::parse(&card_info(0xB101, "DSC00044.ARW", 9000, "")).unwrap(),
+            kind: FileKind::Raw,
+            stamp: String::new(),
+        };
+        let mut read = card::CardRead::new(&s, &object, 512 << 20).unwrap();
+        let mut sink = Vec::new();
+        let timeout = Duration::from_secs(10);
+        assert_eq!(
+            read.step(&mut s, &mut sink, timeout).unwrap(),
+            card::ReadStep::More
+        );
+        assert_eq!(
+            read.step(&mut s, &mut sink, timeout).unwrap(),
+            card::ReadStep::Done {
+                bytes: 9000,
+                declared: 9000
+            }
+        );
+        assert_eq!(sink, raw);
         assert_read_only(&s);
         s.transport().finish();
     }
