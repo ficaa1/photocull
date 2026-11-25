@@ -397,6 +397,7 @@
       if (mode === 'whenReady' && !(developed && await developed)) {
         const image = new Image(); image.src = this.host.imageUrl(item, 'preview');
         try { await image.decode(); } catch {
+          if (epoch !== this.follow.epoch) return false;
           const next = moved(); if (next) { void this.present(next.id, ordinal, mode, epoch); return false; }
           const prev = this.follow.stranded;
           if (!prev || prev.epoch !== epoch || ordinal >= prev.ordinal) this.follow.stranded = { id, ordinal, mode, epoch };
