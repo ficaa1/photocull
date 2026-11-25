@@ -218,6 +218,7 @@
       if (!reps.has(rep.kind) && rep.width) reps.set(rep.kind, rep);
     }
     has(id, kind) { return !!this.reps.get(id)?.has(kind); }
+    showsDeveloped(id) { return this.item?.id === id && this.shown?.info?.type === 'developed'; }
     hasAtLeast(id, kind) { return this.repList(id).some(rep => KIND_RANK[rep.kind] >= KIND_RANK[kind]); }
     repList(id) { return [...(this.reps.get(id)?.values() ?? [])]; }
     offer(item) {
@@ -232,6 +233,7 @@
       if (this.el.image.getAttribute('src') !== rep.url) this.el.image.src = rep.url;
       this.el.image.dataset.kind = rep.kind;
       this.updateSource(); this.view.setVisible(true);
+      if (rep.info?.type === 'developed') this.el.previewSource.textContent = 'Developed RAW';
       if (rep.info) this.badge(rep.info, item);
       else if (item.raw && rep.kind !== 'thumb' && !rep.asked) { rep.asked = true; void this.status(item, rep.kind, false, false); }
       this.renderNavigator();
@@ -264,6 +266,8 @@
         }
         const info = status.info; if (!info) return;
         const rep = this.reps.get(item.id)?.get(kind);
+        // A developed frame replaced the backend rendition this status describes.
+        if (rep?.info?.type === 'developed') return;
         if (rep) rep.info = info;
         if (rep && rep === this.shown) this.badge(info, item);
         if (!describe) return;

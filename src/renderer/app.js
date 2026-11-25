@@ -576,7 +576,7 @@ async function loadMetadata(item) {
       const dt = document.createElement('dt'), dd = document.createElement('dd');
       dt.textContent = name; dd.textContent = value || '—'; return [dt, dd];
     }));
-    $('preview-source').textContent = metadata.source || item.source;
+    if (!loupe.showsDeveloped(imageId)) $('preview-source').textContent = metadata.source || item.source;
     applyFocus();
   } catch { if (state.selected === imageId) $('metadata').textContent = 'Metadata unavailable'; }
 }
@@ -615,9 +615,18 @@ function badgeRow(node, place) {
 function thumbStatus(item) {
   const burst = culling.byId.get(item.id), color = state.settings.colors.find(c => c.id === colorOf(item));
   return [item.flag === 'pick' ? 'Pick' : item.flag === 'reject' ? 'Rejected' : '', item.rating ? `${item.rating} star${item.rating === 1 ? '' : 's'}` : '', color?.name,
-    burst ? `burst of ${burst.ids.length}` : '', burst && bestIn(burst) === item.id ? 'sharpest' : '', item.adjusted && 'Adjusted', item.developed && 'Hand-off', item.externalEdit && `Edited in ${editorName(item.editedBy)}`].filter(Boolean).join(', ');
+    burst ? `burst of ${burst.ids.length}` : '', burst && bestIn(burst) === item.id ? 'sharpest' : '', item.adjusted && 'Adjusted', item.developed && 'Hand-off', item.externalEdit && `Edited in ${editorName(item.editedBy)}`, tether?.misfireOf(item) && 'Possible flash misfire'].filter(Boolean).join(', ');
 }
+const SVG = 'http://www.w3.org/2000/svg';
 function addFlag(node, item) {
+  const misfire = tether?.misfireOf(item);
+  if (misfire) {
+    const badge = document.createElement('span'), icon = document.createElementNS(SVG, 'svg'), bolt = document.createElementNS(SVG, 'path');
+    badge.className = 'mini-misfire'; badge.title = `Possible flash misfire${misfire.detail ? ` · ${misfire.detail}` : ''}`;
+    icon.setAttribute('viewBox', '0 0 24 24'); icon.setAttribute('aria-hidden', 'true'); bolt.setAttribute('d', 'M13 2 4.5 13.5H11L10 22l8.5-11.5H12Z');
+    icon.append(bolt); badge.append(icon, Object.assign(document.createElement('span'), { className: 'badge-label', textContent: 'Misfire?' }));
+    badgeRow(node, 'top').append(badge);
+  }
   addBurstBadges(node,item);
   const marks = [item.adjusted && 'Adjusted', item.developed && 'Hand-off', item.externalEdit && `Edited in ${editorName(item.editedBy)}`].filter(Boolean);
   if (marks.length) { const badge = document.createElement('span'); badge.className = 'develop-badges'; badge.textContent = marks.map(m => m === 'Adjusted' ? '±' : m === 'Hand-off' ? 'H' : 'E').join(' '); badge.title = marks.join(' · '); badgeRow(node, 'bottom').append(badge); }
@@ -649,7 +658,7 @@ function renderGrid() {
   const last = Math.min(items.length, (Math.ceil((viewport.scrollTop + viewport.clientHeight) / rowHeight) + 1) * columns);
   const retained = new Set();
   for (let i = first; i < last; i++) {
-    const item = items[i], signature = `${burstSignature(item)}:${item.id}:${item.flag}:${item.rating}:${item.color}:${item.adjusted}:${item.developed}:${item.externalEdit}:${item.editedBy}:${item.developRevision}:${item.contentRev || 0}:${state.previewRevision}`;
+    const item = items[i], signature = `${burstSignature(item)}:${item.id}:${item.flag}:${item.rating}:${item.color}:${item.adjusted}:${item.developed}:${item.externalEdit}:${item.editedBy}:${item.developRevision}:${item.contentRev || 0}:${state.previewRevision}:${!!tether?.misfireOf(item)}`;
     retained.add(item.id);
     let node = gridNodes.get(item.id);
     if (!node || node.dataset.signature !== signature) {
@@ -1849,7 +1858,7 @@ tether=PhotoCullTether.create({api,toast,
   studio:()=>state.studio,enterStudio:()=>{if(!state.studio)setMode('tether');},
   revealDock:()=>{if(narrowLayout()?!document.body.classList.contains('mobile-sources'):!layoutPrefs.dock)togglePane('sources');},inspectorVisible:inspectorShown,
   reviewView:loupe.view,reviewViewport:$('image-viewport'),stageChanged:()=>{loupe.cancelHand();render();},
-  updateItems:(session,items)=>developView.host.updateItems(session,items),
+  updateItems:(session,items)=>developView.host.updateItems(session,items),thumbnailsChanged:()=>render(),
   showTestShot:frame=>{
     const old=state.testShot;
     if(frame && deletePrompt)hideDeletePrompt();
@@ -1858,12 +1867,13 @@ tether=PhotoCullTether.create({api,toast,
     state.testShot=frame?{...frame,item:{id:`tether-test-${frame.seq}`,name:'Test shot',raw:false,testShot:true,url:frame.url}}:null;
     if(old && loupe.item?.id===old.item.id)$('review-image').dataset.stamp='';
     loupe.cancelHand();render();},
-  // A developed frame replaces the camera preview as this photo's preview-size rendition.
   displayedReview:()=>loupe.item?.id===photo()?.id && loupe.shown ? { image:loupe.el.image, rep:loupe.shown } : null,
+  // A developed frame replaces the camera preview as this photo's preview-size rendition.
   showDeveloped:(id,{url,width,height,wb})=>{
     const item=photo();if(!photoStage() || item?.id!==id || loupe.item?.id!==id)return false;
     loupe.reps.get(id)?.delete('preview');loupe.store(id,{kind:'preview',url,width,height,wb,info:{type:'developed'}});
-    loupe.display(item,loupe.reps.get(id).get('preview'));$('preview-source').textContent='Developed RAW';return true;}});
+    loupe.display(item,loupe.reps.get(id).get('preview'));return true;},
+  developedUrl:id=>{const rep=loupe.reps.get(id)?.get('preview');return rep?.info?.type==='developed'?rep.url:null;}});
 Object.assign(survey.host,{
   unpinned:message=>{toast(message);queueMicrotask(()=>{if(state.mode==='compare' && !survey.pinned()){state.mode=stageMode();render();}tether.render();});},
   unpin:()=>{survey.unpin();if(state.mode==='compare'){state.mode=stageMode();render();}tether.render();},

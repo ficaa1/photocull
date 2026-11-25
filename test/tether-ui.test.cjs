@@ -167,6 +167,7 @@ test('flash history uses linear exposure and preserves a lit subject on a black 
   const studio = new T.FlashHistory();
   for (const id of ['a', 'b', 'c']) assert.equal(studio.measure(id, gray(160)).misfire, false);
   assert.equal(studio.measure('d', gray(70)).misfire, true, '160 to 70 is over 2.5 stops in linear light');
+  assert.equal(studio.measure('d2', gray(70)).misfire, true, 'the next dark burst frame is judged against the lit frames, not the first dark one');
   assert.equal(studio.measure('e', gray(76)).misfire, false);
   assert.equal(studio.measure('face', lumaHistogram([0, 95], [100, 5])).misfire, false);
 });

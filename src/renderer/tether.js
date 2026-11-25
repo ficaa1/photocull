@@ -40,6 +40,9 @@
     return octets.join('.');
   }
   const FOLLOW_LABEL = { whenReady: 'When Ready', immediately: 'Immediately', off: 'Off' };
+  const LINK_LABEL = { ready: 'Connected', paused: 'Connected', busy: 'Busy', lost: 'Lost', reconnecting: 'Reconnecting…', connecting: 'Connecting…' };
+  // Stage bar label steps, widest first: aid labels go, then Configure aids, then the Follow label and telemetry.
+  const DENSITIES = ['full', 'compact', 'tight', 'narrow'];
   const bytesText = n => n >= GiB ? `${Math.round(n / GiB).toLocaleString()} GiB` : `${Math.round(n / 1024 ** 2).toLocaleString()} MiB`;
   function normalizeActions(actions) {
     if (!actions) return {};
@@ -112,7 +115,10 @@
       // want: the test shot being fetched, so a slower earlier fetch never replaces a newer frame.
       this.test = { active: false, hasShot: false, awaitingShot: false, busy: false, frame: null, want: null, testSeq: null, pairComplete: true, restoreLiveExpanded: false };
       this.recycleUntil = 0; this.recycleTimer = 0; this.wbArmed = false; this.wbBusy = false;
-      this.misfire = { history: new FlashHistory(), shown: false, detail: '', chain: Promise.resolve() };
+      // flags: exposure ID (or test:<seq>) → { detail, dismissed }, so a burst flags only its dark frames.
+      this.misfire = { history: new FlashHistory(), flags: new Map(), chain: Promise.resolve() };
+      // awaitingRaw: provisional JPEG rows whose RAW companion is still in transit.
+      this.awaitingRaw = new Set(); this.developSeq = 0; this.developTimer = 0;
       this.build();
       this.layer = new O.OverlayLayer(host.reviewViewport, {
         geometry: () => { const v = host.reviewView, d = v.drawn; return d && v.visible ? { rect: { x: d.left, y: d.top, width: d.width, height: d.height } } : null; },
@@ -196,7 +202,7 @@
         if (latest) { this.follow.latestOrdinal = this.follow.shownOrdinal = latest.ordinal; this.follow.latestId = latest.id; }
         this.issues.clear(); for (const issue of value?.issues || []) this.issues.set(this.issueKey(issue), issue);
         this.jobName = value?.config?.jobName || ''; void this.loadAsset();
-        clearTimeout(this.primaryTimer); this.primaryAck = 0; this.primaryPending = null; this.primaryRequest = null;
+        clearTimeout(this.primaryTimer); this.primaryAck = 0; this.primaryPending = null; this.primaryRequest = null; this.awaitingRaw.clear();
         this.stopRecycle(); this.resetTest();
       }
       this.composeChanged(); this.render();
@@ -306,10 +312,12 @@
       this.shoot.libraryRev = delta.rev;
       const remap = new Map((delta.remap || []).map(r => [r.from, r.to]));
       if (remap.has(this.follow.latestId)) this.follow.latestId = remap.get(this.follow.latestId);
+      for (const from of remap.keys()) this.awaitingRaw.delete(from);
+      if (delta.itemId) { if (delta.pairState === 'waiting') this.awaitingRaw.add(delta.itemId); else this.awaitingRaw.delete(delta.itemId); }
       this.host.applyDelta(delta);
       if (delta.firstArrival) {
         const exposureId = delta.exposureId || this.host.item(delta.itemId)?.exposureId;
-        if (exposureId && this.flash().misfireAlert) this.queueLuma(exposureId, () => this.itemFrame(delta.itemId), this.pendingKeep);
+        if (exposureId && this.flash().misfireAlert) this.queueLuma(exposureId, () => this.exposureFrame(exposureId), this.pendingKeep);
       }
       if (delta.firstArrival && delta.ordinal > this.follow.latestOrdinal) {
         this.follow.latestOrdinal = delta.ordinal; this.follow.latestId = delta.itemId;
@@ -362,6 +370,8 @@
       }
       const stale = () => epoch !== this.follow.epoch || ordinal < this.follow.shownOrdinal || ordinal < this.follow.latestOrdinal && this.follow.latestId !== id;
       if (stale()) return false;
+      // The RAW took over this JPEG's row while it decoded; present the RAW instead.
+      if (!this.host.item(id)) { const moved = item.exposureId && this.host.session()?.items.find(i => i.exposureId === item.exposureId); if (moved) void this.present(moved.id, ordinal, mode, epoch); return false; }
       if (!this.followable()) { this.follow.pending++; this.renderPill(); this.render(); return false; }
       if (this.host.blocked()) { setTimeout(() => { if (epoch === this.follow.epoch) void this.present(this.follow.latestId, this.follow.latestOrdinal, mode, epoch); }, 600); return false; }
       const survey = this.host.survey(), pinned = survey.pinned();
@@ -376,6 +386,17 @@
       return true;
     }
     developedWanted(item) { return !!this.config().follow?.developedReview && !!item.raw && !item.trashed && !!this.api.canDevelop; }
+    // Browsing honors Show developed preview too: held arrow keys settle first, and a newer photo retires an older render.
+    requestDeveloped() {
+      clearTimeout(this.developTimer); const seq = ++this.developSeq;
+      const item = this.host.photo();
+      if (this.presenting || !this.studio() || this.testShown() || !item || !this.developedWanted(item) || this.host.developedUrl(item.id)) return;
+      this.developTimer = setTimeout(async () => {
+        const frame = await this.developedFrame(item);
+        if (seq !== this.developSeq) { if (frame) URL.revokeObjectURL(frame.url); return; }
+        this.showDeveloped(item.id, frame);
+      }, 150);
+    }
     // Resolves to a decoded developed frame, or null so the camera preview stays.
     async developedFrame(item) {
       const session = this.host.session()?.id; let url = null;
@@ -393,6 +414,8 @@
       if (this.host.photo()?.id !== id || !this.host.showDeveloped(id, frame)) { URL.revokeObjectURL(frame.url); return; }
       const old = this.developedUrls.get(id); this.developedUrls.set(id, frame.url);
       if (old) URL.revokeObjectURL(old);
+      // The loupe drops renditions of photos it no longer keeps nearby; their frames are released with them.
+      for (const [other, url] of this.developedUrls) if (this.host.developedUrl(other) !== url) { URL.revokeObjectURL(url); this.developedUrls.delete(other); }
     }
     navigated() { if (!this.presenting) this.follow.epoch++; }
     settingsChanged() { if (!this.shoot) this.composeChanged(); this.render(); }
@@ -458,7 +481,7 @@
       // Studio flash
       $('tether-flash-sync').onchange = () => this.update({ flash: { syncLimit: Number($('tether-flash-sync').value) } });
       $('tether-flash-recycle').onchange = () => { this.update({ flash: { recycleMs: Number($('tether-flash-recycle').value) } }); if (this.recycling()) this.stopRecycle(); };
-      $('tether-flash-misfire').onchange = () => { const on = $('tether-flash-misfire').checked; this.update({ flash: { misfireAlert: on } }); if (!on) this.resetMisfire(); };
+      $('tether-flash-misfire').onchange = () => { const on = $('tether-flash-misfire').checked; this.update({ flash: { misfireAlert: on } }); if (!on) this.resetMisfire(); this.host.thumbnailsChanged(); };
       $('tether-flash-misfire-chime').onchange = () => this.update({ flash: { misfireChime: $('tether-flash-misfire-chime').checked } });
       $('tether-misfire-dismiss').onclick = () => this.clearMisfire();
       $('tether-live-capture').onclick = () => void this.capture();
@@ -485,7 +508,7 @@
       $('tether-adjust-mode').onchange = () => { const mode = $('tether-adjust-mode').value; this.update({ adjustments: { mode, ...(mode === 'recipe' && !this.config().adjustments?.recipeId ? { recipeId: $('tether-recipe').value || null } : {}) } }); if (mode === 'recipe') void this.loadRecipes(); this.schedulePrimary(); };
       $('tether-recipe').onchange = () => this.update({ adjustments: { recipeId: $('tether-recipe').value || null } });
       $('tether-entire').onchange = () => this.update({ adjustments: { entireRecipe: $('tether-entire').checked } });
-      $('tether-developed').onchange = () => this.update({ follow: { developedReview: $('tether-developed').checked } });
+      $('tether-developed').onchange = () => { this.update({ follow: { developedReview: $('tether-developed').checked } }); this.requestDeveloped(); };
       $('tether-metadata').onchange = () => this.update({ metadataPresetId: $('tether-metadata').value || null });
       $('tether-initial-pick').onchange = () => this.update({ initial: { pick: $('tether-initial-pick').value === '' ? null : $('tether-initial-pick').value === 'true' } });
       $('tether-initial-rating').onchange = () => this.update({ initial: { rating: $('tether-initial-rating').value === '' ? null : Number($('tether-initial-rating').value) } });
@@ -568,7 +591,8 @@
         else if (!$('tether-aids-drawer').hidden && event.target === $('tether-aids-popover-btn')) { event.preventDefault(); event.stopImmediatePropagation(); this.toggleDrawer(false); }
       }, true);
       new ResizeObserver(() => this.paintLive()).observe($('tether-live-viewport'));
-      new ResizeObserver(() => { if (this.live.open) this.placeStage(); }).observe($('image-stage'));
+      new ResizeObserver(() => { if (this.live.open) this.placeStage(); if (!$('tether-aids-drawer').hidden) this.placeDrawer(); }).observe($('image-stage'));
+      new ResizeObserver(() => this.fitStageBar()).observe($('tether-stage-bar'));
     }
     openPanel() { this.host.enterStudio(); this.host.revealDock(); }
     // The host calls this whenever the workspace mode changes.
@@ -583,12 +607,24 @@
       if (open) { this.placeDrawer(); drawer.focus({ preventScroll: true }); }
       else if (focused) button.focus({ preventScroll: true });
     }
-    // Hangs below the stage bar, under its toggle where the column allows.
+    // Hangs below the stage bar, under its toggle where the column allows, and ends above the filmstrip; its body scrolls.
     placeDrawer() {
       const drawer = $('tether-aids-drawer'), button = $('tether-aids-popover-btn'), main = drawer.offsetParent; if (!main) return;
-      const b = button.getBoundingClientRect(), m = main.getBoundingClientRect(), width = drawer.offsetWidth;
-      drawer.style.top = `${Math.round(b.bottom - m.top + 4)}px`;
+      const b = button.getBoundingClientRect(), m = main.getBoundingClientRect(), width = drawer.offsetWidth, dock = $('review-dock');
+      const top = Math.round(b.bottom - m.top + 4), floor = (dock.offsetParent ? dock.getBoundingClientRect().top : m.bottom) - m.top - 8;
+      drawer.style.top = `${top}px`;
+      drawer.style.maxHeight = `${Math.max(120, Math.floor(floor - top))}px`;
       drawer.style.left = `${Math.round(Math.max(8, Math.min(m.width - width - 8, b.left - m.left)))}px`;
+    }
+    // Takes the widest label step whose groups fit side by side; below the last, Follow wraps to its own row instead of overlapping.
+    fitStageBar() {
+      const bar = $('tether-stage-bar'), [aids, end] = bar.children, width = bar.clientWidth;
+      if (!width) return;
+      const key = `${width}|${aids.textContent}|${end.textContent}`;
+      if (key === this.stageBarKey) return; this.stageBarKey = key;
+      const gap = parseFloat(getComputedStyle(bar).columnGap) || 0;
+      for (const density of DENSITIES) { bar.dataset.density = density; if (aids.scrollWidth + gap + end.scrollWidth <= width) break; }
+      if (!$('tether-aids-drawer').hidden) this.placeDrawer();
     }
 
     render() {
@@ -627,7 +663,7 @@
       const device = this.camera.device, kind = transportOf(device || this.camera.devices.find(d => d.deviceId === this.camera.deviceId));
       $('tether-camera-model').textContent = device ? `${device.model || 'Camera'}${device.firmware ? ` · ${device.firmware}` : ''}` : '—';
       $('tether-camera-battery').textContent = this.battery() || 'Unavailable';
-      const link = `${{ ready: 'Connected', paused: 'Connected', busy: 'Busy', lost: 'Lost', reconnecting: 'Lost' }[this.camera.state] || 'Disconnected'}${device?.speed ? ` · ${device.speed}` : ''}${kind === 'wifi' && device?.auth ? ` · ${device.auth === 'ssh' ? 'SSH' : 'Pairing'}` : ''}`;
+      const link = `${LINK_LABEL[this.camera.state] || 'Disconnected'}${device?.speed ? ` · ${device.speed}` : ''}${kind === 'wifi' && device?.auth ? ` · ${device.auth === 'ssh' ? 'SSH' : 'Pairing'}` : ''}`;
       $('tether-camera-usb').replaceChildren(el('span', `tether-transport ${kind}`, TRANSPORT_LABEL[kind]), document.createTextNode(` ${link}`));
       const dest = this.camera.properties.get('saveDestination'), destination = $('tether-camera-destination');
       destination.textContent = dest ? dest.display ?? String(dest.value) : '—'; destination.dataset.level = this.cameraOnly() ? 'warn' : dest ? 'ok' : '';
@@ -644,6 +680,7 @@
       for (const span of $('tether-lcd').children) {
         const key = span.dataset.lcd, p = this.camera.properties.get(key), text = p ? String(p.display ?? p.value ?? '—') : '—';
         span.textContent = key === 'iso' && !/iso/i.test(text) ? `ISO ${text}` : key === 'evComp' && p && !/ev/i.test(text) ? `${text} EV` : text;
+        span.dataset.label ||= span.title; span.title = `${span.dataset.label}: ${span.textContent}`;
       }
       this.renderProperties();
       this.renderChecklist();
@@ -652,18 +689,20 @@
     renderDevices() {
       const devices = this.camera.devices.length ? this.camera.devices : this.camera.device ? [this.camera.device] : [], list = $('tether-device');
       const busy = ['connecting', 'discovering'].includes(this.camera.state);
-      const signature = JSON.stringify([devices.map(d => [d.deviceId, d.model, d.transport, d.availability]), this.camera.deviceId, this.connected(), !!this.shoot, busy]);
+      const signature = JSON.stringify([devices.map(d => [d.deviceId, d.model, d.transport, d.availability]), this.camera.deviceId, this.camera.state, !!this.shoot, busy]);
       if (list.dataset.signature !== signature) {
         list.dataset.signature = signature;
         const focused = document.activeElement?.dataset?.deviceId;
         list.replaceChildren(...devices.map(d => {
           const kind = transportOf(d), current = d.deviceId === this.camera.deviceId && this.connected(), item = el('li'), button = el('button', 'tether-device-item');
           button.type = 'button'; button.dataset.deviceId = d.deviceId; button.setAttribute('aria-pressed', String(current));
-          const state = current ? 'Connected' : d.availability && d.availability !== 'available' ? d.availability : '';
+          // Discovery's availability goes stale once this shoot owns the camera; the live link state speaks for it.
+          const mine = !!this.shoot && d.deviceId === this.camera.deviceId;
+          const state = mine ? LINK_LABEL[this.camera.state] || '' : d.availability && d.availability !== 'available' ? d.availability : '';
           button.append(el('span', `tether-transport ${kind}`, TRANSPORT_LABEL[kind]), el('span', 'tether-device-name', d.model || d.name || 'Camera'));
-          if (state) button.append(el('span', 'tether-device-state', state));
+          if (state) { const badge = el('span', 'tether-device-state', state); if (mine) badge.dataset.state = this.camera.state; button.append(badge); }
           button.disabled = !this.api.canTether || !this.shoot || current || busy;
-          button.title = !this.shoot ? 'Start a tethered session to connect' : current ? 'Connected' : `Connect over ${TRANSPORT_LABEL[kind]}`;
+          button.title = !this.shoot ? 'Start a tethered session to connect' : current ? 'Connected' : `${mine && state ? `${state} · ` : ''}Connect over ${TRANSPORT_LABEL[kind]}`;
           button.onclick = () => void this.connect(d.deviceId);
           item.append(button); return item;
         }));
@@ -679,7 +718,7 @@
       if (host.dataset.signature === signature) return; host.dataset.signature = signature;
       const focused = document.activeElement?.dataset?.property;
       host.replaceChildren(...keys.map(key => {
-        const p = this.camera.properties.get(key), row = el('div', 'tether-property'), id = `tether-prop-${key}`, label = el('label', null, p.label || key); label.htmlFor = id;
+        const p = this.camera.properties.get(key), row = el('div', 'tether-property'), id = `tether-prop-${key}`, label = el('label', null, p.label || key); label.htmlFor = id; label.title = label.textContent;
         const writable = p.access === 'rw' && this.connected();
         let control;
         if (p.stepOnly || p.relative) {
@@ -702,11 +741,14 @@
           control = el('input'); control.type = 'checkbox'; control.checked = !!p.value; control.onchange = () => void this.setProperty(key, control.checked);
         } else { control = el('output', 'tabular', propertyText(key, p)); }
         control.id = id; control.dataset.property = key;
+        if (control.tagName === 'SELECT') control.title = control.selectedOptions[0]?.textContent || '';
+        else if (control.tagName === 'OUTPUT') control.title = control.textContent;
+        else if (control.tagName === 'DIV') control.querySelector('output').title = propertyText(key, p);
         if (!['OUTPUT', 'DIV'].includes(control.tagName)) control.disabled = !writable;
         row.append(label, control);
         if (!writable && control.tagName !== 'OUTPUT') {
           const why = el('span', 'tether-lock small', p.reason || { ro: 'Read only on this camera', unsupported: 'Not supported by this camera', busy: 'Camera is busy' }[p.access] || 'Unavailable'); why.id = id + '-reason';
-          control.setAttribute('aria-describedby', why.id); control.title = why.textContent; row.append(why);
+          why.title = why.textContent; control.setAttribute('aria-describedby', why.id); control.title = control.title ? `${control.title} · ${why.textContent}` : why.textContent; row.append(why);
         }
         if (!this.connected() && p.value != null) row.classList.add('last-seen');
         return row;
@@ -901,7 +943,7 @@
       colors.value = initial.color || '';
       const photo = this.host.photo(), recipe = this.recipes?.find(r => r.id === a.recipeId), fallback = this.recipes?.find(r => r.id === settings.defaultRecipe);
       $('tether-adjust-source').textContent = a.mode === 'last' ? `Next capture copies from the last RAW${this.follow.latestId && this.host.item(this.follow.latestId) ? ` · ${this.host.item(this.follow.latestId).name}` : ' · default for the first capture'}`
-        : a.mode === 'primary' ? (photo?.raw ? `Copy from Primary · ${photo.name}` : 'Copy from Primary · select a RAW photo') : a.mode === 'recipe' ? `Recipe · ${recipe?.name || 'choose a recipe'}${a.entireRecipe !== false ? ' (entire)' : ''}` : `Default · ${fallback?.name || settings.defaultRecipe || 'Neutral'}`;
+        : a.mode === 'primary' ? (photo?.raw ? `Copy from Primary · ${photo.name}` : this.awaitingRaw.has(photo?.id) ? `Copy from Primary · ${photo.name} (waiting for its RAW)` : 'Copy from Primary · select a RAW photo') : a.mode === 'recipe' ? `Recipe · ${recipe?.name || 'choose a recipe'}${a.entireRecipe !== false ? ' (entire)' : ''}` : `Default · ${fallback?.name || settings.defaultRecipe || 'Neutral'}`;
     }
     async loadRecipes() {
       if (this.recipes || this.recipesLoading) return; this.recipesLoading = true;
@@ -965,6 +1007,7 @@
       const pinned = this.host.survey().pinned(), pin = $('tether-pin');
       pin.setAttribute('aria-pressed', String(!!pinned)); pin.querySelector('span').textContent = pinned ? 'Unpin reference' : 'Pin reference';
       pin.disabled = !pinned && !this.enabled('tether-pin-reference');
+      this.fitStageBar();
     }
     renderTelemetry() {
       const t = this.telemetry, queue = this.shoot?.queue;
@@ -974,6 +1017,7 @@
       if (Number.isFinite(t.latency)) parts.push(`${(t.latency / 1000).toFixed(1)} s`);
       $('tether-telemetry').textContent = parts.join(' · ');
       $('tether-telemetry').title = `Transfer queue and speed · Follow: ${FOLLOW_LABEL[this.followMode()]}${this.follow.paused ? ' (paused)' : ''}`;
+      this.fitStageBar();
     }
     renderIssues() {
       $('tether-tool-issues').hidden = !this.issues.size;
@@ -1388,8 +1432,8 @@
     // ---- Review aids ----
     selectionChanged() {
       const item = this.host.photo(), key = this.testShown() ? `test:${this.test.frame.key}` : item ? `${item.id}:${item.contentRev || 0}:${this.host.original()}` : '';
-      if (key !== this.reviewKey) { this.reviewKey = key; this.layer.imageChanged(); this.toggleWhiteBalancePick(false); }
-      this.renderWhiteBalancePick();
+      if (key !== this.reviewKey) { this.reviewKey = key; this.layer.imageChanged(); this.toggleWhiteBalancePick(false); this.requestDeveloped(); }
+      this.renderWhiteBalancePick(); this.renderMisfire();
       this.layer.setEnabled(['review', 'tether'].includes(this.host.mode()));
       this.schedulePrimary();
       if (this.studio()) { this.renderAdjustments(); $('tether-overlay-photo').disabled = !item; this.renderFollow(); void this.renderHistogram(); }
@@ -1482,9 +1526,10 @@
     }
     publishPrimary() {
       clearTimeout(this.primaryTimer);
-      const pending = this.primaryPending, shoot = this.shoot; this.primaryPending = null;
-      if (!pending || !shoot) return this.primaryRequest || Promise.resolve(this.primaryAck);
-      const item = this.host.photo(), draft = pending.draft, seq = ++this.primarySeq;
+      const pending = this.primaryPending, shoot = this.shoot, item = this.host.photo(); this.primaryPending = null;
+      // A JPEG shown before its RAW lands keeps the current Primary; the RAW publishes itself when it takes over the row.
+      if (!pending || !shoot || this.awaitingRaw.has(item?.id)) return this.primaryRequest || Promise.resolve(this.primaryAck);
+      const draft = pending.draft, seq = ++this.primarySeq;
       const input = { seq, id: item?.raw && !item.trashed ? item.id : null, ...(draft && draft.id === item?.id ? { settings: draft.settings, recipe: draft.recipe } : {}) };
       const request = this.primaryRequest = this.api.tetherPrimary(shoot.shootId, shoot.session, input).then(result => {
         if (this.shoot?.shootId === shoot.shootId) this.primaryAck = Math.max(this.primaryAck, result?.acceptedSeq ?? seq);
@@ -1558,12 +1603,14 @@
       const left = this.recycling(), text = left ? `Recycling ${(left / 1000).toFixed(1)} s` : '';
       for (const id of ['tether-capture', 'tether-live-capture']) { const button = $(id); button.classList.toggle('is-recycling', !!left); button.querySelector('.tether-recycle').textContent = text; }
     }
+    // A new shoot forgets every flag; a new subfolder or Test Shot Mode restarts the baseline and drops test-shot flags only.
     resetMisfire(newShoot = false) {
       const history = new FlashHistory(newShoot ? undefined : this.misfire.history.exposures);
-      Object.assign(this.misfire, { history, chain: Promise.resolve(), shown: false, detail: '' });
+      for (const key of [...this.misfire.flags.keys()]) if (newShoot || key.startsWith('test:')) this.misfire.flags.delete(key);
+      Object.assign(this.misfire, { history, chain: Promise.resolve() });
       this.renderMisfire();
     }
-    clearMisfire() { this.misfire.shown = false; this.renderMisfire(); }
+    clearMisfire() { const flag = this.viewedMisfire(); if (flag) flag.dismissed = true; this.renderMisfire(); }
     // Frames are measured in arrival order so the baseline is always the newest three normal frames.
     queueLuma(exposureId, read, pendingKeep) {
       const m = this.misfire, history = m.history;
@@ -1574,19 +1621,27 @@
         const frame = await read();
         if (!frame || history !== m.history) return;
         const result = history.measure(exposureId, O.computeHistogram(frame.data, frame.width, frame.height));
-        if (!result) return;
-        m.shown = result.misfire; m.detail = result.detail;
-        if (m.shown && this.flash().misfireChime) this.alarm();
+        if (!result?.misfire) return;
+        m.flags.set(exposureId, { detail: result.detail, dismissed: false });
+        if (this.flash().misfireChime) this.alarm();
         this.renderMisfire();
+        if (!exposureId.startsWith('test:')) this.host.thumbnailsChanged();
       }).catch(() => {});
     }
-    async itemFrame(id) {
-      const item = this.host.item(id), session = this.host.session()?.id;
+    // Read by exposure: a RAW arriving after its JPEG takes over the row under a new item ID.
+    async exposureFrame(exposureId) {
+      const item = this.host.session()?.items.find(i => i.exposureId === exposureId), session = this.host.session()?.id;
       return item && session ? this.rasterize(await this.previewBlob(item, session, false), 256) : null;
     }
+    misfireOf(item) { return item?.exposureId && this.flash().misfireAlert !== false ? this.misfire.flags.get(item.exposureId) || null : null; }
+    viewedMisfire() {
+      if (this.flash().misfireAlert === false) return null;
+      return this.testShown() ? this.misfire.flags.get(`test:${this.test.frame.seq}`) || null : this.misfireOf(this.host.photo());
+    }
     renderMisfire() {
-      $('tether-misfire-pill').hidden = !this.misfire.shown || this.flash().misfireAlert === false;
-      $('tether-misfire-detail').textContent = this.misfire.detail;
+      const flag = this.viewedMisfire();
+      $('tether-misfire-pill').hidden = !flag || flag.dismissed;
+      $('tether-misfire-detail').textContent = flag?.detail || '';
       this.renderStageAlerts();
     }
     renderStageAlerts() { const alerts = $('tether-stage-alerts'); alerts.hidden = [...alerts.children].every(node => node.hidden); }
@@ -1674,7 +1729,11 @@
         if (op === 'keep') this.pendingKeep = request;
         const reply = await request;
         if (shootId !== this.shoot?.shootId) return;
-        if (op === 'keep' && reply.exposureId) this.misfire.history.kept(reply.exposureId);
+        if (op === 'keep' && reply.exposureId) {
+          this.misfire.history.kept(reply.exposureId);
+          const flag = this.misfire.flags.get(`test:${seq}`);
+          if (flag) { this.misfire.flags.set(reply.exposureId, flag); this.host.thumbnailsChanged(); }
+        }
         if (reply.testSeq === seq && t.testSeq === seq) this.clearTestShot();
         this.host.toast(op === 'keep' ? 'Test shot kept · it joins the shoot like a capture' : 'Test shot discarded');
       } catch (error) {
