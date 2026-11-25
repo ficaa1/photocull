@@ -122,6 +122,22 @@ async function start() {
   const requireIdle = () => { if(importing || deleting || transfers.active || backups.active || tether.busy())throw new Error('Wait for the current file operation to finish.'); };
   // A bound shoot owns the open Library: another folder, a card or a settings import waits until tethering stops.
   const requireUntethered = message => { if (tether.active()) throw new Error(message); };
+  // Opening a folder or card and binding a shoot never overlap: a scan waits for every bind
+  // queued before it, and a bind waits for the scans already running.
+  const scans = new Set();
+  let binds = Promise.resolve();
+  const scanning = async (message, work) => {
+    for (let seen; seen !== binds;) { seen = binds; await seen; }
+    requireUntethered(message);
+    const run = work();
+    scans.add(run);
+    try { return await run; } finally { scans.delete(run); }
+  };
+  const bindTether = args => {
+    const run = binds.then(async () => { await Promise.allSettled([...scans]); requireIdle(); return tether.bind(...args); });
+    binds = run.catch(() => {});
+    return run;
+  };
   const backupSource = async source => { if(typeof source !== 'string' || !path.isAbsolute(source))throw new Error('Choose a card or folder.');const real=await fs.realpath(source);if(!(await fs.stat(real)).isDirectory())throw new Error('Choose a folder.');return real; };
   previews.editorName = id => settings.value.editors.find(e=>e.id===id)?.name;
   let importing=false;
@@ -233,17 +249,15 @@ async function start() {
     'develop-mark': async (session, id, mark) => { const result=await library.developMark(session, id, mark || {}); previews.invalidatePhoto(library.item(session,id)); return result; },
     'scan': async (folder, recursive) => {
       if (typeof folder !== 'string' || !folder) throw new Error('Choose a photo folder.');
-      requireUntethered('Stop tethering before opening another folder.');
-      return library.scan(folder, !!recursive, { removable: await onCard(folder) });
+      return scanning('Stop tethering before opening another folder.', async () => library.scan(folder, !!recursive, { removable: await onCard(folder) }));
     },
     'devices': () => devices.refresh(),
-    'open-device': async id => {
-      requireUntethered('Card auto-open is paused while tethering.');
+    'open-device': id => scanning('Card auto-open is paused while tethering.', async () => {
       const device = devices.devices.find(d => d.id === id);
       if (!device) throw new Error('This card is no longer connected.');
       const session = await library.scan(device.photoRoot, true, { removable: true });
       return { ...session, deviceId: device.id, deviceRoot: device.root };
-    },
+    }),
     'test-destination': () => smoke ? process.env.PHOTOCULL_TEST_DESTINATION || null : null,
     'copy-picks': (session, destination, options) => deleting || backups.active || tether.busy() ? Promise.reject(new Error('Wait for the current file operation to finish.')) : transfers.copy(library.get(session), destination, { ...options, metadataSettings: settings.value,
       naming: options?.naming || settings.value.naming, folders: options?.folders || settings.value.folders, embedMetadata: options?.embedMetadata ?? settings.value.copyMetadata }),
@@ -325,9 +339,9 @@ async function start() {
   if (!web) {
     // Shell-only: never registered for --web or --server, and absent from Rust's renderer allowlist.
     Object.assign(methods, {
-      'tether-check-destination': root => tether.checkDestination(root),
+      'tether-check-destination': (root, folderId) => tether.checkDestination(root, folderId),
       'tether-resume-target': shootId => tether.resumeTarget(shootId),
-      'tether-bind': async (...args) => { requireIdle(); return tether.bind(...args); },
+      'tether-bind': (...args) => bindTether(args),
       'tether-set-location': (...args) => tether.setLocation(...args),
       'tether-request': (...args) => tether.request(...args),
       'tether-accept': (...args) => tether.accept(...args),

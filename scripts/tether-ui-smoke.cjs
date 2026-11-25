@@ -13,7 +13,7 @@ const { fixtures } = require('./fixtures.cjs');
 
 // Stands in for the desktop shell's camera commands and events; runs in the page before app.js.
 function simulateCamera() {
-  const real = window.photocull, T = window.__camera = { calls: [], handlers: {}, frames: {}, shoot: null, stopped: [], parked: {}, epoch: 1, propRev: 1, shutter: '1/200', fel: false, reviewColor: null };
+  const real = window.photocull, T = window.__camera = { calls: [], handlers: {}, frames: {}, shoot: null, stopped: [], parked: {}, attached: null, cameras: {}, bodies: { 'usb-1': 'b1'.repeat(16) }, epoch: 1, propRev: 1, shutter: '1/200', fel: false, reviewColor: null };
   const log = (...entry) => T.calls.push(entry), wait = ms => new Promise(resolve => setTimeout(resolve, ms));
   const on = name => callback => { (T.handlers[name] ||= new Set()).add(callback); return () => T.handlers[name].delete(callback); };
   const jpeg = color => new Promise(resolve => { const canvas = document.createElement('canvas'); canvas.width = 640; canvas.height = 427; const ctx = canvas.getContext('2d'); ctx.fillStyle = color; ctx.fillRect(0, 0, 640, 427); canvas.toBlob(resolve, 'image/jpeg'); });
@@ -30,6 +30,7 @@ function simulateCamera() {
     tetherShoots: async () => structuredClone(T.stopped),
     tetherOpen: async ({ session, resume = null }) => {
       log('open', resume);
+      if (T.holdOpen) await new Promise(resolve => { T.finishOpen = resolve; });
       if (resume) {
         T.shoot = { ...T.parked[resume], session };
         if (T.missingShot) T.shoot.location = { display: 'Capture', relative: '', leaf: 'Capture', recents: [] };
@@ -37,15 +38,25 @@ function simulateCamera() {
         return { shootId: resume, configRev: T.shoot.configRev, libraryRev: 0 };
       }
       const settings = (await real.settings()).tether;
-      T.shoot = { shootId: 'shoot-1', session, configRev: 1, libraryRev: 0, config: structuredClone(settings), counters: { next: 1, step: 1, resetTo: 1 }, location: { display: 'Capture', relative: '', leaf: 'Capture', recents: [] }, space: { freeBytes: 100 * 1024 ** 3, estimatedShots: 1000 } };
-      return { shootId: 'shoot-1', configRev: 1, libraryRev: 0 };
+      const shootId = T.nextShootId || 'shoot-1';
+      T.shoot = { shootId, session, configRev: 1, libraryRev: 0, config: structuredClone(settings), counters: { next: 1, step: 1, resetTo: 1 }, location: { display: 'Capture', relative: '', leaf: 'Capture', recents: [] }, space: { freeBytes: 100 * 1024 ** 3, estimatedShots: 1000 } };
+      return { shootId, configRev: 1, libraryRev: 0 };
     },
     tetherState: async session => T.shoot?.session === session ? structuredClone(T.shoot) : null,
     tetherConfig: async (shootId, configRev, patch) => { log('config', Object.keys(patch).sort().join()); if (T.holdConfig) await new Promise(resolve => { T.finishConfig = resolve; }); await wait(60); Object.assign(T.shoot.config, patch); T.shoot.configRev++; return { configRev: T.shoot.configRev, config: structuredClone(T.shoot.config) }; },
     tetherNamePreview: async (shootId, input) => PhotoCullNaming.renderCaptureName(input.namingTemplate, { jobName: input.jobName, counter: 1, extensions: ['.ARW'] }, { preview: true }),
     tetherPrimary: async (shootId, session, input) => { log('primary', input.seq); await wait(120); log('primary-ack', input.seq); return { acceptedSeq: input.seq, sourceId: input.id }; },
-    tetherDevices: async () => ({ devices: T.devices || [{ deviceId: 'usb-1', model: 'ILCE-7M3', transport: 'usb-icc', availability: 'available' }] }),
-    tetherConnect: async (shootId, deviceId) => { log('connect', deviceId); return T.snapshot(); },
+    // Like the shell: only a camera with an open link is busy, and a resumed shoot's body is verified after opening.
+    tetherDevices: async () => {
+      if (T.holdDevices) await new Promise(resolve => { (T.finishDevices ||= []).push(resolve); });
+      return { devices: (T.devices || [{ deviceId: 'usb-1', model: 'ILCE-7M3', transport: 'usb-icc' }]).map(d => ({ ...d, availability: d.deviceId === T.attached ? 'connected' : 'available' })) };
+    },
+    tetherConnect: async (shootId, deviceId, expect = null) => {
+      log('connect', deviceId, expect?.bodyKey ?? null);
+      if (expect && expect.bodyKey !== (T.bodies[deviceId] ?? null)) throw Object.assign(new Error('A different camera is connected. Choose it to continue the shoot.'), { code: 'CAMERA_LOST' });
+      T.attached = deviceId; T.cameras[shootId] = { deviceId, model: (T.devices || []).find(d => d.deviceId === deviceId)?.model || 'ILCE-7M3', transport: 'usb-icc', bodyKey: T.bodies[deviceId] ?? null };
+      return T.snapshot();
+    },
     tetherControl: async (shootId, epoch, op, extra = {}) => {
       log('control', op, ...('testSeq' in extra ? [extra.testSeq] : []));
       if (op === 'composition-on' || op === 'composition-off') T.composition = op === 'composition-on';
@@ -58,9 +69,9 @@ function simulateCamera() {
         const s = T.shoot, folder = state.session?.folder || '';
         T.parked[s.shootId] = s;
         T.stopped = [{ shootId: s.shootId, folder, name: folder.split(/[\\/]/).pop(), layout: 'single', relative: s.location.relative, shot: s.location.relative.split('/').pop(),
-          next: s.counters.next, camera: { deviceId: 'usb-1', model: 'ILCE-7M3', transport: 'usb-icc' }, stoppedAt: new Date().toISOString(), available: true },
+          next: s.counters.next, camera: T.cameras[s.shootId] ?? null, stoppedAt: new Date().toISOString(), available: true },
         ...T.stopped.filter(r => r.shootId !== s.shootId)];
-        T.shoot = null; return { state: 'offline', epoch, cleanupWarning: 'Temporary test files could not be removed.' }; }
+        T.shoot = null; T.attached = null; return { state: 'offline', epoch, cleanupWarning: 'Temporary test files could not be removed.' }; }
       if (op === 'refresh') return T.snapshot();
       if (op === 'reconnect') { T.epoch++; setTimeout(() => T.emit('tether-connection', { shootId, ...T.snapshot() })); return { state: 'connecting', epoch: T.epoch }; }
       if (op === 'fel') { T.fel = !T.fel; setTimeout(() => T.changed('felState')); }
@@ -712,11 +723,11 @@ async function main() {
     assert.equal(await visible('#tether-start-resume'), true, 'the start dialog offers resuming too');
     assert.equal(await page.locator('#tether-start-resume-last-name').textContent(), `${folderName} / Blue`);
     // A second body is on the bus: resuming reconnects the shoot's own camera rather than asking.
-    await page.evaluate(() => { __camera.devices = [{ deviceId: 'usb-2', model: 'ILCE-7CM2', transport: 'usb-icc', availability: 'available' }, { deviceId: 'usb-1', model: 'ILCE-7M3', transport: 'usb-icc', availability: 'available' }]; });
+    await page.evaluate(() => { __camera.devices = [{ deviceId: 'usb-2', model: 'ILCE-7CM2', transport: 'usb-icc' }, { deviceId: 'usb-1', model: 'ILCE-7M3', transport: 'usb-icc' }]; });
     await clearCalls(); await page.locator('#tether-start-resume-last').click();
     await page.waitForFunction(() => tether.active() && tether.connected());
     assert.equal(await page.locator('#tether-start-dialog').evaluate(d => d.open), false);
-    assert.deepEqual((await calls()).filter(c => c[0] === 'open' || c[0] === 'connect'), [['open', 'shoot-1'], ['connect', 'usb-1']]);
+    assert.deepEqual((await calls()).filter(c => c[0] === 'open' || c[0] === 'connect'), [['open', 'shoot-1'], ['connect', 'usb-1', 'b1'.repeat(16)]]);
     assert.match(await page.locator('#toast').textContent(), /^Resumed Blue · next 42$/);
     assert.deepEqual(await page.evaluate(() => [tether.shoot.location.relative, tether.shoot.counters.next, state.session.id]), ['Blue', 42, session]);
     assert.equal(await page.locator('#tether-counter-next').inputValue(), '42');
@@ -730,6 +741,49 @@ async function main() {
     assert.match(await page.locator('#toast').textContent(), /Shot folder “Blue” is gone; capturing into Capture\. Next 42\./);
     assert.deepEqual((await calls()).find(c => c[0] === 'open'), ['open', 'shoot-1']);
     check('Resume: the dock reopens a shoot and reports a deleted shot folder');
+
+    const resumeWith = async (devices, settled) => {
+      await page.locator('#tether-stop').click(); await page.locator('#tether-resume').waitFor({ state: 'visible' });
+      await page.evaluate(list => { __camera.devices = list; }, devices);
+      await clearCalls(); await page.locator('#tether-resume-last').click();
+      await page.waitForFunction(settled);
+      return (await calls()).filter(c => c[0] === 'connect');
+    };
+    await page.evaluate(() => { __camera.missingShot = false; });
+    assert.deepEqual(await resumeWith([{ deviceId: 'usb-2', model: 'ILCE-7CM2', transport: 'usb-icc' }], () => tether.active() && /ILCE-7M3 this shoot used was not found/.test(tether.camera.reason)), []);
+    assert.equal(await page.evaluate(() => tether.connected()), false);
+    await page.evaluate(() => { __camera.bodies['usb-3'] = 'b3'.repeat(16); });
+    assert.deepEqual(await resumeWith([{ deviceId: 'usb-3', model: 'ILCE-7M3', transport: 'usb-icc' }], () => tether.active() && /different camera/.test(tether.camera.reason)), [['connect', 'usb-3', 'b1'.repeat(16)]]);
+    assert.equal(await page.evaluate(() => tether.connected()), false);
+    check('Resume: another model is never connected, and another body of the model is refused by the shell');
+
+    // Start and Resume share one open at a time.
+    await page.locator('#tether-stop').click(); await page.locator('#tether-resume').waitFor({ state: 'visible' });
+    await page.evaluate(() => { __camera.devices = null; __camera.holdOpen = true; __camera.nextShootId = 'shoot-2'; });
+    await page.locator('#tether-dock-start').click(); await page.locator('#tether-start-dialog').waitFor({ state: 'visible' });
+    await clearCalls(); await page.locator('#tether-start-confirm').click();
+    await untilCall(c => c[0] === 'open', 'start open');
+    assert.equal(await page.locator('#tether-start-resume-last').isDisabled(), true);
+    await page.locator('#tether-start-resume-last').evaluate(button => { button.disabled = false; button.click(); });
+    await page.evaluate(() => { __camera.holdOpen = false; __camera.finishOpen(); });
+    await page.waitForFunction(() => tether.active() && tether.shoot.shootId === 'shoot-2' && tether.connected());
+    assert.deepEqual((await calls()).filter(c => c[0] === 'open'), [['open', null]]);
+    check('Resume: a resume clicked while Start is opening a folder is ignored');
+
+    // A discovery begun for one shoot never connects that shoot's camera to the next one.
+    await page.locator('#tether-stop').click(); await page.locator('#tether-resume').waitFor({ state: 'visible' });
+    await page.evaluate(() => { __camera.holdDevices = true; });
+    await clearCalls(); await page.locator('#tether-resume-last').click();
+    await page.waitForFunction(() => tether.active() && tether.shoot.shootId === 'shoot-2' && __camera.finishDevices?.length === 1);
+    await page.locator('#tether-stop').click(); await page.locator('#tether-resume').waitFor({ state: 'visible' });
+    await page.evaluate(() => { __camera.nextShootId = 'shoot-3'; });
+    await page.locator('#tether-dock-start').click(); await page.locator('#tether-start-dialog').waitFor({ state: 'visible' });
+    await page.locator('#tether-start-confirm').click();
+    await page.waitForFunction(() => tether.active() && tether.shoot.shootId === 'shoot-3' && __camera.finishDevices.length === 2);
+    await page.evaluate(() => { __camera.holdDevices = false; for (const finish of __camera.finishDevices.splice(0)) finish(); });
+    await page.waitForFunction(() => tether.connected());
+    assert.deepEqual((await calls()).filter(c => c[0] === 'connect'), [['connect', 'usb-1', null]]);
+    check('Resume: a stale camera discovery is discarded when the shoot changes');
 
     assert.equal(errors.length, 0, errors.join('\n'));
     console.log(JSON.stringify({ passed: true, checks, errors }, null, 2));

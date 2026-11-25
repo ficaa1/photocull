@@ -263,7 +263,7 @@ class TetherService {
     const root = shoot.canonicalRoot, stat = await fs.stat(root).catch(() => null);
     if (!stat?.isDirectory() || await fs.realpath(root).catch(() => null) !== root || `${stat.dev}:${stat.ino}` !== shoot.folderId) fail('DEST_CHANGED', `${root} was moved, renamed or deleted. Start a new session instead.`);
     if (await this.isCard(root)) fail('UNSUPPORTED', 'Camera cards cannot be tether destinations. Choose a folder on this computer.');
-    return { root, layout: shoot.layout, includeShots: shoot.recursive };
+    return { root, folderId: shoot.folderId, layout: shoot.layout, includeShots: shoot.recursive };
   }
 
   async bind(validatedRoot, rootIdentity = null, layout = null, includeShots = false, existingSession = null, resumeShootId = null) {
@@ -282,7 +282,12 @@ class TetherService {
       if (rootIdentity.folderId !== undefined && rootIdentity.folderId !== folderId) fail('DEST_CHANGED', 'The capture folder changed before tethering started.');
     }
     if (await this.isCard(root)) fail('UNSUPPORTED', 'Camera cards cannot be tether destinations. Choose a folder on this computer.');
-    if (this.activeShoot && this.ledgers.get(this.activeShoot)?.shoot.canonicalRoot !== root) fail('CAMERA_BUSY', 'Stop the current tethered shoot first.');
+    const running = this.activeShoot && this.ledgers.get(this.activeShoot)?.shoot;
+    if (running && (running.canonicalRoot !== root || running.layout !== layout || resumeShootId !== null)) fail('CAMERA_BUSY', 'Stop the current tethered shoot first.');
+    if (resumeShootId !== null) {
+      const saved = (await this.loadLedger(id(resumeShootId, 'resume')).catch(() => null))?.shoot;
+      if (saved?.canonicalRoot !== root || saved.folderId !== folderId || saved.layout !== layout) fail('DEST_CHANGED', 'The capture folder changed since this session stopped. Start a new session instead.');
+    }
     if (layout === 'session') for (const name of LAYOUT_FOLDERS) {
       const dir = path.join(root, name);
       await fs.mkdir(dir).catch(error => { if (error.code !== 'EEXIST') fail('IO_ERROR', `${dir}: ${error.message}`, { field: name }); });
@@ -304,35 +309,38 @@ class TetherService {
     const shoot = ledger.shoot, libraryRoot = this.libraryRoot(shoot);
     for (const member of Object.values(ledger.members)) if (['reserved', 'published'].includes(member.status) && await this.occupied(shoot, member)) await this.excludeFromPair(ledger, member);
     const current = existingSession ? (() => { try { return this.library.get(id(existingSession, 'session')); } catch { return null; } })() : null;
-    const recursive = layout === 'session' || !!includeShots || shoot.recursive || !!current?.recursive && current.folder === libraryRoot;
-    const opened = current && current.folder === libraryRoot && (current.recursive || !recursive)
-      ? this.library.publicSession(current) : await this.library.openEmptyOrExisting(libraryRoot, recursive);
-    this.activeShoot = shoot.shootId;
-    return this.tx(shoot.shootId, async (draft, events) => {
+    // Shot subfolders are the shoot's own choice; a Library already showing subfolders does not change it.
+    const scope = layout === 'session' || !!includeShots || shoot.recursive;
+    const opened = current && current.folder === libraryRoot && (current.recursive || !scope)
+      ? this.library.publicSession(current) : await this.library.openEmptyOrExisting(libraryRoot, scope);
+    const bound = await this.tx(shoot.shootId, async (draft, events) => {
       const s = draft.shoot;
-      Object.assign(s, { session: opened.id, recursive: opened.recursive, closedAt: null });
+      Object.assign(s, { session: opened.id, recursive: scope, closedAt: null });
       if (!s.recursive && s.activeRelDir) s.activeRelDir = '';
-      s.activeDirId = await this.directoryIdentity(s, s.activeRelDir).catch(() => null);
-      // A shot folder removed while the shoot was stopped falls back to the capture folder itself.
-      if (!s.activeDirId && s.activeRelDir) {
+      const identity = await this.directoryIdentity(s, s.activeRelDir).catch(() => null);
+      // A shot folder removed or replaced while the shoot was stopped falls back to the capture folder itself.
+      if (s.activeRelDir && identity !== s.activeDirId) {
         s.recentRelDirs = s.recentRelDirs.filter(r => r.relative !== s.activeRelDir);
         s.activeRelDir = '';
         s.activeDirId = await this.directoryIdentity(s, '').catch(() => null);
         s.configRev++;
-      }
+      } else s.activeDirId = identity;
       const recoveries = await this.recover(draft, events);
       const session = this.library.get(opened.id);
       s.libraryRev = session.rev || 0;
       events.push(this.configEvent(draft));
       return { shootId: s.shootId, session: this.library.publicSession(session), configRev: s.configRev, libraryRev: s.libraryRev, recoveries };
     });
+    this.activeShoot = shoot.shootId;
+    return bound;
   }
 
   // Read-only: runs before anything, including the staging folder, is created in the chosen folder.
-  async checkDestination(root) {
+  async checkDestination(root, folderId = null) {
     if (typeof root !== 'string' || !path.isAbsolute(root)) fail('DEST_CHANGED', 'Choose a capture folder.');
-    const canonical = await fs.realpath(root).catch(() => null);
-    if (!canonical || !(await fs.stat(canonical)).isDirectory()) fail('DEST_CHANGED', 'Choose a capture folder.');
+    const canonical = await fs.realpath(root).catch(() => null), stat = canonical && await fs.stat(canonical);
+    if (!stat?.isDirectory()) fail('DEST_CHANGED', 'Choose a capture folder.');
+    if (folderId !== null && `${stat.dev}:${stat.ino}` !== folderId) fail('DEST_CHANGED', `${root} was moved, renamed or deleted. Start a new session instead.`);
     if (await this.isCard(canonical)) fail('UNSUPPORTED', 'Camera cards cannot be tether destinations. Choose a folder on this computer.');
     return { canonicalRoot: canonical };
   }
@@ -528,7 +536,7 @@ class TetherService {
   async accept(shootId, epoch, requestId, providerExposure, hostRoles, camera) {
     const accepted = await this.tx(shootId, async (ledger, events) => {
       const shoot = ledger.shoot;
-      only(providerExposure ?? {}, ['key', 'staged'], 'provider exposure');
+      only(providerExposure ?? {}, ['key', 'staged', 'target'], 'provider exposure');
       const key = providerExposure?.key === undefined || providerExposure.key === null ? null : shortText(providerExposure.key, 256, 'key');
       if (!Array.isArray(hostRoles) || !hostRoles.length || hostRoles.length > 2 || new Set(hostRoles).size !== hostRoles.length || hostRoles.some(r => !['raw', 'jpeg'].includes(r))) fail('UNSUPPORTED', 'Invalid host file roles.', { field: 'hostRoles' });
       const snapshot = cameraSnapshot(camera ?? {});
@@ -539,6 +547,7 @@ class TetherService {
       const connection = Number.isSafeInteger(epoch) ? epoch : 0;
       const existing = key && Object.values(ledger.exposures).find(e => e.providerShotKey === key && (e.epoch === connection || (!!snapshot.captureTime && e.captureTime === snapshot.captureTime)));
       if (existing) return { ...receipt(existing), boundRequestId: null };
+      const target = providerExposure?.target ? await this.keptTarget(shoot, providerExposure.target) : { relative: shoot.activeRelDir, dirId: shoot.activeDirId };
       const staged = providerExposure?.staged;
       const kept = staged === undefined ? [] : await this.verifiedKeep(ledger, key, requestId, hostRoles, staged);
       const c = shoot.counters;
@@ -554,7 +563,7 @@ class TetherService {
       const frozen = binds ? request.frozen : this.freeze(ledger);
       const exposureId = randomUUID(), { bodyId, ...cameraInfo } = snapshot;
       const exposure = ledger.exposures[exposureId] = { exposureId, shootId, ordinal: shoot.nextOrdinal++, epoch: connection, stableCameraKey: bodyKey, providerShotKey: key, requestId: binds ? request.requestId : null,
-        expectedHostRoles: [...hostRoles], targetRelDir: shoot.activeRelDir, targetDirId: shoot.activeDirId, captureTime: snapshot.captureTime ?? null, hostTime: wallClock(this.now()),
+        expectedHostRoles: [...hostRoles], targetRelDir: target.relative, targetDirId: target.dirId, captureTime: snapshot.captureTime ?? null, hostTime: wallClock(this.now()),
         captureCounter: c.next, cameraCounter, camera: cameraInfo, shot: null, frozenPolicy: frozen, stem: null, stemOverride: null, claimId: null, excludedStems: [], status: 'accepted', currentItemId: null, acceptedAt: this.now().toISOString() };
       if (kept.length) {
         exposure.shot = cameraInfo;
@@ -570,6 +579,15 @@ class TetherService {
     });
     if (providerExposure?.staged) await this.releaseKeptCounter(providerExposure.key);
     return accepted;
+  }
+
+  // A kept test shot goes to the folder it was kept for, or waits; it never moves to another folder.
+  async keptTarget(shoot, target) {
+    only(target, ['relative', 'dirId'], 'kept target');
+    const relative = relativeDir(target.relative);
+    const identity = relative && !shoot.recursive ? null : await this.directoryIdentity(shoot, relative).catch(() => null);
+    if (typeof target.dirId !== 'string' || identity !== target.dirId) fail('DEST_CHANGED', `${relative || 'The capture folder'} was moved, renamed or deleted after the test shot was kept. It is not saved anywhere else; move the folder back to finish keeping it.`, { field: 'relative', retryable: true });
+    return { relative, dirId: identity };
   }
 
   async verifiedKeep(ledger, key, requestId, roles, staged) {
@@ -834,6 +852,10 @@ class TetherService {
           .map(m => [m.memberId, path.basename(m.finalRelPath)])) : {};
         return { exposureId: exposure?.exposureId ?? null, ingested };
       }
+      if (op === 'destination') {
+        only(detail, [], 'destination');
+        return { relative: shoot.activeRelDir, dirId: shoot.activeDirId };
+      }
       if (op === 'issue') {
         only(detail, ['exposureId', 'memberId', 'code', 'message', 'retryable'], 'issue');
         const message = shortText(detail.message ?? 'Capture transfer failed.', 1024, 'message'), code = ISSUE_CODES.includes(detail.code) ? detail.code : 'IO_ERROR';
@@ -902,7 +924,8 @@ class TetherService {
         const camera = detail.camera;
         if (isPlain(camera) && typeof camera.deviceId === 'string') {
           shoot.lastDevice = { deviceId: shortText(camera.deviceId, 256, 'deviceId'), model: typeof camera.model === 'string' ? shortText(camera.model, 128, 'model') : null,
-            transport: typeof camera.transport === 'string' ? shortText(camera.transport, 32, 'transport') : null };
+            transport: typeof camera.transport === 'string' ? shortText(camera.transport, 32, 'transport') : null,
+            bodyKey: typeof camera.bodyKey === 'string' && /^[a-f0-9]{32}$/.test(camera.bodyKey) ? camera.bodyKey : null };
         }
         await this.library.flushSidecars();
         shoot.closedAt = this.now().toISOString();

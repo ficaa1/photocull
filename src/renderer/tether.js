@@ -112,7 +112,7 @@
       // want: the test shot being fetched, so a slower earlier fetch never replaces a newer frame.
       this.test = { active: false, hasShot: false, awaitingShot: false, busy: false, frame: null, want: null, testSeq: null, pairComplete: true, restoreLiveExpanded: false };
       this.recycleUntil = 0; this.recycleTimer = 0; this.wbArmed = false; this.wbBusy = false;
-      this.recent = []; this.resuming = false;
+      this.recent = []; this.opening = false;
       this.misfire = { history: new FlashHistory(), shown: false, detail: '', chain: Promise.resolve() };
       this.build();
       this.layer = new O.OverlayLayer(host.reviewViewport, {
@@ -621,11 +621,11 @@
       const last = this.lastResumable(), others = this.recent.filter(r => r !== last), show = this.api.canTether && !this.shoot && this.recent.length > 0;
       const when = r => new Date(r.stoppedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
       const where = r => r.shot ? `${r.name} / ${r.shot}` : r.name;
-      const signature = JSON.stringify([this.recent, this.resuming]);
+      const signature = JSON.stringify([this.recent, this.opening]);
       for (const prefix of ['tether-resume', 'tether-start-resume']) {
         const box = $(prefix), button = $(`${prefix}-last`), select = $(`${prefix}-recent`);
         box.hidden = !show;
-        button.disabled = !last || this.resuming; select.disabled = this.resuming;
+        button.disabled = !last || this.opening; select.disabled = this.opening;
         if (box.dataset.signature === signature) continue;
         box.dataset.signature = signature;
         $(`${prefix}-last-name`).textContent = last ? where(last) : 'Earlier capture folders were moved or deleted';
@@ -1045,10 +1045,18 @@
       for (const radio of document.querySelectorAll('input[name="tether-start-layout"]')) radio.checked = radio.value === layout;
       $('tether-start-status').textContent = ''; $('tether-start-dialog').showModal();
     }
+    // Start and Resume share one open at a time; the shell refuses a second bind as well.
+    beginOpening() {
+      if (this.opening) return false;
+      this.opening = true; $('tether-start-confirm').disabled = true; this.renderResume();
+      return true;
+    }
+    endOpening() { this.opening = false; $('tether-start-confirm').disabled = false; this.renderResume(); }
     async start() {
+      if (this.shoot || !this.beginOpening()) return;
       const useOpenFolder = document.querySelector('input[name="tether-start-root"]:checked')?.value === 'open';
       const layout = document.querySelector('input[name="tether-start-layout"]:checked')?.value || 'single';
-      $('tether-start-confirm').disabled = true; $('tether-start-status').textContent = 'Preparing capture folder…';
+      $('tether-start-status').textContent = 'Preparing capture folder…';
       try {
         await this.host.flushDevelop();
         const result = await this.api.tetherOpen({ session: useOpenFolder ? this.host.session()?.id ?? null : null, useOpenFolder, layout, includeShots: $('tether-start-shots').checked });
@@ -1057,7 +1065,7 @@
         await this.opened(result);
         this.openPanel(); void this.discover(true);
       } catch (error) { $('tether-start-status').textContent = error.message; }
-      finally { $('tether-start-confirm').disabled = false; }
+      finally { this.endOpening(); }
     }
     async opened(result) {
       if (result.session && result.session.id !== this.host.session()?.id) this.host.loadSession(result.session);
@@ -1072,9 +1080,9 @@
     // Reopens a stopped shoot where it left off: its folder, shot folder, counter, settings and camera.
     async resume(shootId) {
       const entry = this.recent.find(r => r.shootId === shootId), dialog = $('tether-start-dialog');
-      if (!entry || this.shoot || this.resuming || !this.api.canTether || !dialog.open && this.host.blocked()) return;
+      if (!entry || this.shoot || this.opening || !this.api.canTether || !dialog.open && this.host.blocked()) return;
       const report = message => { if (dialog.open) $('tether-start-status').textContent = message; else if (message) this.host.toast(message); };
-      this.resuming = true; $('tether-start-confirm').disabled = true; this.renderResume();
+      this.beginOpening();
       if (dialog.open) $('tether-start-status').textContent = `Reopening ${entry.name}…`;
       try {
         await this.host.flushDevelop();
@@ -1089,38 +1097,42 @@
           : `Resumed ${location?.leaf || entry.name} · next ${this.shoot?.counters?.next ?? entry.next}`);
         void this.discover(true, entry.camera);
       } catch (error) { report(error.message); void this.loadRecent(); }
-      finally { this.resuming = false; $('tether-start-confirm').disabled = false; this.renderResume(); }
+      finally { this.endOpening(); }
     }
-    // The shoot's own camera first, by device and then by a single body of the same model.
+    // The shoot's own camera: the same device, or with a verifiable body the only one of its model.
+    // The shell checks the body after opening, so another camera is never adopted.
     preferredDevice(available, camera) {
-      if (!camera) return null;
-      const same = available.filter(d => camera.model && d.model === camera.model);
-      return available.find(d => camera.deviceId && d.deviceId === camera.deviceId) || (same.length === 1 ? same[0] : null);
+      if (!camera?.deviceId || !camera.model) return null;
+      const same = camera.bodyKey ? available.filter(d => d.model === camera.model) : [];
+      return available.find(d => d.deviceId === camera.deviceId) || (same.length === 1 ? same[0] : null);
     }
     async discover(autoConnect = false, camera = null) {
       if (!this.api.canTether) return;
+      const shootId = this.shoot?.shootId ?? null;
       this.camera.state = this.connected() ? this.camera.state : 'discovering'; this.camera.reason = ''; this.render();
       try {
         const result = await this.api.tetherDevices();
         this.camera.devices = result.devices || [];
         if (!this.connected()) this.camera.state = 'offline';
+        const pending = autoConnect && !!this.shoot && this.shoot.shootId === shootId && !this.connected();
         const available = this.camera.devices.filter(d => !d.availability || d.availability === 'available'), usb = available.filter(d => transportOf(d) === 'usb');
-        const preferred = autoConnect && this.shoot && !this.connected() ? this.preferredDevice(available, camera) : null;
+        const preferred = pending ? this.preferredDevice(available, camera) : null;
         if (!this.camera.devices.length) this.camera.reason = 'No camera found. Check the setup steps below, then retry.';
-        else if (preferred) await this.connect(preferred.deviceId);
-        else if (autoConnect && usb.length === 1 && available.length === 1 && this.shoot && !this.connected()) await this.connect(usb[0].deviceId);
+        else if (preferred) await this.connect(preferred.deviceId, { deviceId: camera.deviceId, model: camera.model, bodyKey: camera.bodyKey ?? null });
+        else if (pending && !camera && usb.length === 1 && available.length === 1) await this.connect(usb[0].deviceId);
+        else if (pending && camera && available.length && !this.connected()) this.camera.reason = `The ${camera.model || 'camera'} this shoot used was not found. Choose a camera to continue.`;
         else if (available.length > 1 && !this.connected()) this.camera.reason = 'Several cameras found. Choose one above.';
       } catch (error) { this.camera.state = 'offline'; this.camera.reason = error.message; }
       this.render();
     }
-    async connect(deviceId) {
+    async connect(deviceId, expect = null) {
       if (!this.shoot || !deviceId) return;
       const device = this.camera.devices.find(d => d.deviceId === deviceId);
       if (device && transportOf(device) === 'wifi' && (device.needsCredentials || device.auth === 'unknown' && device.address)) {
         this.camera.deviceId = deviceId; this.camera.reason = ''; this.openWifiForDevice(device); return;
       }
       this.camera.state = 'connecting'; this.camera.deviceId = deviceId; this.render();
-      try { this.applyConnection(await this.api.tetherConnect(this.shoot.shootId, deviceId)); }
+      try { this.applyConnection(await this.api.tetherConnect(this.shoot.shootId, deviceId, expect)); }
       catch (error) {
         this.camera.state = 'offline'; this.camera.reason = error.message; this.render();
         if (device && transportOf(device) === 'wifi' && ['SSH_CREDENTIALS_REQUIRED', 'SSH_AUTH_FAILED', 'AUTH_CHOICE_REQUIRED', 'AUTH_MODE_REQUIRED', ...HOST_KEY].includes(error.code)) {

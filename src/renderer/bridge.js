@@ -223,7 +223,7 @@
     tetherDevices: () => tetherShell('tether_devices', {}),
     tetherDiscoverWifi: () => tetherShell('tether_discover_wifi', {}),
     tetherAddWifi: args => tetherShell('tether_add_wifi', args),
-    tetherConnect: (shootId, deviceId) => tetherShell('tether_connect', { shootId, deviceId }),
+    tetherConnect: (shootId, deviceId, expect = null) => tetherShell('tether_connect', { shootId, deviceId, expect }),
     tetherControl: (shootId, epoch, op, extra = {}) => tetherShell('tether_control', { shootId, epoch, op, ...extra }),
     tetherSetProperty: (shootId, epoch, key, value, expectedPropRev) => tetherShell('tether_set_property', { shootId, epoch, key, value, expectedPropRev }),
     tetherTrigger: (shootId, epoch, requestId, primarySeq) => tetherShell('tether_trigger', { shootId, epoch, requestId, primarySeq }),

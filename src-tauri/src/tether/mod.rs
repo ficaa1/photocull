@@ -655,7 +655,7 @@ enum SetValue {
 
 enum Cmd {
     Bind(Binding, Value, Reply<()>),
-    Connect(String, Reply<Value>),
+    Connect(String, Option<ExpectedBody>, Reply<Value>),
     Snapshot(Reply<Value>),
     TransfersSettled(Reply<bool>),
     Pause(Stamp, bool, Reply<Value>),
@@ -1749,8 +1749,8 @@ impl Actor {
             Cmd::Bind(binding, recoveries, reply) => {
                 let _ = reply.send(self.bind(binding, recoveries));
             }
-            Cmd::Connect(device_id, reply) => {
-                let result = self.connect(&device_id, true);
+            Cmd::Connect(device_id, expect, reply) => {
+                let result = self.connect(&device_id, true, expect.as_ref());
                 let _ = reply.send(result);
             }
             Cmd::Snapshot(reply) => {
@@ -1823,7 +1823,7 @@ impl Actor {
                 let result = match self.device.clone() {
                     Some(device) => {
                         self.close_session();
-                        self.connect(&device.device_id, false)
+                        self.connect(&device.device_id, false, None)
                             .map(|_| self.control_state())
                     }
                     None => Err(TetherError::new(
@@ -1913,9 +1913,11 @@ impl Actor {
                 .find(|p| p.key == "saveDestination")
                 .map(|p| p.display)
         });
+        let guid = device.route.as_ref().and_then(|r| r.responder_guid);
         json!({
             "deviceId": device.device_id,
             "model": device.model,
+            "bodyKey": body_key(&device.model, &device.serial, guid),
             "firmware": if device.firmware.is_empty() { Value::Null } else { device.firmware.clone().into() },
             "transport": if device.wifi { "wifi-ptpip" } else { "usb-icc" },
             "profile": session.map(|s| s.profile().name()),
@@ -1976,6 +1978,7 @@ impl Actor {
         let reason = self.inner.state.lock().unwrap().1.clone();
         json!({
             "epoch": self.epoch,
+            "shootId": self.shoot_id,
             "device": self.device_json(),
             "properties": Self::properties_json(&props),
             "propRev": self.session.as_ref().map(|s| s.prop_rev()).unwrap_or(0),
@@ -2043,7 +2046,12 @@ impl Actor {
         );
     }
 
-    fn connect(&mut self, device_id: &str, explicit: bool) -> TResult<Value> {
+    fn connect(
+        &mut self,
+        device_id: &str,
+        explicit: bool,
+        expect: Option<&ExpectedBody>,
+    ) -> TResult<Value> {
         let binding = self
             .inner
             .binding
@@ -2177,6 +2185,18 @@ impl Actor {
                     .retryable(false));
                 }
             }
+        }
+        let key = body_key(&info.model, &info.serial_number, responder_guid);
+        if expect.is_some_and(|e| !e.matches(device_id, &info.model, key.as_deref())) {
+            let _ = session.close();
+            let e = TetherError::new(
+                "CAMERA_LOST",
+                "A different camera is connected. Choose it to continue the shoot.",
+            )
+            .retryable(false);
+            self.set_state(LinkState::Offline, Some(e.message.clone()));
+            self.emit_connection(Some(&e.message));
+            return Err(e);
         }
         self.device = Some(DeviceDesc {
             device_id: device_id.to_string(),
@@ -2427,7 +2447,7 @@ impl Actor {
         }
         let mut failed = true;
         if let Some(id) = target {
-            match self.connect(&id, false) {
+            match self.connect(&id, false, None) {
                 Ok(_) => failed = false,
                 Err(e) if !e.retryable => {
                     self.reconnect = None;
@@ -2721,7 +2741,16 @@ impl Actor {
                     shot.check_keep(force_single)?;
                     (KeepPromotion::from_shot(shot), !shot.pair_complete())
                 };
-                let promotion = promotion.record(&inner.data_dir, &binding.root)?;
+                let target = tauri::async_runtime::block_on(node(
+                    &inner.app,
+                    "tether-journal",
+                    json!([binding.shoot_id, "destination", {}]),
+                ))?;
+                let promotion = KeepPromotion {
+                    target,
+                    ..promotion
+                }
+                .record(&inner.data_dir, &binding.root)?;
                 if let Some(cohort) = self.cohorts.latest_test.clone().filter(|_| single) {
                     if !self.cohorts.kept_single.contains(&cohort) {
                         self.cohorts.kept_single.push_back(cohort);
@@ -3577,6 +3606,54 @@ fn same_wifi_body(
         && (previous.serial.is_empty() || serial.is_empty() || previous.serial == serial)
 }
 
+/// A stable name for one camera body, saved with a stopped shoot so resuming reattaches only
+/// that body: its serial number, else its PTP/IP responder GUID. Neither means no proof.
+fn body_key(model: &str, serial: &str, responder_guid: Option<[u8; 16]>) -> Option<String> {
+    let (model, serial) = (model.trim(), serial.trim());
+    let id = if !serial.is_empty() {
+        format!("serial:{serial}")
+    } else {
+        format!("guid:{}", transfer::hex(&responder_guid?))
+    };
+    let hash = transfer::Sha256::digest(format!("photocull-camera:{model}:{id}").as_bytes());
+    Some(transfer::hex(&hash)[..32].to_string())
+}
+
+/// The body a resumed shoot expects; any other camera is refused rather than adopted.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExpectedBody {
+    device_id: String,
+    model: String,
+    body_key: Option<String>,
+}
+
+impl ExpectedBody {
+    fn matches(&self, device_id: &str, model: &str, body_key: Option<&str>) -> bool {
+        match (self.body_key.as_deref(), body_key) {
+            (Some(expected), Some(found)) => expected == found,
+            (None, None) => self.device_id == device_id && self.model == model.trim(),
+            _ => false,
+        }
+    }
+}
+
+/// The camera the actor still holds, unless its link is closed.
+fn held_device(snapshot: &Value) -> Option<String> {
+    (snapshot["connection"]["state"] != "offline")
+        .then(|| snapshot["device"]["deviceId"].as_str().map(String::from))
+        .flatten()
+}
+
+/// The camera to remember with a stopping shoot: only one attached during that shoot.
+fn attached_camera(snapshot: &Value, shoot_id: &str) -> Value {
+    if snapshot["shootId"] == shoot_id {
+        snapshot["device"].clone()
+    } else {
+        Value::Null
+    }
+}
+
 /// The device to reopen after a loss. Another Sony body is only a candidate when its serial
 /// number can be checked after opening.
 fn reconnect_target(device: &DeviceDesc, candidates: &[IccDevice]) -> Option<String> {
@@ -4057,6 +4134,9 @@ struct KeepPromotion {
     epoch: u64,
     meta: Value,
     members: Vec<KeptMember>,
+    /// The shot folder, with its identity, that was current when Keep was chosen.
+    #[serde(default)]
+    target: Value,
 }
 
 impl KeepPromotion {
@@ -4083,6 +4163,7 @@ impl KeepPromotion {
             epoch: shot.epoch,
             meta,
             members,
+            target: Value::Null,
         }
     }
 
@@ -4214,7 +4295,23 @@ async fn keep_composition(
             roles.push(member.kind.role());
             staged.push(json!({ "memberId": id, "originalName": member.name, "bytes": member.receipt.bytes, "sha256": member.receipt.sha256 }));
         }
-        let accepted = node(app, "tether-accept", json!([shoot, promotion.epoch, null, { "key": promotion.key, "staged": staged }, roles, promotion.meta])).await?;
+        let mut exposure = json!({ "key": promotion.key, "staged": staged });
+        if !promotion.target.is_null() {
+            exposure["target"] = promotion.target.clone();
+        }
+        let accepted = node(
+            app,
+            "tether-accept",
+            json!([
+                shoot,
+                promotion.epoch,
+                null,
+                exposure,
+                roles,
+                promotion.meta
+            ]),
+        )
+        .await?;
         str_field(&accepted, "exposureId")?
     };
     let mut filename = Value::Null;
@@ -4780,27 +4877,11 @@ pub async fn tether_open(
             if let Some(s) = &session {
                 valid_id(s, "session")?;
             }
-            // A resumed shoot names its own folder and layout; the renderer never passes a path.
-            let (layout, include_shots, resumed) = match &resume {
-                Some(shoot_id) => {
-                    valid_id(shoot_id, "resume")?;
-                    let target = node(&app, "tether-resume-target", json!([shoot_id])).await?;
-                    let root = str_field(&target, "root")?;
-                    (
-                        str_field(&target, "layout")?,
-                        target["includeShots"].as_bool().unwrap_or(include_shots),
-                        Some(PathBuf::from(root)),
-                    )
-                }
-                None => (layout, include_shots, None),
-            };
-            if layout != "single" && layout != "session" {
-                return Err(
-                    TetherError::new("UNSUPPORTED", "Invalid capture layout.").field("layout")
-                );
+            if let Some(shoot_id) = &resume {
+                valid_id(shoot_id, "resume")?;
             }
-            let chosen = if resumed.is_some() {
-                resumed
+            let chosen = if resume.is_some() {
+                None
             } else if use_open_folder {
                 let s = session
                     .clone()
@@ -4818,18 +4899,47 @@ pub async fn tether_open(
                     .blocking_pick_folder()
                     .and_then(|p| p.into_path().ok())
             };
-            let Some(chosen) = chosen else {
+            if chosen.is_none() && resume.is_none() {
                 return Ok(Value::Null);
-            };
+            }
             let _shoot_guard = tether.inner.shoot_lock.lock().await;
+            // A resumed shoot names its own folder and layout; the renderer never passes a path.
+            let (chosen, layout, include_shots, folder_id) = match &resume {
+                Some(shoot_id) => {
+                    let target = node(&app, "tether-resume-target", json!([shoot_id])).await?;
+                    (
+                        PathBuf::from(str_field(&target, "root")?),
+                        str_field(&target, "layout")?,
+                        target["includeShots"].as_bool().unwrap_or(false),
+                        target["folderId"].clone(),
+                    )
+                }
+                None => (chosen.unwrap(), layout, include_shots, Value::Null),
+            };
+            if layout != "single" && layout != "session" {
+                return Err(
+                    TetherError::new("UNSUPPORTED", "Invalid capture layout.").field("layout")
+                );
+            }
+            let rebinding = tether.binding();
+            if let Some(bound) = &rebinding {
+                let same = dunce::canonicalize(&chosen).is_ok_and(|root| root == bound.root);
+                if resume.is_some() || !same {
+                    return Err(TetherError::new(
+                        "CAMERA_BUSY",
+                        "Stop the current tethered shoot first.",
+                    ));
+                }
+            }
             let check_app = app.clone();
             let root = blocking(move || {
                 preflight_root(&chosen, |root| {
-                    // Camera cards are refused read-only, before any staging folder exists.
+                    // Camera cards and a resumed folder that was replaced are refused read-only,
+                    // before any staging folder exists.
                     node_blocking(
                         &check_app,
                         "tether-check-destination",
-                        json!([root.to_string_lossy()]),
+                        json!([root.to_string_lossy(), folder_id]),
                     )
                     .map(|_| ())
                 })
@@ -4850,21 +4960,30 @@ pub async fn tether_open(
             )
             .await?;
             let shoot_id = str_field(&bound, "shootId")?;
-            let session_id = bound["session"]["id"]
-                .as_str()
-                .map(String::from)
-                .ok_or_else(|| {
-                    TetherError::new("IO_ERROR", "The backend returned no Library session.")
-                })?;
-            let binding = Binding {
-                shoot_id: shoot_id.clone(),
-                session: session_id,
-                library_root: layout_root(&root, &layout),
-                root,
+            let attached = match bound["session"]["id"].as_str() {
+                Some(session_id) => {
+                    let binding = Binding {
+                        shoot_id: shoot_id.clone(),
+                        session: session_id.to_string(),
+                        library_root: layout_root(&root, &layout),
+                        root,
+                    };
+                    tether
+                        .ask(|tx| Cmd::Bind(binding, bound["recoveries"].clone(), tx))
+                        .await
+                }
+                None => Err(TetherError::new(
+                    "IO_ERROR",
+                    "The backend returned no Library session.",
+                )),
             };
-            tether
-                .ask(|tx| Cmd::Bind(binding, bound["recoveries"].clone(), tx))
-                .await?;
+            // A newly opened sidecar shoot stays open only when the camera side is bound too.
+            if let Err(e) = attached {
+                if rebinding.is_none() {
+                    let _ = node(&app, "tether-journal", json!([shoot_id, "close", {}])).await;
+                }
+                return Err(e);
+            }
             Ok(json!({
                 "shootId": shoot_id,
                 "session": bound["session"],
@@ -5086,9 +5205,7 @@ impl TetherManager {
         } else {
             None
         };
-        let active = snapshot
-            .as_ref()
-            .and_then(|s| s["device"]["deviceId"].as_str().map(String::from));
+        let active = snapshot.as_ref().and_then(held_device);
         let (usb, usb_error) = match usb {
             Ok(list) => (list, None),
             Err(message) => (Vec::new(), Some(message)),
@@ -5461,6 +5578,7 @@ pub async fn tether_connect(
     tether: State<'_, TetherManager>,
     shoot_id: String,
     device_id: String,
+    expect: Option<ExpectedBody>,
 ) -> Result<Value, String> {
     let tether = tether.inner().clone();
     Ok(envelope(
@@ -5469,7 +5587,7 @@ pub async fn tether_connect(
             if device_id.is_empty() || device_id.len() > 256 {
                 return Err(TetherError::new("UNSUPPORTED", "Invalid camera.").field("deviceId"));
             }
-            tether.ask(|tx| Cmd::Connect(device_id, tx)).await
+            tether.ask(|tx| Cmd::Connect(device_id, expect, tx)).await
         }
         .await,
     ))
@@ -5527,7 +5645,7 @@ pub async fn tether_control(
                     let mut camera = Value::Null;
                     if tether.inner.actor.lock().unwrap().is_some() {
                         if let Ok(snapshot) = tether.ask(Cmd::Snapshot).await {
-                            camera = snapshot["device"].clone();
+                            camera = attached_camera(&snapshot, &shoot_id);
                         }
                         let _ = tether.ask(|tx| Cmd::Disconnect(stamp.clone(), tx)).await;
                     }
@@ -6781,6 +6899,78 @@ mod tests {
         assert!(same_body(&anonymous, "old", "ILCE-7M3 ", ""));
         assert!(!same_body(&anonymous, "new", "ILCE-7M3", ""));
         assert!(!same_body(&anonymous, "old", "ILCE-7CM2", ""));
+    }
+
+    #[test]
+    fn a_resumed_shoot_attaches_only_its_own_body() {
+        let first = body_key("ILCE-7M4", "0001", None).unwrap();
+        assert_eq!(first.len(), 32);
+        assert_eq!(
+            body_key("ILCE-7M4 ", " 0001", Some([9; 16])),
+            Some(first.clone())
+        );
+        assert_ne!(body_key("ILCE-7M4", "0002", None), Some(first.clone()));
+        assert_ne!(
+            body_key("ILCE-7M4", "", Some([1; 16])),
+            body_key("ILCE-7M4", "", Some([2; 16]))
+        );
+        assert_eq!(body_key("ILCE-7M4", "", None), None);
+        let expect = |body_key: Option<&str>| ExpectedBody {
+            device_id: "usb-1".into(),
+            model: "ILCE-7M4".into(),
+            body_key: body_key.map(String::from),
+        };
+        // A serial or responder decides, wherever the body is plugged in.
+        assert!(expect(Some(&first)).matches("usb-9", "ILCE-7M4", Some(&first)));
+        let other = body_key("ILCE-7M4", "0002", None).unwrap();
+        assert!(!expect(Some(&first)).matches("usb-1", "ILCE-7M4", Some(&other)));
+        assert!(!expect(Some(&first)).matches("usb-1", "ILCE-7M4", None));
+        // Without either, only the same device and model count.
+        assert!(expect(None).matches("usb-1", "ILCE-7M4 ", None));
+        assert!(!expect(None).matches("usb-2", "ILCE-7M4", None));
+        assert!(!expect(None).matches("usb-1", "ILCE-7CM2", None));
+        assert!(!expect(None).matches("usb-1", "ILCE-7M4", Some(&first)));
+    }
+
+    #[test]
+    fn a_stopped_link_frees_its_camera_and_belongs_to_its_shoot() {
+        let snapshot = |state: &str, shoot: Value| json!({ "shootId": shoot, "device": { "deviceId": "usb-1", "model": "ILCE-7M4" }, "connection": { "state": state } });
+        assert_eq!(
+            held_device(&snapshot("ready", json!("a"))).as_deref(),
+            Some("usb-1")
+        );
+        assert_eq!(
+            held_device(&snapshot("reconnecting", json!("a"))).as_deref(),
+            Some("usb-1")
+        );
+        assert_eq!(held_device(&snapshot("offline", json!("a"))), None);
+        assert_eq!(
+            attached_camera(&snapshot("offline", json!("a")), "a")["deviceId"],
+            "usb-1"
+        );
+        assert_eq!(
+            attached_camera(&snapshot("offline", json!("a")), "b"),
+            Value::Null
+        );
+        assert_eq!(
+            attached_camera(&snapshot("offline", Value::Null), "b"),
+            Value::Null
+        );
+    }
+
+    #[test]
+    fn a_keep_recorded_before_its_folder_was_saved_still_reads() {
+        let saved = json!({ "shoot_id": "s", "seq": 3, "key": "composition:k", "epoch": 1, "meta": {}, "members": [] });
+        let promotion: KeepPromotion = serde_json::from_value(saved).unwrap();
+        assert_eq!(promotion.target, Value::Null);
+        let target = json!({ "relative": "Day 1/Blue", "dirId": "1:2" });
+        let promotion = KeepPromotion {
+            target: target.clone(),
+            ..promotion
+        };
+        let reread: KeepPromotion =
+            serde_json::from_value(serde_json::to_value(&promotion).unwrap()).unwrap();
+        assert_eq!(reread.target, target);
     }
 
     #[test]
