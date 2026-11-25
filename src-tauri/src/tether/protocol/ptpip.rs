@@ -212,6 +212,10 @@ impl PtpIpTransport {
         self.responder_name.as_deref()
     }
 
+    pub fn is_live(&self) -> bool {
+        self.session_open && self.shared.is_live(self.generation)
+    }
+
     pub fn abort_handle(&self) -> PtpIpAbort {
         PtpIpAbort(self.shared.clone())
     }

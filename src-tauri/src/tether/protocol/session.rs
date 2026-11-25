@@ -414,7 +414,6 @@ pub struct SonySession<T: PtpTransport> {
     half_press: Option<String>,
     object_added: bool,
     props_dirty: bool,
-    bare_msb_since: Option<Instant>,
     invalid_streak: u32,
     live: bool,
     live_info: bool,
@@ -461,7 +460,6 @@ impl<T: PtpTransport> SonySession<T> {
             half_press: None,
             object_added: false,
             props_dirty: false,
-            bare_msb_since: None,
             invalid_streak: 0,
             live: false,
             live_info: false,
@@ -681,7 +679,6 @@ impl<T: PtpTransport> SonySession<T> {
         self.half_press = None;
         self.object_added = false;
         self.invalid_streak = 0;
-        self.bare_msb_since = None;
         self.live = false;
         self.live_info = false;
         self.refresh_properties()?;
@@ -778,9 +775,11 @@ impl<T: PtpTransport> SonySession<T> {
             .map(|(code, _)| *code)
             .collect();
         changed.extend(self.props.keys().filter(|c| !next.contains_key(c)));
-        for code in &changed {
+        if !changed.is_empty() {
             self.prop_rev += 1;
-            self.revs.insert(*code, self.prop_rev);
+            for code in &changed {
+                self.revs.insert(*code, self.prop_rev);
+            }
         }
         self.props = next;
         self.props_dirty = false;
@@ -806,9 +805,15 @@ impl<T: PtpTransport> SonySession<T> {
         }
         match event {
             TransportEvent::Ptp { code, params, .. } => match code {
-                // Only the capture pseudo-handle bypasses the D215 readiness check; any other
-                // object event just asks for a fresh reading.
-                ptp::event::SONY_OBJECT_ADDED if params.first() == Some(&handle::CAPTURE) => {
+                // Only the capture pseudo-handle (or a bare Sony ObjectAdded) bypasses the D215
+                // readiness check; any other object event just asks for a fresh reading.
+                ptp::event::SONY_OBJECT_ADDED
+                    if params.is_empty() || params.first() == Some(&handle::CAPTURE) =>
+                {
+                    self.object_added = true;
+                    Some(SessionEvent::ObjectAdded)
+                }
+                ptp::event::OBJECT_ADDED if params.first() == Some(&handle::CAPTURE) => {
                     self.object_added = true;
                     Some(SessionEvent::ObjectAdded)
                 }
@@ -1311,9 +1316,14 @@ impl<T: PtpTransport> SonySession<T> {
         }
     }
 
+    /// Raw D215 Shooting File Info value, 0 when absent.
+    pub fn object_in_memory(&self) -> u16 {
+        self.value(prop::OBJECT_IN_MEMORY).unwrap_or(0) as u16
+    }
+
     /// The transfer queue as currently known, without any camera I/O.
     pub fn queue_signal(&self) -> QueueSignal {
-        codec::queue_signal(self.value(prop::OBJECT_IN_MEMORY).unwrap_or(0) as u16)
+        codec::queue_signal(self.object_in_memory())
     }
 
     pub fn refresh_capture_pending(&mut self) -> Result<bool> {
@@ -1337,22 +1347,12 @@ impl<T: PtpTransport> SonySession<T> {
         if !self.object_added {
             self.refresh_properties()?;
             match self.queue_signal() {
-                QueueSignal::Ready => self.bare_msb_since = None,
+                QueueSignal::Ready => {}
                 QueueSignal::Empty => {
-                    self.bare_msb_since = None;
                     self.invalid_streak = 0;
                     return Ok(DrainStep::Empty);
                 }
                 QueueSignal::Pending => return Ok(DrainStep::Pending),
-                QueueSignal::BareMsb => {
-                    let now = self.transport.now();
-                    let since = *self.bare_msb_since.get_or_insert(now);
-                    return Ok(if now.duration_since(since) >= self.config.stall_after {
-                        DrainStep::Stalled
-                    } else {
-                        DrainStep::Pending
-                    });
-                }
             }
         }
         let mut info_bytes = Vec::new();
@@ -1406,7 +1406,6 @@ impl<T: PtpTransport> SonySession<T> {
         Self::ok(op::GET_OBJECT, reply.clone())?;
         self.object_added = false;
         self.invalid_streak = 0;
-        self.bare_msb_since = None;
         let kind = ptp::classify(info.object_format, &info.filename, &head);
         let object = DrainedObject {
             info,
@@ -1650,8 +1649,36 @@ impl<T: PtpTransport> SonySession<T> {
             prop::FOCUS_INDICATION,
             prop::FOCAL_POSITION,
         ];
+        let wb_fine_choices = match (desc.code, &desc.form) {
+            (prop::WB_GREEN_MAGENTA | prop::WB_AMBER_BLUE, Form::Range { min, max, step }) => {
+                let amber_blue = desc.code == prop::WB_AMBER_BLUE;
+                match (min.as_i128(), max.as_i128(), step.as_i128()) {
+                    (Some(lo), Some(hi), Some(st))
+                        if (0..=255).contains(&lo)
+                            && (lo..=255).contains(&hi)
+                            && st > 0
+                            && (hi - lo) / st < 128 =>
+                    {
+                        let mut items = Vec::new();
+                        let mut v = lo;
+                        while v <= hi {
+                            items.push(Choice {
+                                id: v.to_string(),
+                                label: codec::wb_fine_label(v as u8, amber_blue),
+                            });
+                            v += st;
+                        }
+                        Some(items)
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
         let kind = if readings.contains(&desc.code) {
             PropertyKind::Reading
+        } else if wb_fine_choices.is_some() {
+            PropertyKind::Enum
         } else {
             match &desc.form {
                 Form::Enum { .. } => PropertyKind::Enum,
@@ -1664,21 +1691,25 @@ impl<T: PtpTransport> SonySession<T> {
         } else {
             Access::ReadWrite
         };
-        let choices = match (&desc.form, kind) {
-            (
-                Form::Enum {
-                    writable,
-                    reportable,
-                },
-                PropertyKind::Enum,
-            ) => {
-                if access == Access::ReadWrite {
-                    self.choices(desc.code, writable)
-                } else {
-                    self.choices(desc.code, reportable)
+        let choices = if let Some(items) = wb_fine_choices {
+            items
+        } else {
+            match (&desc.form, kind) {
+                (
+                    Form::Enum {
+                        writable,
+                        reportable,
+                    },
+                    PropertyKind::Enum,
+                ) => {
+                    if access == Access::ReadWrite {
+                        self.choices(desc.code, writable)
+                    } else {
+                        self.choices(desc.code, reportable)
+                    }
                 }
+                _ => Vec::new(),
             }
-            _ => Vec::new(),
         };
         let range = match (&desc.form, kind) {
             (Form::Range { min, max, step }, PropertyKind::Range) => Some(RangeSpec {
@@ -1692,12 +1723,23 @@ impl<T: PtpTransport> SonySession<T> {
             }),
             _ => None,
         };
+        let value = if matches!(desc.code, prop::WB_GREEN_MAGENTA | prop::WB_AMBER_BLUE)
+            && kind == PropertyKind::Enum
+            && matches!(desc.form, Form::Range { .. })
+        {
+            desc.current
+                .as_i128()
+                .map(|v| v.to_string())
+                .or_else(|| Some(desc.current.id()))
+        } else {
+            Some(desc.current.id())
+        };
         CameraProperty {
             key,
             label,
             code: desc.code,
             kind,
-            value: Some(desc.current.id()),
+            value,
             display: codec::value_label(desc.code, &desc.current, menu),
             access,
             choices,
@@ -2557,34 +2599,93 @@ mod tests {
     }
 
     #[test]
-    fn bare_msb_waits_then_reports_a_stall() {
-        let mut s = m3(with_current(
-            m3_descriptors(),
+    fn bare_msb_drains_ready_object() {
+        let mut s = cm2(with_current(
+            cm2_descriptors(),
             prop::OBJECT_IN_MEMORY,
             PropValue::U16(0x8000),
         ));
-        s.config.stall_after = Duration::from_millis(200);
-        let bare = m3_with(prop::OBJECT_IN_MEMORY, PropValue::U16(0x8000));
+        let jpeg = jpeg_file(600);
         let t = s.transport_mut();
-        for _ in 0..3 {
-            snapshot(t, bare.clone());
-        }
-        assert!(matches!(
-            s.drain_one(|_, _| Ok(Vec::new())).unwrap(),
-            DrainStep::Pending
-        ));
-        s.transport_mut().sleep(Duration::from_millis(150));
-        assert!(matches!(
-            s.drain_one(|_, _| Ok(Vec::new())).unwrap(),
-            DrainStep::Pending
-        ));
-        s.transport_mut().sleep(Duration::from_millis(100));
-        assert!(matches!(
-            s.drain_one(|_, _| Ok(Vec::new())).unwrap(),
-            DrainStep::Stalled
-        ));
-        // Never read FFFFC001 blindly.
-        assert!(!opcodes(&s).iter().any(|x| x.0 == 0x1008));
+        t.enqueue_object(object_info(0x3801, "DSC0001.JPG", 600, 1), jpeg.clone());
+        snapshot(t, cm2_with(prop::OBJECT_IN_MEMORY, PropValue::U16(0x8000)));
+        t.push(Step::CaptureInfo).push(Step::CaptureObject);
+        let step = s.drain_one(|_, _| Ok(Vec::new())).unwrap();
+        assert!(matches!(step, DrainStep::Object(o, b) if o.kind == FileKind::Jpeg && b == jpeg));
+        s.transport().finish();
+    }
+
+    #[test]
+    fn multi_property_refresh_bumps_prop_rev_once_and_wb_fine_uses_offset_choices() {
+        let mut base = cm2_descriptors();
+        base.push(DevicePropDesc {
+            code: prop::WB_GREEN_MAGENTA,
+            data_type: dtype::UINT8,
+            get_set: 1,
+            is_enabled: 1,
+            default: PropValue::U8(0xC0),
+            current: PropValue::U8(0xC0),
+            form: Form::Range {
+                min: PropValue::U8(0xA4),
+                max: PropValue::U8(0xDC),
+                step: PropValue::U8(1),
+            },
+        });
+        base.push(DevicePropDesc {
+            code: prop::WB_AMBER_BLUE,
+            data_type: dtype::UINT8,
+            get_set: 1,
+            is_enabled: 1,
+            default: PropValue::U8(0xC0),
+            current: PropValue::U8(0xC0),
+            form: Form::Range {
+                min: PropValue::U8(0xA4),
+                max: PropValue::U8(0xDC),
+                step: PropValue::U8(2),
+            },
+        });
+        let mut s = cm2(base.clone());
+        let rev0 = s.prop_rev();
+        let mut descs = with_current(base, prop::WB_GREEN_MAGENTA, PropValue::U8(196));
+        descs = with_current(descs, prop::WB_AMBER_BLUE, PropValue::U8(188));
+        snapshot(
+            s.transport_mut(),
+            codec::encode_snapshot(&descs, Grammar::TwoList),
+        );
+        let changed = s.refresh_properties().unwrap();
+        assert_eq!(changed.len(), 2);
+        assert_eq!(s.prop_rev(), rev0 + 1);
+        let props = s.camera_properties();
+        let gm = props.iter().find(|p| p.key == "wbGreenMagenta").unwrap();
+        assert_eq!(gm.kind, PropertyKind::Enum);
+        assert_eq!(gm.value.as_deref(), Some("196"));
+        assert_eq!(gm.display, "G1");
+        assert!(gm.choices.iter().any(|c| c.id == "192" && c.label == "0"));
+        assert!(gm.choices.iter().any(|c| c.id == "196" && c.label == "G1"));
+        let ab = props.iter().find(|p| p.key == "wbAmberBlue").unwrap();
+        assert_eq!(ab.kind, PropertyKind::Enum);
+        assert_eq!(ab.value.as_deref(), Some("188"));
+        assert_eq!(ab.display, "B1");
+        expect_out(
+            s.transport_mut(),
+            0x9205,
+            &[prop::WB_GREEN_MAGENTA as u32],
+            &[192],
+        );
+        snapshot(
+            s.transport_mut(),
+            codec::encode_snapshot(
+                &with_current(descs, prop::WB_GREEN_MAGENTA, PropValue::U8(192)),
+                Grammar::TwoList,
+            ),
+        );
+        s.set_property(prop::WB_GREEN_MAGENTA, "192", Some(gm.prop_rev))
+            .unwrap();
+        assert_eq!(
+            s.property(prop::WB_GREEN_MAGENTA).unwrap().current,
+            PropValue::U8(192)
+        );
+        s.transport().finish();
     }
 
     #[derive(Clone, Default)]
@@ -3273,9 +3374,27 @@ mod tests {
             }
             s.process_events()
         };
-        let other = deliver(&mut s, &[(0xC201, 0xFFFF_C002), (0x4002, 0xFFFF_C001)]);
+        let other = deliver(&mut s, &[(0xC201, 0xFFFF_C002), (0x4002, 0x0000_0001)]);
         assert_eq!(other, vec![SessionEvent::PropertiesDirty]);
         assert!(!s.object_announced());
+        s.transport_mut().schedule(
+            Duration::ZERO,
+            TransportEvent::Ptp {
+                generation,
+                code: 0xC201,
+                params: vec![],
+            },
+        );
+        assert_eq!(s.process_events(), vec![SessionEvent::ObjectAdded]);
+        assert!(s.object_announced());
+        assert_eq!(deliver(&mut s, &[(0xC202, 0xFFFF_C001)]), vec![]);
+        assert!(!s.object_announced());
+        assert_eq!(
+            deliver(&mut s, &[(0x4002, 0xFFFF_C001)]),
+            vec![SessionEvent::ObjectAdded]
+        );
+        assert!(s.object_announced());
+        assert_eq!(deliver(&mut s, &[(0xC202, 0xFFFF_C001)]), vec![]);
         let kept = deliver(&mut s, &[(0xC201, 0xFFFF_C001), (0xC202, 0x0000_0001)]);
         assert_eq!(
             kept,

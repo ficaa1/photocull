@@ -46,13 +46,19 @@ function simulateCamera() {
         return { testSeq: extra.testSeq, exposureId: op === 'composition-keep' ? `kept-${extra.testSeq}` : undefined };
       }
       if (op === 'stop') { T.shoot = null; return { state: 'offline', epoch, cleanupWarning: 'Temporary test files could not be removed.' }; }
+      if (op === 'refresh') return T.snapshot();
       if (op === 'reconnect') { T.epoch++; setTimeout(() => T.emit('tether-connection', { shootId, ...T.snapshot() })); return { state: 'connecting', epoch: T.epoch }; }
       if (op === 'fel') { T.fel = !T.fel; setTimeout(() => T.changed('felState')); }
       return { state: 'ready', epoch };
     },
     tetherTrigger: async (shootId, epoch, requestId, primarySeq) => { log('trigger', primarySeq); return T.composition ? { status: 'released', state: 'released', testShot: true } : { state: 'requested' }; },
     tetherPresented: async (shootId, exposureId, ordinal, quality) => { log('presented', exposureId, quality); return {}; },
-    tetherSetProperty: async (shootId, epoch, key, value) => { log('set', key, value); if (key === 'shutter') T.shutter = value; return { properties: T.snapshot().properties.filter(p => p.key === key), propRev: ++T.propRev }; },
+    tetherSetProperty: async (shootId, epoch, key, value) => {
+      log('set', key, value);
+      if (T.staleOnce) { T.staleOnce = false; throw Object.assign(new Error('Setting changed on the camera.'), { code: 'STALE_REV' }); }
+      if (key === 'shutter') T.shutter = value;
+      return { properties: T.snapshot().properties.filter(p => p.key === key), propRev: ++T.propRev };
+    },
     tetherReviewFrame: async ({ session, id }) => {
       log('review-frame', id);
       if (id === T.holdReview) await new Promise(resolve => { T.finishReview = resolve; });
@@ -339,11 +345,27 @@ async function main() {
     await untilCall(c => c[0] === 'control' && c[1] === 'reconnect', 'reconnect');
     await page.waitForFunction(() => tether.camera.epoch === __camera.epoch && tether.connected());
     await clearCalls();
-    await page.evaluate(() => __camera.emit('tether-properties', { shootId: 'shoot-1', epoch: tether.camera.epoch, propRev: tether.camera.propRev + 5, changed: [] }));
-    await untilCall(c => c[0] === 'control' && c[1] === 'reconnect', 'resync reconnect');
-    await page.waitForFunction(() => tether.camera.epoch === __camera.epoch && tether.connected());
-    assert.ok(!(await calls()).some(c => c[0] === 'connect'), 'reconnect and resync never open a fresh connection');
-    check('Reconnect and property resync use tether_control reconnect');
+    const beforeJumpEpoch = await page.evaluate(() => tether.camera.epoch);
+    await page.evaluate(() => { __camera.propRev += 5; __camera.emit('tether-properties', { shootId: 'shoot-1', epoch: tether.camera.epoch, propRev: __camera.propRev, changed: [{ key: 'shutter', label: 'Shutter', kind: 'enum', value: '1/250', display: '1/250', access: 'rw', choices: ['1/160', '1/200', '1/250', '1/400'].map(id => ({ id, label: id })) }] }); });
+    await page.waitForFunction(() => document.querySelector('#tether-prop-shutter').value === '1/250');
+    assert.equal(await page.evaluate(() => tether.camera.epoch), beforeJumpEpoch, 'a propRev jump applies updates without reconnecting');
+    assert.ok(!(await calls()).some(c => c[0] === 'control' && c[1] === 'reconnect'), 'multi-property updates never trigger a reconnect');
+    await page.evaluate(() => { __camera.staleOnce = true; });
+    await page.locator('#tether-prop-shutter').selectOption('1/200');
+    await untilCall(c => c[0] === 'control' && c[1] === 'refresh', 'stale property refresh');
+    assert.ok(!(await calls()).some(c => c[0] === 'control' && c[1] === 'reconnect'), 'stale property recovery refreshes without reconnecting');
+    await page.evaluate(() => {
+      tether.camera.devices.push({ deviceId: 'wifi:192.168.1.42', model: 'ILCE-7CM2', transport: 'wifi-ptpip', availability: 'available', address: '192.168.1.42', auth: 'ssh', sshAdvertised: true, needsCredentials: true });
+      tether.render();
+    });
+    await page.locator('#tether-device [data-device-id="wifi:192.168.1.42"]').click();
+    await page.locator('#tether-wifi-form').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#tether-wifi-ip').inputValue(), '192.168.1.42');
+    assert.equal(await page.locator('#tether-wifi-auth').inputValue(), 'ssh');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'tether-wifi-user');
+    await page.locator('#tether-wifi-cancel').click();
+    await page.locator('#tether-wifi-form').waitFor({ state: 'hidden' });
+    check('Property jumps stay connected, stale writes use refresh, and discovered Wi-Fi opens pre-filled SSH auth');
 
     await press('l');
     await page.waitForFunction(() => tether.live.bitmap && !document.querySelector('#tether-live-stage').hidden);

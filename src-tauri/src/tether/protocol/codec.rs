@@ -1030,9 +1030,7 @@ pub enum QueueSignal {
     Empty,
     /// 0001–7FFF: a file exists but is not ready.
     Pending,
-    /// Exactly 8000 without a fresh C201: keep polling and surface a stall if it persists.
-    BareMsb,
-    /// 8001–FFFF.
+    /// 8000–FFFF: MSB set, object is ready at 0xFFFFC001.
     Ready,
 }
 
@@ -1040,7 +1038,6 @@ pub fn queue_signal(v: u16) -> QueueSignal {
     match v {
         0 => QueueSignal::Empty,
         0x0001..=0x7FFF => QueueSignal::Pending,
-        0x8000 => QueueSignal::BareMsb,
         _ => QueueSignal::Ready,
     }
 }
@@ -1190,7 +1187,7 @@ pub fn pc_save_size_label(v: u8) -> Option<&'static str> {
 
 pub fn pc_save_format_label(v: u8) -> Option<&'static str> {
     Some(match v {
-        0 => "Disabled",
+        0 => "Follows File Format",
         1 => "RAW & JPEG",
         2 => "JPEG Only",
         3 => "RAW Only",
@@ -1888,7 +1885,7 @@ mod tests {
         assert_eq!(queue_signal(0), QueueSignal::Empty);
         assert_eq!(queue_signal(1), QueueSignal::Pending);
         assert_eq!(queue_signal(0x7FFF), QueueSignal::Pending);
-        assert_eq!(queue_signal(0x8000), QueueSignal::BareMsb);
+        assert_eq!(queue_signal(0x8000), QueueSignal::Ready);
         assert_eq!(queue_signal(0xFFFF), QueueSignal::Ready);
 
         assert_eq!(battery_percent(0x33), Some(51));

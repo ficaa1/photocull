@@ -411,6 +411,13 @@ impl CameraTransport {
             CameraTransport::Wifi { transport, .. } => transport.responder_guid(),
         }
     }
+
+    fn is_live(&self) -> bool {
+        match self {
+            CameraTransport::Usb(_) => true,
+            CameraTransport::Wifi { transport, .. } => transport.is_live(),
+        }
+    }
 }
 
 impl PtpTransport for CameraTransport {
@@ -652,6 +659,7 @@ enum Cmd {
     Snapshot(Reply<Value>),
     TransfersSettled(Reply<bool>),
     Pause(Stamp, bool, Reply<Value>),
+    Refresh(Stamp, Reply<Value>),
     Reconnect(Stamp, Reply<Value>),
     Disconnect(Stamp, Reply<Value>),
     Preflight(Stamp, Reply<()>),
@@ -1629,6 +1637,7 @@ struct Actor {
     last_topology: u64,
     last_revs: BTreeMap<u16, u64>,
     last_props: Vec<CameraProperty>,
+    last_d215: u16,
     /// Released software shutters waiting for their exposure, oldest first.
     pending: VecDeque<(String, Instant)>,
     drain_blocked_until: Option<Instant>,
@@ -1671,6 +1680,7 @@ impl Actor {
             last_topology: 0,
             last_revs: BTreeMap::new(),
             last_props: Vec::new(),
+            last_d215: 0,
             pending: VecDeque::new(),
             drain_blocked_until: None,
             half_press_since: None,
@@ -1775,11 +1785,41 @@ impl Actor {
                 self.emit_connection(None);
                 let _ = reply.send(Ok(self.control_state()));
             }
+            Cmd::Refresh(stamp, reply) => {
+                if let Err(e) = self.check_stamp(&stamp) {
+                    let _ = reply.send(Err(e));
+                    return;
+                }
+                let refreshed = match self.session.as_mut() {
+                    Some(session) if session.state() == ConnectionState::Ready => {
+                        Some(session.refresh_properties())
+                    }
+                    _ => None,
+                };
+                let result = match refreshed {
+                    Some(Ok(_)) => {
+                        if let Some(session) = self.session.as_ref() {
+                            let props = session.camera_properties();
+                            self.last_revs = props.iter().map(|p| (p.code, p.prop_rev)).collect();
+                            self.last_props = props;
+                        }
+                        Ok(self.snapshot())
+                    }
+                    Some(Err(e)) => {
+                        let mapped = TetherError::from_session(e_clone(&e));
+                        self.handle_session_error(e);
+                        Err(mapped)
+                    }
+                    None => Ok(self.snapshot()),
+                };
+                let _ = reply.send(result);
+            }
             Cmd::Reconnect(stamp, reply) => {
                 if let Err(e) = self.check_stamp(&stamp) {
                     let _ = reply.send(Err(e));
                     return;
                 }
+                crate::logs::write("tether reconnect requested");
                 let result = match self.device.clone() {
                     Some(device) => {
                         self.close_session();
@@ -1986,6 +2026,7 @@ impl Actor {
             return;
         }
         self.issue_open = Some(key);
+        crate::logs::write(&format!("tether issue {code}: {message}"));
         let binding = self.binding();
         emit(
             &self.inner.app,
@@ -2102,6 +2143,12 @@ impl Actor {
             } else {
                 self.state
             };
+            crate::logs::write(&format!(
+                "tether connect failed ({}): {} {}",
+                if is_wifi { "wifi" } else { "usb" },
+                e.code,
+                e.message
+            ));
             self.set_state(next, Some(e.message.clone()));
             if explicit {
                 self.emit_connection(Some(&e.message));
@@ -2148,6 +2195,15 @@ impl Actor {
             .map(|d| (d.code, session.rev_of(d.code)))
             .collect();
         self.last_props = session.camera_properties();
+        self.last_d215 = session.object_in_memory();
+        crate::logs::write(&format!(
+            "tether connected: {} ({}, sdi={}, saveDest={:?}, d215=0x{:04X})",
+            info.model.trim(),
+            if is_wifi { "wifi" } else { "usb" },
+            session.sdi_version(),
+            session.save_destination().map(|v| format!("0x{v:04X}")),
+            self.last_d215
+        ));
         self.session = Some(session);
         self.reconnect = None;
         self.drain_blocked_until = None;
@@ -2297,6 +2353,7 @@ impl Actor {
     }
 
     fn lost(&mut self, reason: &str) {
+        crate::logs::write(&format!("tether lost: {reason}"));
         self.stop_live(Some(reason.to_string()));
         if let Some(mut session) = self.session.take() {
             self.last_props = session.camera_properties();
@@ -2407,7 +2464,7 @@ impl Actor {
                 SessionEvent::Removed => return self.lost("The camera was disconnected."),
                 SessionEvent::SessionLost => return self.lost("The camera session ended."),
                 SessionEvent::PropertiesDirty => self.next_poll = Instant::now(),
-                SessionEvent::ObjectAdded => {}
+                SessionEvent::ObjectAdded => crate::logs::write("tether event: ObjectAdded"),
             }
         }
         if let Some(since) = self.half_press_since {
@@ -2418,19 +2475,38 @@ impl Actor {
         let now = Instant::now();
         if now >= self.next_poll {
             let draining = self.inner.receiving.load(Ordering::SeqCst) > 0;
+            let waiting_capture = !self.pending.is_empty()
+                || self.cohorts.pending_test.is_some()
+                || self.session.as_ref().is_some_and(|s| {
+                    s.object_announced() || s.queue_signal() != QueueSignal::Empty
+                });
             self.next_poll = now
                 + if draining {
                     Duration::from_millis(1000)
+                } else if waiting_capture {
+                    Duration::from_millis(100)
                 } else {
                     Duration::from_millis(500)
                 };
             let result = self.session.as_mut().map(|s| s.refresh_properties());
             match result {
                 Some(Ok(_)) => {
-                    if self.session.as_ref().is_some_and(|s| {
-                        !s.object_announced() && s.queue_signal() == QueueSignal::Empty
+                    if let Some((d215, quiet)) = self.session.as_ref().map(|s| {
+                        (
+                            s.object_in_memory(),
+                            !s.object_announced() && s.queue_signal() == QueueSignal::Empty,
+                        )
                     }) {
-                        self.cohorts.awaiting_quiet_queue = false;
+                        if d215 != self.last_d215 {
+                            crate::logs::write(&format!(
+                                "tether d215: 0x{:04X} -> 0x{:04X}",
+                                self.last_d215, d215
+                            ));
+                            self.last_d215 = d215;
+                        }
+                        if quiet {
+                            self.cohorts.awaiting_quiet_queue = false;
+                        }
                     }
                     self.emit_property_changes();
                 }
@@ -2442,10 +2518,10 @@ impl Actor {
                 None => return,
             }
         }
-        let wants_drain = self.session.as_ref().is_some_and(|s| {
-            s.object_announced()
-                || matches!(s.queue_signal(), QueueSignal::Ready | QueueSignal::BareMsb)
-        });
+        let wants_drain = self
+            .session
+            .as_ref()
+            .is_some_and(|s| s.object_announced() || s.queue_signal() == QueueSignal::Ready);
         let blocked = self.drain_blocked_until.is_some_and(|t| Instant::now() < t);
         if wants_drain && !blocked && self.binding().is_some() {
             self.drain_some();
@@ -2453,7 +2529,16 @@ impl Actor {
                 return;
             }
         }
-        if self.live_on && !self.paused && Instant::now() >= self.next_live {
+        let capture_active = self
+            .session
+            .as_ref()
+            .is_some_and(|s| s.object_announced() || s.queue_signal() != QueueSignal::Empty)
+            || self
+                .pending
+                .iter()
+                .any(|(_, at)| at.elapsed() < Duration::from_secs(4))
+            || self.cohorts.pending_test.is_some();
+        if self.live_on && !self.paused && !capture_active && Instant::now() >= self.next_live {
             self.fetch_live();
         }
         if self.live_on && Instant::now() >= self.next_stats {
@@ -2480,8 +2565,16 @@ impl Actor {
                 self.lost("The camera stopped answering.");
                 true
             }
-            // A failed PTP/IP transaction retires both streams.
-            SessionError::Transport(_) if self.device.as_ref().is_some_and(|d| d.wifi) => {
+            // A failed PTP/IP transaction retires both streams; a local sink error before
+            // GetObject leaves the streams live.
+            SessionError::Transport(ref t)
+                if self.device.as_ref().is_some_and(|d| d.wifi)
+                    && (!matches!(t, TransportError::Sink(_))
+                        || self
+                            .session
+                            .as_ref()
+                            .map_or(true, |s| !s.transport().is_live())) =>
+            {
                 self.lost("The camera connection was lost.");
                 true
             }
@@ -2818,6 +2911,10 @@ impl Actor {
             let plan = ctx.plan.borrow().clone();
             match result {
                 Ok(DrainStep::Object(object, sink)) => {
+                    crate::logs::write(&format!(
+                        "tether drained {:?} {} ({} bytes)",
+                        object.kind, object.info.filename, object.bytes
+                    ));
                     let Some(plan) = plan else { continue };
                     let seconds = started.elapsed().as_secs_f64().max(1e-3);
                     let mbps = object.bytes as f64 / 1_000_000.0 / seconds;
@@ -2905,6 +3002,7 @@ impl Actor {
                     return;
                 }
                 Err(e) => {
+                    crate::logs::write(&format!("tether drain error: {e}"));
                     let failure = ctx.failure.borrow_mut().take();
                     let mut error =
                         failure.unwrap_or_else(|| TetherError::from_session(e_clone(&e)));
@@ -5043,6 +5141,7 @@ fn wifi_json(id: &str, c: &WifiCandidate, active: Option<&str>, has_password: bo
         "availability": if active == Some(id) { "connected" } else { "available" },
         "address": c.address.to_string(),
         "auth": c.auth.as_str(),
+        "username": c.username,
         "sshAdvertised": c.ssh_advertised,
         "discovered": c.discovered,
         "remembered": c.responder_guid.is_some(),
@@ -5393,6 +5492,7 @@ pub async fn tether_control(
             match op.as_str() {
                 "pause" => tether.ask(|tx| Cmd::Pause(stamp, true, tx)).await,
                 "resume" => tether.ask(|tx| Cmd::Pause(stamp, false, tx)).await,
+                "refresh" => tether.ask(|tx| Cmd::Refresh(stamp, tx)).await,
                 "reconnect" => tether.ask(|tx| Cmd::Reconnect(stamp, tx)).await,
                 "fel" => tether.ask(|tx| Cmd::Fel(stamp, tx)).await,
                 "disconnect" => {

@@ -265,7 +265,6 @@
       api.onTetherConnection(event => { if (this.shoot && event.shootId && event.shootId !== this.shoot.shootId) return; this.applyConnection(event); });
       api.onTetherProperties(event => {
         if (event.epoch !== this.camera.epoch || event.propRev <= this.camera.propRev) return;
-        if (event.propRev > this.camera.propRev + 1) { void this.resyncCamera(); return; }
         for (const p of event.changed || []) this.camera.properties.set(p.key, p);
         for (const key of event.removed || []) this.camera.properties.delete(key);
         if (event.actions) this.camera.actions = normalizeActions(event.actions);
@@ -727,9 +726,32 @@
     // ---- Wi-Fi cameras ----
     toggleWifiForm(open = $('tether-wifi-form').hidden) {
       $('tether-wifi-form').hidden = !open; $('tether-wifi-add').setAttribute('aria-expanded', String(open));
-      if (open) { this.renderWifi(); $('tether-wifi-ip').focus(); return; }
+      if (open) { $('tether-wifi-title').textContent = 'Add Wi-Fi camera'; this.renderWifi(); $('tether-wifi-ip').focus(); return; }
       this.wifi.pending = null; this.clearSecret(); $('tether-wifi-status').textContent = '';
       if ($('tether-wifi-form').contains(document.activeElement) || document.activeElement === document.body) $('tether-wifi-add').focus();
+    }
+    openWifiForDevice(device, error = null) {
+      $('tether-wifi-form').hidden = false; $('tether-wifi-add').setAttribute('aria-expanded', 'true');
+      $('tether-wifi-title').textContent = device?.model ? `Connect ${device.model}` : 'Connect Wi-Fi camera';
+      if (device?.address) { $('tether-wifi-ip').value = device.address; $('tether-wifi-ip').removeAttribute('aria-invalid'); }
+      const wantSsh = error && ['SSH_CREDENTIALS_REQUIRED', 'SSH_AUTH_FAILED', ...HOST_KEY].includes(error.code)
+        || device?.auth === 'ssh' || device?.sshAdvertised === true;
+      $('tether-wifi-auth').value = wantSsh ? 'ssh' : device?.auth === 'plain' ? 'plain' : 'auto';
+      if (device?.username && !$('tether-wifi-user').value.trim()) $('tether-wifi-user').value = device.username;
+      if (error?.code === 'SSH_AUTH_FAILED') this.clearSecret();
+      if (error && HOST_KEY.includes(error.code) && error.fingerprint) {
+        this.wifi.pending = { code: error.code, fingerprint: error.fingerprint };
+        $('tether-wifi-status').textContent = '';
+      } else {
+        this.wifi.pending = null;
+        $('tether-wifi-status').textContent = error ? (WIFI_ERRORS[error.code] || error.message)
+          : wantSsh ? WIFI_ERRORS.SSH_CREDENTIALS_REQUIRED : WIFI_ERRORS.AUTH_CHOICE_REQUIRED;
+      }
+      this.renderWifi();
+      if (this.wifi.pending) $('tether-wifi-trust').focus();
+      else if (wantSsh) ($('tether-wifi-user').value.trim() ? $('tether-wifi-password') : $('tether-wifi-user')).focus();
+      else if (device?.address) $('tether-wifi-auth').focus();
+      else $('tether-wifi-ip').focus();
     }
     renderWifi() {
       const mode = $('tether-wifi-auth').value, pending = this.wifi.pending;
@@ -1023,14 +1045,26 @@
     }
     async connect(deviceId) {
       if (!this.shoot || !deviceId) return;
+      const device = this.camera.devices.find(d => d.deviceId === deviceId);
+      if (device && transportOf(device) === 'wifi' && (device.needsCredentials || device.auth === 'unknown' && device.address)) {
+        this.camera.deviceId = deviceId; this.camera.reason = ''; this.openWifiForDevice(device); return;
+      }
       this.camera.state = 'connecting'; this.camera.deviceId = deviceId; this.render();
       try { this.applyConnection(await this.api.tetherConnect(this.shoot.shootId, deviceId)); }
-      catch (error) { this.camera.state = 'offline'; this.camera.reason = error.message; this.render(); }
+      catch (error) {
+        this.camera.state = 'offline'; this.camera.reason = error.message; this.render();
+        if (device && transportOf(device) === 'wifi' && ['SSH_CREDENTIALS_REQUIRED', 'SSH_AUTH_FAILED', 'AUTH_CHOICE_REQUIRED', 'AUTH_MODE_REQUIRED', ...HOST_KEY].includes(error.code)) {
+          this.openWifiForDevice(device, error);
+        }
+      }
     }
-    // Reconnect keeps the camera's route and identity check; its connection event carries the full property snapshot.
+    // Non-destructive property resync; never tears down the active camera session.
     async resyncCamera() {
-      if (!this.shoot || !this.camera.deviceId) return;
-      await this.control('reconnect');
+      if (!this.shoot || !this.connected()) return;
+      try {
+        const snapshot = await this.api.tetherControl(this.shoot.shootId, this.camera.epoch, 'refresh');
+        if (snapshot?.properties) this.applyConnection(snapshot);
+      } catch {}
     }
     applyConnection(snapshot) {
       const epochChanged = snapshot.epoch !== this.camera.epoch;
