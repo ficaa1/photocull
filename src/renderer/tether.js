@@ -827,6 +827,7 @@
         this.wifi.pending = null; this.clearSecret();
         if (Array.isArray(result?.devices)) this.camera.devices = result.devices;
         else { try { const listed = await this.api.tetherDevices(); if (this.openSeq !== open) return; this.camera.devices = listed.devices || this.camera.devices; } catch {} }
+        if (this.openSeq !== open) return;
         if (!this.shoot) { status.textContent = 'Camera added. Start a tethered session to connect.'; return; }
         const addedId = result?.deviceId || result?.device?.deviceId;
         if (addedId) await this.connect(addedId, this.carriedExpect(addedId));
@@ -1140,13 +1141,18 @@
     }
     async connect(deviceId, expect = null) {
       if (!this.shoot || !deviceId) return;
+      const open = this.openSeq;
       const device = this.camera.devices.find(d => d.deviceId === deviceId);
       if (device && transportOf(device) === 'wifi' && (device.needsCredentials || device.auth === 'unknown' && device.address)) {
         this.camera.deviceId = deviceId; this.camera.reason = ''; this.carryExpect(deviceId, expect); this.openWifiForDevice(device); return;
       }
       this.camera.state = 'connecting'; this.camera.deviceId = deviceId; this.render();
-      try { this.applyConnection(await this.api.tetherConnect(this.shoot.shootId, deviceId, expect)); }
-      catch (error) {
+      try {
+        const snapshot = await this.api.tetherConnect(this.shoot.shootId, deviceId, expect);
+        if (this.openSeq !== open) return;
+        this.applyConnection(snapshot);
+      } catch (error) {
+        if (this.openSeq !== open) return;
         this.camera.state = 'offline'; this.camera.reason = error.message; this.render();
         if (device && transportOf(device) === 'wifi' && ['SSH_CREDENTIALS_REQUIRED', 'SSH_AUTH_FAILED', 'AUTH_CHOICE_REQUIRED', 'AUTH_MODE_REQUIRED', ...HOST_KEY].includes(error.code)) {
           this.carryExpect(deviceId, expect); this.openWifiForDevice(device, error);

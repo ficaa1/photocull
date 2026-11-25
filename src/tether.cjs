@@ -294,14 +294,15 @@ class TetherService {
       const saved = (await this.loadLedger(id(resumeShootId, 'resume')).catch(() => null))?.shoot;
       if (saved?.canonicalRoot !== root || saved.folderId !== folderId || saved.layout !== layout) fail('DEST_CHANGED', 'The capture folder changed since this session stopped. Start a new session instead.');
     }
-    let sessionCaptureId = null;
+    let sessionCaptureId = null, createdCapture = false;
     if (layout === 'session') for (const name of LAYOUT_FOLDERS) {
       await unchanged();
       const dir = path.join(root, name);
-      await fs.mkdir(dir).catch(error => { if (error.code !== 'EEXIST') fail('IO_ERROR', `${dir}: ${error.message}`, { field: name }); });
+      let created = true;
+      await fs.mkdir(dir).catch(error => { if (error.code === 'EEXIST') created = false; else fail('IO_ERROR', `${dir}: ${error.message}`, { field: name }); });
       const info = await fs.lstat(dir);
       if (!info.isDirectory() || info.isSymbolicLink()) fail('IO_ERROR', `${dir} exists and is not a folder.`, { field: name });
-      if (name === 'Capture') sessionCaptureId = `${info.dev}:${info.ino}`;
+      if (name === 'Capture') { sessionCaptureId = `${info.dev}:${info.ino}`; createdCapture = created; }
     }
     await unchanged();
     let ledger = await this.findShoot(root, folderId, layout);
@@ -321,6 +322,21 @@ class TetherService {
     const captureFolderId = layout === 'session' ? sessionCaptureId : folderId;
     const savedLibraryId = shoot.libraryFolderId ?? (layout === 'session' && !shoot.activeRelDir ? shoot.activeDirId : null);
     if (layout === 'session' && savedLibraryId && savedLibraryId !== captureFolderId) fail('DEST_CHANGED', 'The capture folder changed since this session stopped. Start a new session instead.');
+    if (layout === 'session' && resumeShootId !== null && !savedLibraryId) {
+      let verified = !createdCapture && !!shoot.activeRelDir && !!shoot.activeDirId
+        && await this.directoryIdentity(shoot, shoot.activeRelDir).catch(() => null) === shoot.activeDirId;
+      if (!verified && !createdCapture) {
+        for (const member of Object.values(ledger.members)) {
+          if (member.status !== 'ingested' || !member.finalRelPath || !member.fileIdentity) continue;
+          const s = await fs.lstat(this.absolute(shoot, member.finalRelPath)).catch(() => null);
+          const idMatch = member.fileIdentity.dev !== null && member.fileIdentity.ino !== null
+            ? String(s?.dev) === String(member.fileIdentity.dev) && String(s?.ino) === String(member.fileIdentity.ino)
+            : s?.size === member.fileIdentity.bytes;
+          if (s?.isFile() && !s.isSymbolicLink() && idMatch) { verified = true; break; }
+        }
+      }
+      if (!verified) fail('DEST_CHANGED', 'The capture folder changed since this session stopped. Start a new session instead.');
+    }
     for (const member of Object.values(ledger.members)) if (['reserved', 'published'].includes(member.status) && await this.occupied(shoot, member)) await this.excludeFromPair(ledger, member);
     const sameLibraryRoot = async () => {
       await unchanged();

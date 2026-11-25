@@ -4848,8 +4848,8 @@ fn preflight_root(
     let identity = transfer::dir_identity(&root);
     let approved = check(&root)?;
     same_root(&root, &identity)?;
-    let fresh_stage = !root.join(transfer::STAGE_DIR).exists();
-    let stage = transfer::stage_dir(&root).map_err(TetherError::from_transfer)?;
+    let (stage, fresh_stage) =
+        transfer::stage_dir_create(&root).map_err(TetherError::from_transfer)?;
     same_root(&root, &identity)?;
     let stage_identity = if fresh_stage {
         transfer::dir_identity(&stage)

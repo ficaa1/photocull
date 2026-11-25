@@ -372,22 +372,28 @@ pub fn sync_dir(_dir: &Path) -> io::Result<()> {
 
 /// The staging folder at the root of a shoot, created on demand and never a link.
 pub fn stage_dir(root: &Path) -> Result<PathBuf> {
+    stage_dir_create(root).map(|(dir, _)| dir)
+}
+
+/// Like `stage_dir`, also reporting whether this call created the directory itself.
+pub fn stage_dir_create(root: &Path) -> Result<(PathBuf, bool)> {
     resolve_dir(root, "")?;
     let dir = root.join(STAGE_DIR);
-    match fs::create_dir(&dir) {
+    let created = match fs::create_dir(&dir) {
         Ok(()) => {
             let _ = sync_dir(root);
+            true
         }
-        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => false,
         Err(e) => return Err(e.into()),
-    }
+    };
     let meta = fs::symlink_metadata(&dir)?;
     if meta.file_type().is_symlink() || !meta.is_dir() {
         return Err(TransferError::Destination(
             "The tether staging folder is not a folder.".into(),
         ));
     }
-    Ok(dir)
+    Ok((dir, created))
 }
 
 /// Resolves a journal-owned stage path of the form `.photocull-tether/<name>.part`.
