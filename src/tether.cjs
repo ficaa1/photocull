@@ -524,9 +524,10 @@ class TetherService {
     const cardKey = key?.startsWith('sony:') && name && photoRole(name) !== 'other' && bodyKey && snapshot.captureTime
       ? cardShotKey(bodyKey, snapshot.captureTime, stemOf(name)) : null;
     const existing = key && Object.values(ledger.exposures).find(e => (e.stableCameraKey ?? null) === bodyKey &&
-      ((e.providerShotKey === key && (e.epoch === connection || (!!snapshot.captureTime && e.captureTime === snapshot.captureTime))) || (cardKey && e.providerShotKey === cardKey)));
+      ((e.providerShotKey === key && (e.epoch === connection || (!!snapshot.captureTime && e.captureTime === snapshot.captureTime)))
+        || (cardKey && (e.providerShotKey === cardKey || e.cardKey === cardKey))));
     if (existing) {
-      if (cardKey && existing.providerShotKey === cardKey) this.expectRoles(existing, hostRoles);
+      if (cardKey && (existing.providerShotKey === cardKey || existing.cardKey === cardKey)) this.expectRoles(existing, hostRoles);
       return { ...receipt(existing), boundRequestId: null };
     }
     const staged = providerExposure?.staged;
@@ -1012,7 +1013,7 @@ class TetherService {
     const roles = group.objects.map(o => o.role), offered = hostRoles.filter(r => roles.includes(r)), visible = offered.length ? offered : roles;
     // A card exposure expects every role the card shows, whichever pass first saw it.
     const wanted = !exposure ? visible : exposure.providerShotKey === group.key ? [...new Set([...exposure.expectedHostRoles, ...visible])] : exposure.expectedHostRoles;
-    const objects = group.objects.filter(o => wanted.includes(o.role)), todo = [], deferred = [];
+    const objects = group.objects.filter(o => wanted.includes(o.role)), skippedRaw = group.objects.some(o => o.role === 'raw' && !wanted.includes('raw')), todo = [], deferred = [];
     let present = 0;
     for (const object of objects) {
       const mine = exposure ? own(exposure).filter(m => m.role === object.role) : [];
@@ -1021,7 +1022,7 @@ class TetherService {
       const member = mine.find(m => m.providerObjectKey === object.objectKey) ?? mine.find(m => stemOf(m.originalName) === group.stem) ?? mine[0];
       todo.push({ object, memberId: member?.memberId ?? null });
     }
-    return { exposure, wanted, objects, todo, deferred, present };
+    return { exposure, wanted, objects, skippedRaw, todo, deferred, present };
   }
 
   // Which card exposures to pull, each with all of its photo files so a pair stays one exposure.
@@ -1035,14 +1036,15 @@ class TetherService {
     for (const group of this.cardGroups(bodyKey, objects)) {
       if (testShots.has(`${group.captureTime}\0${group.stem}`)) { tested++; continue; }
       const target = this.cardTarget(index, group, hostRoles, exclude);
+      if (target.skippedRaw) unsettled.push(group.captureTime);
       if (!target.todo.length && !target.deferred.length) {
-        if (target.present) present++;
+        if (target.present && !target.skippedRaw) present++;
         continue;
       }
       const time = wallSeconds(group.captureTime);
       const ambiguous = releases.some(at => offset === null ? Math.abs(time - at) <= CARD_SLACK_UNKNOWN :
         time >= at + offset - TEST_EARLY && time <= at + offset + TEST_LATE);
-      if (ambiguous || target.deferred.length) unsettled.push(group.captureTime);
+      if ((ambiguous || target.deferred.length) && !target.skippedRaw) unsettled.push(group.captureTime);
       if (ambiguous) held++;
       else if (target.todo.length) groups.push({ captureTime: group.captureTime, objects: target.objects.map(({ objectKey, ...x }) => x) });
       else deferred += target.deferred.length;
@@ -1074,6 +1076,7 @@ class TetherService {
       if (!todo.length) return { exposureId: existing?.exposureId ?? null, members, deferred: handles(deferred) };
       const exposureId = existing?.exposureId ?? (await this.acceptExposure(ledger, events, detail.epoch, null, { key: group.key }, wanted, { ...listing.camera, captureTime: group.captureTime })).exposureId;
       const exposure = ledger.exposures[exposureId];
+      if (!exposure.cardKey) exposure.cardKey = group.key;
       if (exposure.providerShotKey === group.key) this.expectRoles(exposure, wanted);
       for (const { object, memberId } of todo) {
         let member = memberId && ledger.members[memberId];

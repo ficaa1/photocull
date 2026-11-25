@@ -1691,12 +1691,16 @@ struct Actor {
     connected: Option<(String, String)>,
 }
 
+/// Maximum time a timed-out USB GetObject claim may hold backfill before expiring.
+const LATE_CLAIM_TTL: Duration = Duration::from_secs(60);
+
 /// Where a late GetObject payload belongs.
 struct LateClaim {
     binding: Binding,
     plan: MemberPlan,
     shot: Value,
     epoch: u64,
+    created_at: Instant,
 }
 
 impl Actor {
@@ -2377,6 +2381,7 @@ impl Actor {
             let _ = session.close();
         }
         self.half_press_since = None;
+        self.late_claims.clear();
     }
 
     fn disconnect(&mut self) {
@@ -2419,6 +2424,7 @@ impl Actor {
             let _ = session.close();
         }
         self.half_press_since = None;
+        self.late_claims.clear();
         // The photos may still arrive after a reconnect and bind then; nobody waits meanwhile.
         for (id, _) in self.pending.clone() {
             self.inner.confirmations.lock().unwrap().remove(&id);
@@ -3117,6 +3123,7 @@ impl Actor {
                                     plan: plan.clone(),
                                     shot: camera_snapshot(&ctx.device, &ctx.snapshot, None),
                                     epoch: self.epoch,
+                                    created_at: Instant::now(),
                                 },
                             );
                         }
@@ -3177,20 +3184,22 @@ impl Actor {
     /// Stores GetObject payloads that ImageCaptureCore completed after their timeout.
     fn store_late_objects(&mut self) {
         self.late_backlog.extend(icc::take_late_objects());
-        if self.late_backlog.is_empty() || Instant::now() < self.late_retry_at {
-            return;
-        }
-        for late in std::mem::take(&mut self.late_backlog) {
-            if let Err((late, e)) = self.store_late(late) {
-                self.late_backlog.push(late);
-                self.late_retry_at = Instant::now() + Duration::from_secs(5);
-                let message = format!(
-                    "{} A photo that arrived late is held in memory until it can be saved; keep PhotoCull open.",
-                    e.message
-                );
-                self.hold_draining(&e.code, &message);
+        if !self.late_backlog.is_empty() && Instant::now() >= self.late_retry_at {
+            for late in std::mem::take(&mut self.late_backlog) {
+                if let Err((late, e)) = self.store_late(late) {
+                    self.late_backlog.push(late);
+                    self.late_retry_at = Instant::now() + Duration::from_secs(5);
+                    let message = format!(
+                        "{} A photo that arrived late is held in memory until it can be saved; keep PhotoCull open.",
+                        e.message
+                    );
+                    self.hold_draining(&e.code, &message);
+                }
             }
         }
+        let epoch = self.epoch;
+        self.late_claims
+            .retain(|_, c| c.epoch == epoch && c.created_at.elapsed() < LATE_CLAIM_TTL);
     }
 
     /// Durable first: the payload is on disk before any journal or publication step.
@@ -3251,6 +3260,7 @@ impl Actor {
             plan,
             shot,
             epoch,
+            ..
         } = claim;
         let app = self.inner.app.clone();
         if let Err(e) = transfer::validate_staged_signature(&path, &plan.name) {

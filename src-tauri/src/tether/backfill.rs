@@ -43,6 +43,7 @@ pub(super) struct Backfill {
     paused: bool,
     cancelling: bool,
     body: String,
+    host_roles: Vec<&'static str>,
     listed: usize,
     truncated: bool,
     /// Exposures the ledger already held in full.
@@ -305,6 +306,7 @@ impl Actor {
             paused: false,
             cancelling: false,
             body: self.body_identity(),
+            host_roles: self.host_roles(),
             listed: 0,
             truncated: false,
             already: 0,
@@ -512,7 +514,7 @@ impl Actor {
             .map(|(_, time, stem)| json!({ "captureTime": time, "stem": stem }))
             .collect();
         let camera = self.card_camera();
-        let host_roles = self.host_roles();
+        let host_roles = job.host_roles.clone();
         let Phase::Planning {
             objects,
             next,
@@ -710,7 +712,12 @@ impl Actor {
             .keys()
             .cloned()
             .collect();
-        members.extend(self.late_claims.values().map(|c| c.plan.member_id.clone()));
+        members.extend(
+            self.late_claims
+                .values()
+                .filter(|c| c.epoch == self.epoch && c.created_at.elapsed() < LATE_CLAIM_TTL)
+                .map(|c| c.plan.member_id.clone()),
+        );
         members
     }
 
