@@ -398,7 +398,8 @@
         const image = new Image(); image.src = this.host.imageUrl(item, 'preview');
         try { await image.decode(); } catch {
           const next = moved(); if (next) { void this.present(next.id, ordinal, mode, epoch); return false; }
-          this.follow.stranded = { id, ordinal, mode, epoch };
+          const prev = this.follow.stranded;
+          if (!prev || prev.epoch !== epoch || ordinal >= prev.ordinal) this.follow.stranded = { id, ordinal, mode, epoch };
           this.follow.pending++; this.renderPill(); return false;
         }
       }
@@ -414,7 +415,10 @@
       this.follow.shownOrdinal = ordinal; this.follow.pending = 0;
       this.renderPill();
       if (this.shoot && item.exposureId) void this.api.tetherPresented(this.shoot.shootId, item.exposureId, ordinal, mode === 'whenReady' ? 'settled' : 'quick').catch(() => {});
-      if (!developed || pinned) return false;
+      if (!developed || pinned) {
+        if (!pinned && this.developedWanted(this.host.item(id))) { this.develop.key = ''; this.syncDeveloped(); }
+        return false;
+      }
       // A render retired while the capture was on its way leaves the shown RAW to a fresh request.
       void developed.then(frame => {
         const q = this.develop;
@@ -1682,17 +1686,18 @@
     // Frames are measured in arrival order so the baseline is always the newest three normal frames.
     queueLuma(exposureId, read, pendingKeep) {
       const m = this.misfire, history = m.history;
-      // A kept test shot is still judged after its baseline is retired: the saved photo was marked measured on Keep.
-      const retired = () => history !== m.history && !m.promoted.has(exposureId);
+      // Keep feeding this baseline while a promoted test shot on it is still queued behind earlier frames.
+      const hasKept = () => { for (const entry of m.promoted.values()) if (entry.history === history) return true; return false; };
+      const retired = () => history !== m.history && !hasKept();
       m.chain = m.chain.then(async () => {
         // Keep can publish the library delta before it replies with the promoted exposure ID.
         if (pendingKeep) await pendingKeep.catch(() => {});
         if (retired() || history.exposures.has(exposureId)) return;
         const frame = await read();
         if (!frame || retired()) return;
-        const result = history.measure(exposureId, O.computeHistogram(frame.data, frame.width, frame.height)), kept = m.promoted.get(exposureId);
+        const result = history.measure(exposureId, O.computeHistogram(frame.data, frame.width, frame.height)), kept = m.promoted.get(exposureId)?.exposureId || null;
         m.promoted.delete(exposureId);
-        if (!result?.misfire) return;
+        if (!result?.misfire || (history !== m.history && !kept)) return;
         const flag = { detail: result.detail, dismissed: false };
         if (history === m.history) m.flags.set(exposureId, flag);
         if (kept) m.flags.set(kept, flag);
@@ -1804,7 +1809,7 @@
         if (shootId !== this.shoot?.shootId) return;
         if (op === 'keep' && reply.exposureId) {
           // A frame still being measured hands its verdict to the saved exposure when it finishes.
-          if (!this.misfire.history.exposures.has(`test:${seq}`)) this.misfire.promoted.set(`test:${seq}`, reply.exposureId);
+          if (!this.misfire.history.exposures.has(`test:${seq}`)) this.misfire.promoted.set(`test:${seq}`, { exposureId: reply.exposureId, history: this.misfire.history });
           this.misfire.history.kept(reply.exposureId);
           const flag = this.misfire.flags.get(`test:${seq}`);
           if (flag) { this.misfire.flags.set(reply.exposureId, flag); this.host.thumbnailsChanged(); }

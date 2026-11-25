@@ -934,13 +934,18 @@ class TetherService {
       counters: { ...shoot.counters, camera: shoot.lastBodyKey ? this.cameraCounters.bodies[shoot.lastBodyKey] ?? 0 : null }, queue, space: await this.space(shoot), issues, overlayAsset: shoot.overlayAsset };
   }
 
-  async libraryState(shootId, sessionId) {
-    const { shoot } = this.ledger(shootId), ledger = this.ledgers.get(shootId);
-    if (sessionId !== shoot.session) fail('STALE_SESSION', 'The tethered Library was reopened. Refresh and try again.');
-    await this.library.ingests.catch(() => {});
-    const s = this.library.get(sessionId);
-    return { shootId, session: sessionId, rev: s.rev || 0, library: this.library.publicSession(s), latestOrdinal: shoot.nextOrdinal - 1,
-      pendingPairs: Object.values(ledger.exposures).filter(e => e.status === 'availablePartial').map(e => ({ exposureId: e.exposureId, ordinal: e.ordinal, itemId: this.sessionItem(shoot, e.currentItemId)?.id ?? null })) };
+  libraryState(shootId, sessionId) {
+    id(shootId, 'shootId');
+    const run = (this.queues.get(shootId) || Promise.resolve()).catch(() => {}).then(async () => {
+      const ledger = this.ledger(shootId), { shoot } = ledger;
+      if (sessionId !== shoot.session) fail('STALE_SESSION', 'The tethered Library was reopened. Refresh and try again.');
+      await this.library.ingests.catch(() => {});
+      const s = this.library.get(sessionId);
+      return { shootId, session: sessionId, rev: s.rev || 0, library: this.library.publicSession(s), latestOrdinal: shoot.nextOrdinal - 1,
+        pendingPairs: Object.values(ledger.exposures).filter(e => e.status === 'availablePartial').map(e => ({ exposureId: e.exposureId, ordinal: e.ordinal, itemId: this.sessionItem(shoot, e.currentItemId)?.id ?? null })) };
+    });
+    this.queues.set(shootId, run);
+    return run;
   }
 }
 
