@@ -822,16 +822,19 @@
       const open = this.openSeq;
       try {
         const result = await this.api.tetherAddWifi({ address, authMode, ...(authMode === 'ssh' ? { username, password } : {}), ...(acceptFingerprint ? { acceptFingerprint } : {}) });
+        // A sign-in begun before the shoot was stopped or changed never touches the later one.
+        if (this.openSeq !== open) return;
         this.wifi.pending = null; this.clearSecret();
         if (Array.isArray(result?.devices)) this.camera.devices = result.devices;
-        else { try { this.camera.devices = (await this.api.tetherDevices()).devices || this.camera.devices; } catch {} }
+        else { try { const listed = await this.api.tetherDevices(); if (this.openSeq !== open) return; this.camera.devices = listed.devices || this.camera.devices; } catch {} }
         if (!this.shoot) { status.textContent = 'Camera added. Start a tethered session to connect.'; return; }
         const addedId = result?.deviceId || result?.device?.deviceId;
-        // A sign-in begun before the shoot was stopped or changed never connects the later one.
-        if (addedId && this.openSeq === open) await this.connect(addedId, this.carriedExpect(addedId));
+        if (addedId) await this.connect(addedId, this.carriedExpect(addedId));
+        if (this.openSeq !== open) return;
         if (this.connected()) { status.textContent = ''; this.toggleWifiForm(false); }
         else status.textContent = this.camera.reason || 'Camera added. Choose it above to connect.';
       } catch (error) {
+        if (this.openSeq !== open) return;
         if (HOST_KEY.includes(error.code) && error.fingerprint) { this.wifi.pending = { code: error.code, fingerprint: error.fingerprint }; status.textContent = ''; }
         else {
           this.wifi.pending = null; status.textContent = WIFI_ERRORS[error.code] || error.message;
@@ -840,8 +843,9 @@
           if (['AUTH_MODE_REQUIRED', 'AUTH_CHOICE_REQUIRED'].includes(error.code)) $('tether-wifi-auth').focus();
         }
       } finally {
-        this.wifi.busy = false; this.render();
-        if (this.wifi.pending) $('tether-wifi-trust').focus();
+        this.wifi.busy = false;
+        if (this.openSeq === open) { this.render(); if (this.wifi.pending) $('tether-wifi-trust').focus(); }
+        else this.renderWifi();
       }
     }
     renderLocation() {

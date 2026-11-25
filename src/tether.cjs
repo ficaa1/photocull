@@ -294,15 +294,18 @@ class TetherService {
       const saved = (await this.loadLedger(id(resumeShootId, 'resume')).catch(() => null))?.shoot;
       if (saved?.canonicalRoot !== root || saved.folderId !== folderId || saved.layout !== layout) fail('DEST_CHANGED', 'The capture folder changed since this session stopped. Start a new session instead.');
     }
+    let sessionCaptureId = null;
     if (layout === 'session') for (const name of LAYOUT_FOLDERS) {
       await unchanged();
       const dir = path.join(root, name);
       await fs.mkdir(dir).catch(error => { if (error.code !== 'EEXIST') fail('IO_ERROR', `${dir}: ${error.message}`, { field: name }); });
       const info = await fs.lstat(dir);
       if (!info.isDirectory() || info.isSymbolicLink()) fail('IO_ERROR', `${dir} exists and is not a folder.`, { field: name });
+      if (name === 'Capture') sessionCaptureId = `${info.dev}:${info.ino}`;
     }
     await unchanged();
     let ledger = await this.findShoot(root, folderId, layout);
+    await unchanged();
     if (resumeShootId !== null && ledger?.shoot.shootId !== id(resumeShootId, 'resume')) fail('DEST_CHANGED', 'The capture folder changed since this session stopped. Start a new session instead.');
     if (!ledger) {
       const shootId = randomUUID();
@@ -315,19 +318,28 @@ class TetherService {
       this.ledgers.set(shootId, ledger);
     }
     const shoot = ledger.shoot, libraryRoot = this.libraryRoot(shoot);
+    const captureFolderId = layout === 'session' ? sessionCaptureId : folderId;
+    const savedLibraryId = shoot.libraryFolderId ?? (layout === 'session' && !shoot.activeRelDir ? shoot.activeDirId : null);
+    if (layout === 'session' && savedLibraryId && savedLibraryId !== captureFolderId) fail('DEST_CHANGED', 'The capture folder changed since this session stopped. Start a new session instead.');
     for (const member of Object.values(ledger.members)) if (['reserved', 'published'].includes(member.status) && await this.occupied(shoot, member)) await this.excludeFromPair(ledger, member);
+    const sameLibraryRoot = async () => {
+      await unchanged();
+      const now = await fs.lstat(libraryRoot).catch(() => null);
+      if (!now?.isDirectory() || now.isSymbolicLink() || `${now.dev}:${now.ino}` !== captureFolderId) fail('DEST_CHANGED', 'The capture folder was moved or replaced while tethering started. Choose it again.');
+    };
+    await sameLibraryRoot();
     const current = existingSession ? (() => { try { return this.library.get(id(existingSession, 'session')); } catch { return null; } })() : null;
     // Shot subfolders are the shoot's own choice; a Library already showing subfolders does not change it.
     const scope = layout === 'session' || !!includeShots || shoot.recursive;
-    const opened = current && current.folder === libraryRoot && (current.recursive || !scope)
+    const opened = current && current.folder === libraryRoot && current.folderId === captureFolderId && (current.recursive || !scope)
       ? this.library.publicSession(current) : await this.library.openEmptyOrExisting(libraryRoot, scope);
     const bound = await this.tx(shoot.shootId, async (draft, events) => {
       const s = draft.shoot;
-      await unchanged();
-      const library = this.library.get(opened.id), now = await fs.lstat(libraryRoot).catch(() => null);
-      if (library.folder !== libraryRoot || library.folderId !== (now && `${now.dev}:${now.ino}`)) fail('DEST_CHANGED', 'The capture folder was moved or replaced while tethering started. Choose it again.');
-      Object.assign(s, { session: opened.id, recursive: scope, closedAt: null });
-      if (s.activeRelDir || s.recentRelDirs.some(r => r.relative)) s.usedShotFolders = true;
+      await sameLibraryRoot();
+      const library = this.library.get(opened.id);
+      if (library.folder !== libraryRoot || library.folderId !== captureFolderId) fail('DEST_CHANGED', 'The capture folder was moved or replaced while tethering started. Choose it again.');
+      Object.assign(s, { session: opened.id, recursive: scope, closedAt: null, ...(layout === 'session' ? { libraryFolderId: captureFolderId } : {}) });
+      if (s.activeRelDir || s.droppedShotDir || s.recentRelDirs.some(r => r.relative)) s.usedShotFolders = true;
       if (!s.recursive && s.activeRelDir) s.activeRelDir = '';
       const identity = await this.directoryIdentity(s, s.activeRelDir).catch(() => null);
       // A shot folder removed or replaced while the shoot was stopped falls back to the capture folder itself.
@@ -561,7 +573,7 @@ class TetherService {
       const existing = key && Object.values(ledger.exposures).find(e => e.providerShotKey === key && (e.epoch === connection || (!!snapshot.captureTime && e.captureTime === snapshot.captureTime)));
       if (existing) return { ...receipt(existing), boundRequestId: null };
       // A Keep recorded without its folder cannot be placed once the shoot has used shot folders.
-      const usedShotFolders = shoot.usedShotFolders || !!shoot.activeRelDir || shoot.recentRelDirs.some(r => r.relative);
+      const usedShotFolders = shoot.usedShotFolders || !!shoot.droppedShotDir || !!shoot.activeRelDir || shoot.recentRelDirs.some(r => r.relative);
       if (providerExposure?.staged !== undefined && !providerExposure.target && usedShotFolders) fail('DEST_CHANGED', 'This test shot was kept before PhotoCull recorded its folder, and this shoot uses shot folders, so where it belongs is unknown. It is not saved anywhere else.', { retryable: false });
       const target = providerExposure?.target ? await this.keptTarget(shoot, providerExposure.target) : { relative: shoot.activeRelDir, dirId: shoot.activeDirId };
       const staged = providerExposure?.staged;
