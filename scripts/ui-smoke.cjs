@@ -139,9 +139,9 @@ async function main() {
     assert.doesNotMatch(await page.locator('#sheet-preview').textContent(), /●|Pick|★/);
     assert.equal(await page.locator('#sheet-save').isDisabled(), true);
     assert.match(await page.locator('#sheet-status').innerText(), /desktop/);
-    await page.keyboard.press('Escape');
+    await page.locator('#sheet-cancel').click();
 
-    await page.keyboard.press('Control+Enter');
+    await page.locator('#start-slideshow').click();
     await page.locator('#slideshow[open] #slide-frame img').waitFor();
     await page.waitForFunction(() => !!document.fullscreenElement);
     const firstSlide = await page.locator('#slide-name').innerText();
