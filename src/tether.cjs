@@ -412,13 +412,20 @@ class TetherService {
   }
 
   // Read-only: runs before anything, including the staging folder, is created in the chosen folder.
-  async checkDestination(root, folderId = null, options) {
+  async inspectDestination(root, folderId, options) {
     if (typeof root !== 'string' || !path.isAbsolute(root)) fail('DEST_CHANGED', 'Choose a capture folder.');
-    const canonical = await fs.realpath(root).catch(() => null), stat = canonical && await fs.stat(canonical);
+    const canonical = await fs.realpath(root).catch(() => null), stat = canonical && await fs.stat(canonical, { bigint: true });
     if (!stat?.isDirectory()) fail('DEST_CHANGED', 'Choose a capture folder.');
-    if (folderId !== null && `${stat.dev}:${stat.ino}` !== folderId) fail('DEST_CHANGED', `${root} was moved, renamed or deleted. Start a new session instead.`);
+    // Existing capture and backup ledgers store IDs from numeric Stats.
+    const ledgerId = `${Number(stat.dev)}:${Number(stat.ino)}`;
+    if (folderId !== null && ledgerId !== folderId) fail('DEST_CHANGED', `${root} was moved, renamed or deleted. Start a new session instead.`);
     if (await this.isCard(canonical, options)) fail('UNSUPPORTED', 'Camera cards cannot be tether destinations. Choose a folder on this computer.');
-    return { canonicalRoot: canonical, folderId: `${stat.dev}:${stat.ino}` };
+    return { canonicalRoot: canonical, folderId: ledgerId, stat };
+  }
+
+  async checkDestination(root, folderId = null) {
+    const destination = await this.inspectDestination(root, folderId);
+    return { canonicalRoot: destination.canonicalRoot, folderId: destination.folderId };
   }
 
   // Rust has already created and verified the folder; this records it for the next acceptance.
@@ -457,13 +464,14 @@ class TetherService {
     const primary = this.ledger(shootId).shoot;
     const enroll = op === 'enable' && primary.backup && !primary.backup.backupVolumeId;
     if (op === 'choose' || enroll) {
-      const { canonicalRoot: root, folderId } = await this.checkDestination(enroll ? primary.backup.root : picked, enroll ? primary.backup.folderId : null, { cameraOnly: true });
-      if (await hasAncestor(root, primary.folderId) || await hasAncestor(primary.canonicalRoot, folderId)) {
+      const { canonicalRoot: root, folderId, stat } = await this.inspectDestination(enroll ? primary.backup.root : picked, enroll ? primary.backup.folderId : null, { cameraOnly: true });
+      const capture = await this.inspectDestination(primary.canonicalRoot, primary.folderId, { cameraOnly: true });
+      if (await hasAncestor(root, capture.stat) || await hasAncestor(capture.canonicalRoot, stat)) {
         fail('DEST_CHANGED', 'Choose a backup folder separate from the capture location.');
       }
       this.checkRev(this.ledger(shootId).shoot, expectedRev);
       if (this.activeShoot !== shootId) fail('STALE_SESSION', 'This tethered shoot is no longer active.');
-      destination = { root, folderId, backupVolumeId: await markRoot(root, folderId), enabled: true, availability: 'online' };
+      destination = { root, folderId, backupVolumeId: await markRoot(root, stat), enabled: true, availability: 'online' };
     }
     const result = await this.tx(shootId, async (ledger, events) => {
       const { shoot } = ledger;

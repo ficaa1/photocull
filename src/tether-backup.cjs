@@ -5,30 +5,30 @@ const { createHash, randomUUID } = require('node:crypto');
 const { hashFile, safeParent } = require('./backup.cjs');
 const { inside } = require('./library.cjs');
 
+const precise = { bigint: true };
 const MARKER = '.photocull-backup-id';
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const wrongDrive = () => Object.assign(new Error('Wrong backup drive. Reconnect the selected destination.'), { code: 'BACKUP_WRONG_DRIVE' });
 const offline = () => Object.assign(new Error('Backup drive unavailable.'), { code: 'BACKUP_UNAVAILABLE' });
 
 async function readMarker(root) {
-  const file = path.join(root, MARKER), stat = await fs.lstat(file);
+  const file = path.join(root, MARKER), stat = await fs.lstat(file, precise);
   if (!stat.isFile() || stat.size > 64) throw wrongDrive();
   const handle = await fs.open(file, constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0));
   try {
-    const opened = await handle.stat();
+    const opened = await handle.stat(precise);
     if (!opened.isFile() || opened.ino !== stat.ino || opened.dev !== stat.dev || opened.size > 64) throw wrongDrive();
     const buffer = Buffer.alloc(64), { bytesRead } = await handle.read(buffer);
     const id = buffer.toString('utf8', 0, bytesRead).trim().toLowerCase();
-    if (!UUID.test(id) || !sameFile(opened, await handle.stat()) || !sameFile(opened, await fs.lstat(file))) throw wrongDrive();
+    if (!UUID.test(id) || !sameFile(opened, await handle.stat(precise)) || !sameFile(opened, await fs.lstat(file, precise))) throw wrongDrive();
     return id;
   } finally { await handle.close(); }
 }
 
-async function markRoot(root, folderId) {
-  const expectedDev = folderId.split(':')[0];
+async function markRoot(root, selected) {
   const verifyRoot = async () => {
-    const stat = await fs.lstat(root);
-    if (!stat.isDirectory() || await fs.realpath(root) !== root || `${stat.dev}:${stat.ino}` !== folderId) throw wrongDrive();
+    const stat = await fs.lstat(root, precise);
+    if (!stat.isDirectory() || await fs.realpath(root) !== root || stat.dev !== selected.dev || stat.ino !== selected.ino) throw wrongDrive();
   };
   const reuse = async () => {
     const id = await readMarker(root);
@@ -43,8 +43,8 @@ async function markRoot(root, folderId) {
   catch (error) { if (error.code === 'EEXIST') return reuse(); throw error; }
   try {
     await verifyRoot();
-    const opened = await handle.stat();
-    if (!opened.isFile() || String(opened.dev) !== expectedDev || !sameFile(opened, await namedStat(file))) throw wrongDrive();
+    const opened = await handle.stat(precise);
+    if (!opened.isFile() || opened.dev !== selected.dev || !sameFile(opened, await namedStat(file))) throw wrongDrive();
     await verifyRoot();
     const id = randomUUID();
     await handle.writeFile(id + '\n');
@@ -53,7 +53,7 @@ async function markRoot(root, folderId) {
     return id;
   } catch (error) {
     try {
-      const stat = await handle.stat();
+      const stat = await handle.stat(precise);
       if (!stat.size && sameFile(stat, await namedStat(file))) await fs.unlink(file);
     } catch {}
     throw error;
@@ -71,10 +71,10 @@ async function checkRoot({ root, backupVolumeId }) {
   if (marker !== backupVolumeId) throw wrongDrive();
 }
 
-async function hasAncestor(folder, folderId) {
+async function hasAncestor(folder, ancestor) {
   for (;;) {
-    const stat = await fs.stat(folder);
-    if (`${stat.dev}:${stat.ino}` === folderId) return true;
+    const stat = await fs.stat(folder, precise);
+    if (stat.dev === ancestor.dev && stat.ino === ancestor.ino) return true;
     const parent = path.dirname(folder);
     if (parent === folder) return false;
     folder = parent;
@@ -103,9 +103,8 @@ async function publish(temp, file, renameExclusive) {
 }
 
 const collision = () => Object.assign(new Error('The backup filename is occupied.'), { code: 'BACKUP_COLLISION' });
-const precise = { bigint: true };
-const namedStat = (file, options) => fs.lstat(file, options).catch(error => { if (error.code !== 'ENOENT') throw error; });
-const sameFile = (a, b) => a && b && a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs;
+const namedStat = file => fs.lstat(file, precise).catch(error => { if (error.code !== 'ENOENT') throw error; });
+const sameFile = (a, b) => a && b && a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeNs === b.mtimeNs;
 
 async function matches(file, expected) {
   if (!expected || !(await namedStat(file))?.isFile()) return false;
@@ -124,10 +123,10 @@ function identifies(id, stat) {
 
 async function verifiedReceipt(receipt) {
   if (!receipt?.owned || !receipt.identity) return;
-  const stat = await namedStat(receipt.path, precise);
+  const stat = await namedStat(receipt.path);
   if (!identifies(receipt.identity, stat)) return;
   const id = identity(stat);
-  if (await matches(receipt.path, receipt.hash) && identifies(id, await namedStat(receipt.path, precise))) {
+  if (await matches(receipt.path, receipt.hash) && identifies(id, await namedStat(receipt.path))) {
     return { path: receipt.path, hash: receipt.hash, owned: true, identity: id };
   }
 }
@@ -137,10 +136,10 @@ async function backupDirectory(backup, relative, checkCurrent, create = true) {
   checkCurrent();
   if (!inside(backup.root, path.resolve(backup.root, relative))) throw new Error('Invalid backup path.');
   if (create) await safeParent(backup.root, relative);
-  const dir = path.dirname(path.join(backup.root, relative)), parent = await fs.lstat(dir);
+  const dir = path.dirname(path.join(backup.root, relative)), parent = await fs.lstat(dir, precise);
   const verify = async (active = true) => {
     await checkRoot(backup);
-    const stat = await fs.lstat(dir);
+    const stat = await fs.lstat(dir, precise);
     if (!stat.isDirectory() || stat.ino !== parent.ino || stat.dev !== parent.dev || await fs.realpath(dir) !== dir) throw new Error('Backup subfolder changed.');
     if (active) checkCurrent();
   };
@@ -184,7 +183,7 @@ async function availableStem(dir, base, start, images, sidecar, reserved) {
 async function cleanPartial(temp, verify, created) {
   if (!/^\.photocull-backup-[a-f0-9-]{36}\.partial$/.test(path.basename(temp))) throw new Error('Invalid backup staging name.');
   await verify(!created);
-  const stat = await namedStat(temp, precise);
+  const stat = await namedStat(temp);
   if (stat) {
     if (created && (stat.ino !== created.ino || stat.dev !== created.dev)) return;
     if (!stat.isFile()) throw new Error('The backup staging path is no longer a regular file.');
@@ -218,7 +217,7 @@ async function updateSidecar({ source, file, hash, previous, verify, remember })
     if (before.nlink !== 1n || !identifies(previous.identity, before) || digest(await handle.readFile()) !== previous.hash) throw collision();
     await verify();
     const current = await handle.stat(precise);
-    if (current.nlink !== 1n || !identifies(previous.identity, current) || !identifies(previous.identity, await namedStat(file, precise))) throw collision();
+    if (current.nlink !== 1n || !identifies(previous.identity, current) || !identifies(previous.identity, await namedStat(file))) throw collision();
     for (let offset = 0; offset < bytes.length;) {
       const { bytesWritten } = await handle.write(bytes, offset, bytes.length - offset, offset);
       if (!bytesWritten) throw new Error('The backup sidecar write stopped.');
@@ -237,7 +236,7 @@ async function mirrorFile({ source, file, temp, hash, previous, sidecar, verify,
   if (await fs.realpath(source) !== source) throw new Error('The capture path changed.');
   hash ||= (await hashFile(source)).hash;
   await verify();
-  const existing = await namedStat(file, precise);
+  const existing = await namedStat(file);
   if (existing) {
     const owned = previous?.owned && previous.path === file && identifies(previous.identity, existing);
     if (sidecar) {
@@ -245,7 +244,7 @@ async function mirrorFile({ source, file, temp, hash, previous, sidecar, verify,
       if (hash !== previous.hash) return updateSidecar({ source, file, hash, previous, verify, remember });
     }
     const receipt = { path: file, hash, owned: !!owned, identity: identity(existing) };
-    if (!await matches(file, hash) || !identifies(receipt.identity, await namedStat(file, precise))) throw collision();
+    if (!await matches(file, hash) || !identifies(receipt.identity, await namedStat(file))) throw collision();
     return receipt;
   }
   const output = await fs.open(temp, 'wx');
@@ -260,7 +259,7 @@ async function mirrorFile({ source, file, temp, hash, previous, sidecar, verify,
     const receipt = { path: file, hash, owned: true, identity: identity(staged) };
     await remember(receipt);
     await verify();
-    if (!identifies(receipt.identity, await namedStat(temp, precise))) throw new Error('The verified backup file changed before publication.');
+    if (!identifies(receipt.identity, await namedStat(temp))) throw new Error('The verified backup file changed before publication.');
     try { await publish(temp, file, renameExclusive); }
     catch (error) { if (error.code === 'EEXIST') throw collision(); throw error; }
     if (process.platform !== 'win32') {

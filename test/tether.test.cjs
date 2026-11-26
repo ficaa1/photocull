@@ -1739,7 +1739,7 @@ test('a backup with an empty queue detects removal, a wrong volume, and the mark
   assert.match((await waitBackup(ctx, 'failed', 1)).error, /wrong backup drive/i);
   assert.deepEqual(await fs.readdir(drive), [marker]);
   // A remounted folder presents the original marker with a different directory identity.
-  assert.notEqual((await fs.stat(drive)).ino, (await fs.stat(parked)).ino);
+  assert.notEqual((await fs.stat(drive, { bigint: true })).ino, (await fs.stat(parked, { bigint: true })).ino);
   const lstat = fs.lstat;
   t.mock.method(fs, 'lstat', async (file, ...args) => {
     const stat = await lstat(file, ...args);
@@ -1875,6 +1875,18 @@ test('backup enrollment rejects a drive swapped while creating its marker', asyn
   await fs.mkdir(drive);
   const open = fs.open;
   let swapped = false;
+  // Adjacent NTFS file IDs can round to the same JavaScript number.
+  for (const method of ['stat', 'lstat']) {
+    const stat = fs[method];
+    t.mock.method(fs, method, async (file, options) => {
+      const info = await stat(file, options);
+      if (file === drive) {
+        const ino = 2n ** 53n + BigInt(swapped);
+        info.ino = options?.bigint ? ino : Number(ino);
+      }
+      return info;
+    });
+  }
   t.mock.method(fs, 'open', async (file, ...args) => {
     if (file === marker && !swapped) {
       await fs.rename(drive, drive + '-original');
