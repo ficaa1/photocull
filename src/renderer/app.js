@@ -953,11 +953,12 @@ $('clear-metadata-filters').onclick = () => { clearFilters(); render(true); };
 
 const iptc = $('iptc-form'), dirtyFields = new Set();
 let editorSelection = '', chipSignature = '', savingIptc = false;
+const editorKey = () => state.session ? [state.session.id, ...selection().map(item => item.id)].join('/') : '';
 function renderIptc() {
   const editor = $('iptc-editor');
   editor.hidden = !!testShot() || testBlocksCulling() || !photo();
   if (editor.hidden || !editor.open) { editorSelection = ''; return; }
-  const targets = selection(), key = [state.session.id, ...targets.map(item => item.id)].join('/');
+  const targets = selection(), key = editorKey();
   if (key !== editorSelection) {
     dirtyFields.clear(); $('iptc-keyword').value = ''; editorSelection = key;
   }
@@ -1009,6 +1010,7 @@ async function saveIptc(patch) {
 }
 $('iptc-editor').ontoggle = () => renderIptc();
 iptc.oninput = event => {
+  if (!editorSelection) editorSelection = editorKey();
   if (PhotoCullMetadata.textFields.includes(event.target.name)) { dirtyFields.add(event.target.name); $('iptc-save').disabled = false; }
 };
 iptc.addEventListener('keydown', event => {
