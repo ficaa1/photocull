@@ -242,7 +242,8 @@ class TetherService {
       if (!stat?.isDirectory() || stat.isSymbolicLink()) fail('DEST_CHANGED', `${relative || 'The capture folder'} is not an available folder.`, { field: 'relative' });
     }
     if (await fs.realpath(current).catch(() => null) !== current) fail('DEST_CHANGED', 'The capture folder moved or is reached through a link.', { field: 'relative' });
-    const stat = await fs.stat(current);
+    // Pending captures and on-disk claims must keep the ID format used by their shoot.
+    const stat = await fs.stat(current, { bigint: shoot.exactShotFolderIds === true });
     return `${stat.dev}:${stat.ino}`;
   }
 
@@ -349,7 +350,7 @@ class TetherService {
     if (!ledger) {
       const shootId = randomUUID();
       ledger = { version: 1, shoot: { shootId, canonicalRoot: root, volumeId: rootIdentity?.volumeId ?? String(stat.dev), folderId, layout, recursive: layout === 'session',
-        activeRelDir: '', activeDirId: null, recentRelDirs: [], configRev: 1, libraryRev: 0, nextOrdinal: 1,
+        activeRelDir: '', activeDirId: null, exactShotFolderIds: true, recentRelDirs: [], configRev: 1, libraryRev: 0, nextOrdinal: 1,
         counters: { next: tether.counterStart, resetTo: tether.counterStart, step: tether.counterStep }, lastExposureId: null, lastBodyKey: null, lastCamera: null,
         config: { jobName: path.basename(root).slice(0, 80) || 'Capture', ...structuredClone(Object.fromEntries(CONFIG_KEYS.map(k => [k, tether[k]]))) },
         overlayAsset: null, pinnedRef: null, session: null, createdAt: this.now().toISOString(), closedAt: null },
@@ -438,7 +439,8 @@ class TetherService {
       const identity = await this.directoryIdentity(shoot, relative);
       if (directoryIdentity !== null && directoryIdentity !== identity) fail('DEST_CHANGED', 'The capture folder changed. Choose it again.', { field: 'relative' });
       if (relative) shoot.usedShotFolders = true;
-      shoot.recentRelDirs = [{ relative, identity }, ...shoot.recentRelDirs.filter(r => r.identity !== identity && r.relative !== relative)].slice(0, 12);
+      const uniqueId = shoot.exactShotFolderIds || identity.split(':').every(part => Number.isSafeInteger(Number(part)));
+      shoot.recentRelDirs = [{ relative, identity }, ...shoot.recentRelDirs.filter(r => r.relative !== relative && (!uniqueId || r.identity !== identity))].slice(0, 12);
       if (activate !== false) { shoot.activeRelDir = relative; shoot.activeDirId = identity; }
       shoot.configRev++;
       events.push(this.configEvent(ledger));

@@ -435,12 +435,29 @@ test('JPEG first: the RAW takes over the provisional row with decisions, history
   assert.equal(ctx.library.get(ctx.session).byPath.size, 0);
 });
 
+function mockDirectoryIds(t, methods, idFor) {
+  for (const method of methods) {
+    const stat = fs[method];
+    t.mock.method(fs, method, async (file, options) => {
+      const info = await stat(file, options), ino = idFor(file);
+      if (ino !== undefined) info.ino = options?.bigint ? ino : Number(ino);
+      return info;
+    });
+  }
+}
+
 test('interleaved bursts land in their acceptance-time shot folders with zero rescans', async t => {
   const ctx = await setup(t, { settings: { tether: { namingTemplate: '{Original}' } } });
   await ctx.bind('session');
   assert.equal(ctx.libraryRoot, path.join(ctx.root, 'Capture'));
   for (const name of ['Capture', 'Selects', 'Output', 'Trash']) assert.ok((await fs.stat(path.join(ctx.root, name))).isDirectory());
-  for (const shot of ['Blue', 'Red']) await fs.mkdir(path.join(ctx.libraryRoot, shot));
+  const folderIds = new Map();
+  for (const shot of ['Blue', 'Red']) {
+    const folder = path.join(ctx.libraryRoot, shot);
+    await fs.mkdir(folder);
+    folderIds.set(folder, 2n ** 53n + BigInt(folderIds.size));
+  }
+  mockDirectoryIds(t, ['stat'], file => folderIds.get(file));
   await assert.rejects(ctx.service.setLocation(ctx.shootId, 1, '../Blue', null, true), e => e.code === 'UNSUPPORTED');
   for (const bad of ['/abs', 'a\\b', '.hidden', 'CON', 'trail.', '']) if (bad) await assert.rejects(ctx.service.setLocation(ctx.shootId, 1, bad), e => ['UNSUPPORTED', 'DEST_CHANGED'].includes(e.code), bad);
   await ctx.service.setLocation(ctx.shootId, 1, 'Blue', null, true);
@@ -448,6 +465,9 @@ test('interleaved bursts land in their acceptance-time shot folders with zero re
   const loc = await ctx.service.setLocation(ctx.shootId, (await ctx.state()).configRev, 'Red', null, true);
   assert.deepEqual(loc.location.recents, ['Red', 'Blue']);
   const red = [await ctx.accept(), await ctx.accept()];
+  const { dev } = await fs.stat(ctx.libraryRoot, { bigint: true });
+  assert.deepEqual([blue[0].targetDirIdentity, red[0].targetDirIdentity],
+    [...folderIds.values()].map(ino => `${dev}:${ino}`));
   // Identical camera stems in two folders, with each pair's halves arriving out of order.
   const order = [[red[1], 'DSC00001.JPG'], [blue[0], 'DSC00001.JPG'], [red[0], 'DSC00002.ARW'], [blue[1], 'DSC00002.ARW'], [blue[0], 'DSC00001.ARW'], [red[1], 'DSC00001.ARW'], [blue[1], 'DSC00002.JPG'], [red[0], 'DSC00002.JPG']];
   for (const [exposure, name] of order) await ctx.deliver(exposure.exposureId, name);
@@ -659,7 +679,9 @@ test('crash recovery replays published members once and never re-advances counte
 test('a stopped shoot resumes its counter, shot folder, config and camera without overwriting files', async t => {
   const ctx = await setup(t);
   await ctx.bind('session', true);
-  await fs.mkdir(path.join(ctx.libraryRoot, 'Blue'));
+  const blue = path.join(ctx.libraryRoot, 'Blue');
+  await fs.mkdir(blue);
+  mockDirectoryIds(t, ['stat'], file => file === blue ? 2n ** 53n + 1n : undefined);
   let rev = (await ctx.service.setLocation(ctx.shootId, 1, 'Blue')).configRev;
   rev = (await ctx.service.config(ctx.shootId, rev, { jobName: 'Vases', namingTemplate: '{Name}_{Counter:4}', follow: { mode: 'off' }, flash: { syncLimit: 160, recycleMs: 0, misfireAlert: false, misfireChime: false } })).configRev;
   rev = (await ctx.service.counter(ctx.shootId, rev, 'setNext', 41)).configRev;
@@ -674,7 +696,16 @@ test('a stopped shoot resumes its counter, shot folder, config and camera withou
   await ctx.service.journal(shootId, 'close', { camera });
   await assert.rejects(ctx.service.journal(shootId, 'close', { device: 'usb-1' }), e => e.code === 'UNSUPPORTED');
 
-  // A restart reads the stopped shoot back from its journal.
+  // Older journals stored the rounded shot folder ID, including in pending exposures and claims.
+  const journal = path.join(ctx.dataDir, 'tether', 'shoots', shootId + '.json');
+  const legacy = JSON.parse(await fs.readFile(journal, 'utf8'));
+  delete legacy.shoot.exactShotFolderIds;
+  const blueStat = await fs.stat(blue), legacyId = `${blueStat.dev}:${blueStat.ino}`;
+  legacy.shoot.activeDirId = legacyId;
+  legacy.shoot.recentRelDirs[0].identity = legacyId;
+  legacy.exposures[first.exposureId].targetDirId = legacyId;
+  for (const claim of Object.values(legacy.claims)) claim.dirId = legacyId;
+  await fs.writeFile(journal, JSON.stringify(legacy));
   await ctx.library.close();
   await ctx.open();
   const [entry, ...others] = await ctx.service.recentShoots();
@@ -1876,17 +1907,7 @@ test('backup enrollment rejects a drive swapped while creating its marker', asyn
   const open = fs.open;
   let swapped = false;
   // Adjacent NTFS file IDs can round to the same JavaScript number.
-  for (const method of ['stat', 'lstat']) {
-    const stat = fs[method];
-    t.mock.method(fs, method, async (file, options) => {
-      const info = await stat(file, options);
-      if (file === drive) {
-        const ino = 2n ** 53n + BigInt(swapped);
-        info.ino = options?.bigint ? ino : Number(ino);
-      }
-      return info;
-    });
-  }
+  mockDirectoryIds(t, ['stat', 'lstat'], file => file === drive ? 2n ** 53n + BigInt(swapped) : undefined);
   t.mock.method(fs, 'open', async (file, ...args) => {
     if (file === marker && !swapped) {
       await fs.rename(drive, drive + '-original');
