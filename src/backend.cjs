@@ -315,13 +315,13 @@ async function start() {
       return extension ? `${rendered.stem}.${extension}` : rendered.filename;
     },
     'cancel-copy': () => transfers.cancel(),
-    'decide': (session, id, patch) => library.decide(session, id, patch),
-    'decide-many': (session, ids, patch) => library.decideMany(session, ids, patch),
+    'decide': (session, id, patch, operation) => library.decide(session, id, patch, operation),
+    'decide-many': (session, ids, patch, operation) => library.decideMany(session, ids, patch, operation),
     'edit-metadata': (session, ids, patch) => library.editMetadata(session, ids, patch),
     'analysis-source': (session,id) => culling.source(session,id),
     'analysis-store': (session,id,key,score) => culling.store(session,id,key,score),
     'keep-sharpest': (session,ids) => deleting ? Promise.reject(new Error('Wait for the deletion to finish.')) : culling.keep(session,ids),
-    'history': (session, direction) => library.history(session, direction),
+    'history': (session, direction, fields) => library.history(session, direction, fields),
     'metadata': (session, id, kind = 'preview') => previews.metadata(previewPhoto(library.item(session, id)), kind),
     // size: the photo's real oriented pixel size (or null), for loupe zoom percentages.
     'preview-status': async (session, id, kind = 'preview', original = false) => {

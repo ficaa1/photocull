@@ -297,7 +297,7 @@ class Library {
 
   publicItem(item) {
     const { id, name, size, raw, companion, flag, rating, color, trashed, source, edited, develop, contentRev, exposureId, ordinal, captureMetadata, sidecarMetadata } = item;
-    return { id, name, size, raw, paired: !!companion, flag, rating, color, trashed, source, edited, ...developSummary(develop), contentRev: contentRev || 0,
+    return { id, name, size, fingerprint: item.fingerprint, modified: item.modified, raw, paired: !!companion, flag, rating, color, trashed: !!trashed, source, edited, ...developSummary(develop), contentRev: contentRev || 0,
       ...(sidecarMetadata ? { sidecarMetadata } : {}), ...metadataState(item),
       ...(exposureId ? { exposureId, ordinal } : {}), ...(captureMetadata ? { captureMetadata } : {}) };
   }
@@ -733,36 +733,51 @@ class Library {
     return { id: item.id, ...developSummary(item.develop) };
   }
 
-  async decide(sessionId, imageId, patch) {
-    const s = this.get(sessionId), item = this.item(sessionId, imageId);
-    const before = decision(item), after = decision({ ...before, ...patch });
-    s.undo.push({ id: item.id, before, after });
-    if (s.undo.length > 500) s.undo.shift();
-    s.redo = [];
-    Object.assign(item, after, { edited: true });
-    this.changed(s, [item]);
-    await this.save(s);
-    return { id: item.id, ...after, edited: true };
+  async decide(sessionId, imageId, patch, operation) {
+    const result = await this.saveDecisions(sessionId, [imageId], patch, operation, false);
+    return result.items[0];
   }
 
-  async decideMany(sessionId, ids, patch) {
+  decideMany(sessionId, ids, patch, operation) {
+    return this.saveDecisions(sessionId, ids, patch, operation, true);
+  }
+
+  async saveDecisions(sessionId, ids, patch, operation, batchHistory) {
     const s = this.get(sessionId);
     if (!Array.isArray(ids) || !ids.length || ids.length > 100_000) throw new Error('Choose photos to edit.');
     const items = [...new Set(ids.map(id => this.item(sessionId, id)))];
-    const batch = items.map(item => {
-      const before = decision(item), after = decision({ ...before, ...patch });
-      return { id: item.id, before, after };
-    });
-    s.undo.push({ batch });
-    if (s.undo.length > 500) s.undo.shift();
-    s.redo = [];
-    const result = batch.map(({ id, after }, index) => {
-      Object.assign(items[index], after, { edited: true });
-      return { id, ...after, edited: true };
-    });
-    this.changed(s, items);
+    const batch = [], changed = [];
+    for (const item of items) {
+      const before = decision(item), after = { ...before };
+      const requested = decision({ ...before, ...patch });
+      let apply = false;
+      for (const key of Object.keys(before)) {
+        if (!patch || !Object.hasOwn(patch, key)) continue;
+        // A lost acknowledgement may arrive after Undo or a different decision.
+        if (operation?.previous) {
+          const expected = operation.previous[key];
+          const alreadyApplied = item.decisionOperations?.[key] === operation.id || item.edited && before[key] === requested[key];
+          const newerSnapshot = operation.modified !== undefined && operation.modified !== item.modified;
+          if (alreadyApplied || newerSnapshot || !Array.isArray(expected) || !expected.includes(before[key])) continue;
+        }
+        after[key] = requested[key];
+        if (typeof operation?.id === 'string') (item.decisionOperations ||= {})[key] = operation.id;
+        apply = true;
+      }
+      if (apply) {
+        batch.push({ id: item.id, before, after });
+        changed.push(item);
+        Object.assign(item, after, { edited: true });
+      }
+    }
+    if (batch.length) {
+      s.undo.push(batchHistory ? { batch } : batch[0]);
+      if (s.undo.length > 500) s.undo.shift();
+      s.redo = [];
+      this.changed(s, changed);
+    }
     await this.save(s);
-    return { items: result };
+    return { items: items.map(item => ({ id: item.id, ...decision(item), edited: item.edited, ...(operation ? { modified: item.modified } : {}) })) };
   }
 
   async editMetadata(sessionId, ids, patch) {
@@ -810,7 +825,7 @@ class Library {
     return { items: patches };
   }
 
-  async history(sessionId, direction) {
+  async history(sessionId, direction, includeChangedFields = false) {
     const s = this.get(sessionId);
     const from = direction === 'redo' ? s.redo : s.undo;
     const to = direction === 'redo' ? s.undo : s.redo;
@@ -822,7 +837,9 @@ class Library {
       const patch = direction === 'redo' ? entry.after : entry.before;
       if (Object.hasOwn(patch, 'metadataOverrides')) return applyMetadataOverrides(item, patch.metadataOverrides);
       Object.assign(item, patch, { edited: true });
-      return { id: item.id, ...decision(item), edited: true };
+      const result = { id: item.id, ...decision(item), edited: true };
+      if (includeChangedFields) result.changedFields = Object.keys(patch).filter(key => entry.before[key] !== entry.after[key]);
+      return result;
     });
     this.changed(s, items.map(i => this.item(sessionId, i.id)));
     await this.save(s);

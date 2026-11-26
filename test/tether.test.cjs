@@ -210,6 +210,10 @@ test('public config, counter and preview calls validate, serialize and never con
   assert.deepEqual((await preview()).filenames, ['Ceramics-0001.ARW', 'Ceramics-0001.JPG']);
   assert.deepEqual((await preview()).filenames, ['Ceramics-0001.ARW', 'Ceramics-0001.JPG']);
   assert.deepEqual(ctx.service.namePreview(ctx.shootId, { namingTemplate: '{JobName}_{Subfolder}_{Counter:4}', relativeShot: 'Blue' }).filenames, ['Ceramics_Blue_0001.ARW', 'Ceramics_Blue_0001.JPG']);
+  const dial = ctx.service.namePreview(ctx.shootId, { namingTemplate: '{Shutter}_{Original}', camera: { shutter: '1/250' } });
+  assert.match(dial.filenames[0], /^1-250_/);
+  assert.deepEqual(dial.estimatedTokens, ['Shutter']);
+  assert.deepEqual(dial.pendingTokens, ['Original']);
   assert.equal(ctx.service.namePreview(ctx.shootId, { namingTemplate: '{CameraCounter}' }).valid, false);
   assert.throws(() => ctx.service.namePreview(ctx.shootId, { other: 1 }), e => e.code === 'UNSUPPORTED');
   await assert.rejects(ctx.service.config(ctx.shootId, 0, { jobName: 'Vases' }), e => e.code === 'STALE_REV' && e.detail.currentRev === 1);

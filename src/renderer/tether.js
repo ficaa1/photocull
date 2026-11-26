@@ -741,13 +741,28 @@
       $('tether-dock-start').hidden = !!this.shoot || !this.api.canTether;
       $('tether-stop').hidden = !this.shoot || !this.api.canTether;
       const battery = this.battery(); $('tether-battery').hidden = !battery; $('tether-battery').textContent = battery;
-      const dot = $('tether-mode-dot'), signal = this.live.enabled ? 'live' : this.connected() ? 'connected' : this.shoot ? 'armed' : '';
-      dot.hidden = !signal; dot.dataset.state = signal;
-      $('tether-mode').title = `Tether workspace${{ live: ' · Live View on', connected: ` · ${labels.ready} connected`, armed: ' · session running' }[signal] || ''}`;
+      this.renderTabSignal();
       $('tether-panel-note').textContent = !this.api.canTether ? 'Camera control needs the PhotoCull desktop app. Composition aids, naming and follow defaults still work here.' : !this.shoot ? 'Editing defaults for the next tethered session.' : '';
+    }
+    renderTabSignal() {
+      const signal = this.live.enabled ? 'live' : this.connected() ? 'connected' : this.shoot ? 'armed' : '';
+      const short = { live: 'Live', connected: 'Connected', armed: 'Armed' }[signal];
+      const name = signal === 'live' ? 'Live View on' : short;
+      const dot = $('tether-mode-dot');
+      dot.hidden = !signal; dot.dataset.state = signal;
+      $('tether-tab-state').textContent = short ? `· ${short}` : '';
+      $('tether-mode').setAttribute('aria-label', name ? `Tether, ${name}` : 'Tether');
+      $('tether-mode').title = name ? `Tether workspace · ${name}` : 'Tether workspace';
+      for (const option of $('compact-workspace').options) {
+        option.dataset.label ||= option.textContent;
+        const suffix = option.value === 'tether' ? short : signal === 'live' ? 'Live' : '';
+        option.textContent = suffix ? `${option.dataset.label} · ${suffix}` : option.dataset.label;
+      }
+      $('compact-workspace').title = signal === 'live' ? 'Workspace · Tether Live View on' : 'Workspace';
     }
     lastResumable() { return this.recent.find(r => r.available) || null; }
     renderResume() {
+      this.host.emptyChanged();
       const last = this.lastResumable(), others = this.recent.filter(r => r !== last), show = this.api.canTether && !this.shoot && this.recent.length > 0;
       const when = r => new Date(r.stoppedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
       const where = r => r.shot ? `${r.name} / ${r.shot}` : r.name;
@@ -777,6 +792,7 @@
       return Number.isFinite(b.percent) ? `${b.percent}%` : Number.isFinite(b.level) && Number.isFinite(b.levels) ? `${'▮'.repeat(b.level)}${'▯'.repeat(Math.max(0, b.levels - b.level))}` : '';
     }
     renderCamera() {
+      this.host.emptyChanged();
       const online = this.connected() || ['lost', 'reconnecting', 'paused'].includes(this.camera.state);
       for (const node of document.querySelectorAll('#tether-tool-camera .tether-online')) node.hidden = !online;
       $('tether-offline').hidden = online;
@@ -793,7 +809,9 @@
       const dest = this.camera.properties.get('saveDestination'), destination = $('tether-camera-destination');
       destination.textContent = dest ? dest.display ?? String(dest.value) : '—'; destination.dataset.level = this.cameraOnly() ? 'warn' : dest ? 'ok' : '';
       $('tether-destination-warning').hidden = !this.cameraOnly();
-      const reason = this.canCapture();
+      const reason = this.canCapture(), shortcut = this.host.shutterShortcut();
+      const key = $('tether-capture').querySelector('kbd');
+      key.textContent = shortcut; key.hidden = shortcut === 'Unassigned';
       for (const id of ['tether-capture', 'tether-live-capture']) { $(id).disabled = !!reason; $(id).setAttribute('aria-disabled', String(!!reason)); }
       $('tether-capture-reason').textContent = reason;
       this.renderRecycle();
@@ -1021,6 +1039,18 @@
       $('tether-disk-fill').style.width = `${Math.max(2, Math.min(100, space.freeBytes / (200 * GiB) * 100))}%`;
       $('tether-disk-text').textContent = `${bytesText(space.freeBytes)} free${Number.isFinite(space.estimatedShots) ? ` · ≈${space.estimatedShots.toLocaleString()} shots` : ''}${blocked ? ' · capture blocked' : low ? ' · low space' : ''}`;
     }
+    previewCamera() {
+      if (!this.connected()) return undefined;
+      const camera = { model: this.camera.device?.model };
+      for (const key of ['iso', 'shutter', 'aperture', 'focalLength']) {
+        const prop = this.camera.properties.get(key);
+        if (prop) {
+          const value = prop.display ?? prop.value;
+          camera[key] = key === 'iso' ? String(value).replace(/^ISO\s*/i, '') : value;
+        }
+      }
+      return camera;
+    }
     renderNaming() {
       const config = this.config(), focused = document.activeElement;
       if (focused !== $('tether-job-name')) $('tether-job-name').value = this.shoot ? config.jobName || '' : this.jobName || this.defaultJob();
@@ -1028,7 +1058,9 @@
       const counters = this.shoot?.counters;
       if (focused !== $('tether-counter-next')) $('tether-counter-next').value = counters ? counters.next : this.settings().counterStart ?? 1;
       if (focused !== $('tether-counter-step')) $('tether-counter-step').value = counters ? counters.step : this.settings().counterStep ?? 1;
-      if (!this.namingRendered) { this.namingRendered = true; this.renderSample(); }
+      const signature = JSON.stringify([this.shoot?.shootId, this.shoot?.location?.display, counters?.next,
+        this.settings().counterStart, this.previewCamera(), $('tether-job-name').value, $('tether-format').value]);
+      if (this.namingSignature !== signature) { this.namingSignature = signature; this.renderSample(); }
     }
     insertToken(token) {
       const input = $('tether-format'), start = input.selectionStart ?? input.value.length, end = input.selectionEnd ?? start;
@@ -1038,21 +1070,26 @@
     }
     renderSample() {
       clearTimeout(this.namingTimer);
+      const generation = ++this.namingGeneration;
       this.namingTimer = setTimeout(async () => {
-        const generation = ++this.namingGeneration, namingTemplate = $('tether-format').value, jobName = $('tether-job-name').value.trim() || this.defaultJob();
+        const namingTemplate = $('tether-format').value, jobName = $('tether-job-name').value.trim() || this.defaultJob();
         let result;
         try {
-          result = this.shoot ? await this.api.tetherNamePreview(this.shoot.shootId, { jobName, namingTemplate })
+          result = this.shoot ? await this.api.tetherNamePreview(this.shoot.shootId, { jobName, namingTemplate, camera: this.previewCamera() })
             : N.renderCaptureName(namingTemplate, { jobName, counter: this.settings().counterStart ?? 1, subfolder: this.defaultJob(), extensions: ['.ARW', '.JPG'] }, { preview: true });
         } catch (error) { result = { valid: false, warning: error.message, filenames: [] }; }
         if (generation !== this.namingGeneration) return;
         const sample = $('tether-sample'); sample.replaceChildren();
         sample.classList.toggle('error', !result.valid); $('tether-format').setAttribute('aria-invalid', String(!result.valid));
-        if (!result.valid) { sample.textContent = result.warning || 'Invalid naming format.'; return; }
-        sample.append(el('span', 'tether-sample-label', 'Sample '), el('strong', 'tabular', result.filenames.join(' + ')));
+        const summary = $('tether-next-file');
+        summary.classList.toggle('error', !result.valid);
+        if (!result.valid) { summary.textContent = sample.textContent = result.warning || 'Invalid naming format.'; return; }
+        sample.append(el('span', 'tether-sample-label', this.shoot ? 'Next file ' : 'Sample '), el('strong', 'tabular', result.filenames.join(' + ')));
         if (result.estimatedTokens?.length) { const b = el('span', 'tether-badge', 'estimated'); b.title = `Estimated until capture: ${result.estimatedTokens.join(', ')}`; sample.append(b); }
         if (result.pendingTokens?.length) { const b = el('span', 'tether-badge', 'pending'); b.title = `Known after transfer: ${result.pendingTokens.join(', ')}`; sample.append(b); }
         if (result.warning) sample.append(el('span', 'tether-sample-warning', ' ' + result.warning));
+        summary.replaceChildren(...[...sample.children].map(node => node.cloneNode(true)));
+        summary.title = sample.textContent;
       }, 120);
     }
     async counter(op, value) {
@@ -1060,7 +1097,7 @@
         const s = this.settings(), start = s.counterStart ?? 1, step = s.counterStep ?? 1;
         const patch = op === 'setNext' ? { counterStart: Math.round(value) } : op === 'setStep' ? { counterStep: Math.round(value) || 1 } : op === 'increment' ? { counterStart: start + step } : op === 'decrement' ? { counterStart: start - step } : { counterStart: 1 };
         try { await this.host.saveSettings({ tether: patch }); } catch (error) { this.host.toast(error.message); }
-        this.namingRendered = false; this.render(); return;
+        this.render(); return;
       }
       try {
         const result = await this.api.tetherCounter(this.shoot.shootId, this.shoot.configRev, op, value);
@@ -1633,6 +1670,7 @@
       viewport.addEventListener('dblclick', () => { this.live.loupe = !this.live.loupe; this.renderLive(); this.paintLive(); });
     }
     renderLive() {
+      this.renderTabSignal();
       const stage = $('tether-live-stage');
       stage.hidden = !this.live.open; stage.classList.toggle('docked', this.live.docked);
       document.body.classList.toggle('tether-stage-open', this.stageExpanded());

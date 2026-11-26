@@ -266,6 +266,10 @@
       $('size-unit').textContent = resize === 'percent' ? '%' : resize === 'megapixels' ? 'MP' : 'px';
       $('amount').disabled = $('sharpen').value === 'none' || running;
       const items = scoped(), edits = $('source').value === 'edited' ? items.filter(i => i.externalEdit).length : 0;
+      $('scope').options[0].textContent = `All picks (${picked().filter(i => !i.trashed).length})`;
+      $('scope').options[1].textContent = `Selected photos (${selection().filter(i => !i.trashed).length})`;
+      const formatName = format === 'avif' ? 'AVIF' : spec.label;
+      $('start').textContent = `Export ${items.length} ${formatName}${items.length === 1 ? '' : 's'}`;
       const raw = items.filter(i => i.raw && !($('source').value === 'edited' && i.externalEdit)).length;
       $('counts').textContent = `${items.length} photos · ${edits} External edits · ${raw} developed from RAW · ${items.length - edits - raw} image originals`;
       $('source-note').textContent = edits ? 'Exports use saved external edits. Output bit depth and color space cannot recover detail absent from the hand-off.' : 'RAWs use each photo’s current develop settings. Other images are re-encoded from the original.';
@@ -287,7 +291,7 @@
           const develop = await api.developGet(state.session.id, item.id); item.externalEdit = !!(develop.edited && develop.tiff);
         }));
         $('subfolder').value = state.settings.exportSubfolder || ''; $('conflict').value = state.settings.exportConflict || 'unique';
-        $('scope').value = 'picks'; $('source').value = 'edited'; presetChoices('last');
+        $('scope').value = selection().length > 1 ? 'selection' : 'picks'; $('source').value = 'edited'; presetChoices('last');
         $('naming-preset').replaceChildren(opt('', 'Current naming'), ...(state.settings.presets || []).map(p => opt(p.id, p.name)));
         buildNaming('image-export', state.settings.naming, preview); fill(lastUsed);
         $('status').textContent = api.canDevelop ? '' : 'Finished-image export needs the desktop app.'; $('results').hidden = true; $('reveal').hidden = true; $('progress').hidden = true;

@@ -39,6 +39,22 @@ test('decisions survive reopen, undo/redo, and invalidate when a source changes'
   assert.equal(await fs.readFile(path.join(photos, 'a.jpg'), 'utf8'), 'fixturechanged');
 });
 
+test('retry flushes a failed decision once and preserves a later undo', async t => {
+  const root = await temp(t), photos = path.join(root, 'photos');
+  await fs.mkdir(photos); await fs.writeFile(path.join(photos, 'a.jpg'), 'fixture');
+  const library = new Library(path.join(root, 'data')), session = await library.scan(photos);
+  const id = session.items[0].id, store = library.get(session.id).store;
+  await fs.mkdir(store, { recursive: true });
+  const operation = { id: 'pick-a' }, retry = { ...operation, previous: { flag: ['none'] } };
+  await assert.rejects(library.decide(session.id, id, { flag: 'pick' }, operation));
+  await fs.rmdir(store);
+  assert.equal((await library.decide(session.id, id, { flag: 'pick' }, retry)).flag, 'pick');
+  assert.equal((await library.history(session.id, 'undo')).flag, 'none');
+  assert.equal((await library.decide(session.id, id, { flag: 'pick' }, retry)).flag, 'none');
+  assert.equal(await library.history(session.id, 'undo'), null);
+  assert.equal((await library.history(session.id, 'redo')).flag, 'pick');
+});
+
 test('XMP edits preserve unrelated metadata, namespaces and backups', async t => {
   const root = await temp(t), file = path.join(root, 'a.xmp');
   const xml = `<x:xmpmeta xmlns:x="adobe:ns:meta/"><r:RDF xmlns:r="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><r:Description xmlns:xp="http://ns.adobe.com/xap/1.0/" xmlns:dc="http://purl.org/dc/elements/1.1/" xp:Rating="2"><xp:Label>Blue</xp:Label><dc:creator><r:Seq><r:li>Photographer &amp; friends</r:li></r:Seq></dc:creator></r:Description></r:RDF></x:xmpmeta>`;

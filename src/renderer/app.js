@@ -8,6 +8,10 @@ const culling = { metadata:new Map(), jobs:new Map(), scores:new Map(), bursts:[
 let metadataIndex;
 let survey, burstPrompt=null, tether=null;
 const menus = [];
+const decisionSessions = new Map();
+const editClient = crypto.getRandomValues(new Uint32Array(2)).join('-');
+let editSequence = 0;
+let outstandingDecisions = new Map();
 // Automatic card opening waits until first-run Welcome has been shown and answered.
 let welcomeSettled = false, autoOpenSuppressed = false;
 // The left pane is Sources, or the tether dock in the Tether workspace; each keeps its own shown state.
@@ -273,6 +277,10 @@ function imageUrl(item, kind = 'thumb', prefetch = false, original = state.showO
 const xmpEligible = item => item.edited || item.adjusted || item.developed || item.externalEdit || item.recipe || item.developRevision > 0 || !!item.captureMetadata || Object.hasOwn(item, 'metadataOverrides');
 function fileSize(bytes) { return bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`; }
 function setStatus(text, error = false) {
+  if (text === 'Saved' && (outstandingDecisions.size || state.saveError)) {
+    error = state.saveError || [...outstandingDecisions.values()].some(fields => [...fields.values()].some(entry => entry.error));
+    text = error ? 'Save failed' : 'Saving…';
+  }
   $('save-status').textContent = text;
   $('save-status').style.color = error ? '#e99787' : '';
 }
@@ -283,13 +291,15 @@ async function leaveTether() {
   if (!confirm('Stop the tethered session and open another folder?')) return false;
   return tether.stopSession();
 }
-async function openFolder() {
+async function openFolder(includeSubfolders = false) {
   if (state.busy || state.copy.running || state.deleting || !await leaveTether()) return;
   state.busy = true;
   $('open-folder').disabled = true; $('empty-open').disabled = true;
   setStatus('Reading folder…');
   try {
-    const session = await api.chooseFolder({ recursive: state.settings.recursive });
+    const session = includeSubfolders === true
+      ? await api.openPath(state.session.folder, true)
+      : await api.chooseFolder({ recursive: state.settings.recursive });
     if (session) loadSession(session);
     else setStatus(state.session ? 'Saved' : 'Ready');
   } catch (e) { toast(e.message); setStatus('Could not open folder', true); }
@@ -300,7 +310,15 @@ function loadSession(session) {
   if(state.mode==='compare')state.mode=stageMode();
   clearTimeout(metadataTimer);
   cancelCulling();culling.metadata.clear();culling.jobs.clear();culling.scores.clear();culling.expanded.clear();culling.bursts=[];culling.byId.clear();
-  state.session = session; state.selected = session?.items[0]?.id ?? null;
+  if (!outstandingDecisions.size) decisionSessions.delete(decisionSessionKey(state.session));
+  state.session = session;
+  outstandingDecisions = decisionSessions.get(decisionSessionKey(session)) || new Map();
+  if (outstandingDecisions.size) {
+    const present = new Set(session.items.map(item => item.id));
+    for (const id of outstandingDecisions.keys()) if (!present.has(id)) outstandingDecisions.delete(id);
+    reconcileOutstandingDecisions(session.items, false);
+  }
+  renderUnsavedDecisions(); state.selected = session?.items[0]?.id ?? null;
   state.proposals = []; state.proposalsBusy = false; state.proposalsLoading = !!session && !api.server; state.proposalWarning = ''; proposalSignature = '';
   resetSelection();
   state.showOriginal = false; clearFilters(); closeMetadataFilters(); state.saveError = false; loupe.reset();
@@ -321,7 +339,6 @@ function loadSession(session) {
   if (session.warnings.length) toast(`${session.warnings.length} file or sidecar warning(s): ${session.warnings[0]}`);
   const missingHandoffs = session.items.filter(i => i.handoffMissing).length;
   if (missingHandoffs) toast(`${missingHandoffs} external edit(s) missing. Showing original photos; copy the hand-off folder alongside the photos.`);
-  if (!session.items.length) toast('No supported images found. Try including subfolders.');
   void api.externalEditProposals(session.id).then(result => {
     if (state.session?.id !== session.id) return;
     state.proposals = result.proposals; state.proposalWarning = result.warnings.join(' ');
@@ -406,8 +423,11 @@ function render(reset = false) {
   $('compare-mode').setAttribute('aria-pressed',String(state.mode==='compare'));
   const loaded = !!state.session?.items.length, test = !!testShot();
   $('empty').hidden = loaded || test;
+  renderEmptyStage();
+  $('compact-workspace').querySelector('[value=compare]').hidden = state.mode !== 'compare';
+  $('compact-workspace').value = state.mode;
   const hasProposals = state.filter === 'external' && (pendingProposals(true).length || state.proposalsLoading || state.proposalWarning);
-  $('no-matches').hidden = !loaded || !!items.length || !!hasProposals || test;
+  $('no-matches').hidden = !loaded || !!items.length || !!hasProposals || test || state.mode === 'compare' && !survey.root.hidden;
   $('review').hidden = !test && (!loaded || !items.length || !photoStage());
   $('grid').hidden = !loaded || !items.length && !hasProposals || state.mode !== 'grid';
   $('grid-size-control').hidden = !loaded || state.mode !== 'grid';
@@ -420,13 +440,7 @@ function render(reset = false) {
   const titles = { all: 'Photos', unreviewed: 'Unreviewed', pick: 'Picks', reject: 'Rejects', rated: 'Rated', external: 'External edits', trash: 'Trash' };
   $('view-title').textContent = loaded ? titles[state.filter] : 'Photos';
   $('view-count').textContent = loaded ? `${items.length}${state.marked.size > 1 ? ` · ${state.marked.size} selected` : ''}` : '';
-  const rejects = scopeItems('reject').length, trashed = scopeItems('trash').length, locked = testBlocksCulling() || state.busy || state.copy.running || state.deleting;
-  $('delete-rejects').hidden = !loaded || state.filter !== 'reject' || !rejects;
-  $('delete-rejects').disabled = locked;
-  $('delete-rejects').querySelector('span').textContent = `Delete ${rejects} reject${rejects === 1 ? '' : 's'}`;
-  $('trash-restore').hidden = !loaded || state.filter !== 'trash' || !trashed;
-  $('empty-trash').hidden = !loaded || state.filter !== 'trash' || !trashed;
-  $('trash-restore').disabled = $('empty-trash').disabled = locked;
+  renderBulkActions();
   if (deletePrompt && (state.session?.id !== deletePrompt.session || viewKey() !== deletePrompt.view || !sameIds(deletePrompt.ids))) hideDeletePrompt();
   renderSelection();
   renderCulling();
@@ -827,7 +841,7 @@ function navigate(delta, extend = false) {
 // Grid, Review and Develop leave the Tether workspace; Compare inside it (a pinned reference) keeps it.
 function setMode(mode) {
   if(state.mode==='compare' && mode!=='compare')survey.unpin();
-  if(mode==='compare' && state.mode!=='compare' && !survey.open(selection().map(i=>i.id),filtered()))return toast('Select at least two photos to compare.');
+  if(mode==='compare' && state.mode!=='compare' && !survey.open(state.marked.size > 1 ? [...state.marked] : selection().map(i=>i.id),filtered()))return toast('Select at least two photos to compare.');
   if (!['review','tether'].includes(mode) && state.fullscreen) void setFullscreen(false);
   loupe.cancelHand(); state.generation++;
   const studio = mode === 'compare' ? state.studio : mode === 'tether', changed = studio !== state.studio;
@@ -841,39 +855,169 @@ function nextSurvivor(items, ids) {
   for (let i = 0; i < items.length; i++) if (ids.has(items[i].id)) last = i;
   return items.slice(last + 1).find(i => !ids.has(i.id)) ?? items.slice(0, last).reverse().find(i => !ids.has(i.id));
 }
-async function decide(patch) {
+async function decide(patch, target) {
   if (guardStageCull()) return;
-  const targets = state.mode==='compare' ? (photo()?[photo()]:[]) : selection();
+  const targets = target ? [target] : state.mode==='compare' ? (photo()?[photo()]:[]) : selection();
   if (!targets.length) return;
-  const sessionId = state.session.id;
   const items = filtered(), ids = new Set(targets.map(i => i.id)), nextId = nextSurvivor(items, ids)?.id;
+  const saving = saveDecision(targets, patch);
   for (const item of targets) Object.assign(item, patch, { edited: true });
   if('trashed' in patch)regroupBursts();
   if ('trashed' in patch || state.mode!=='compare' && targets.length === 1 && patch.flag && state.settings.autoAdvance && nextId) {
     state.selected = nextId ?? null; resetSelection();
   }
-  state.pendingSaves++; setStatus('Saving…');
   render();
+  await saving;
+}
+
+function decisionLabel(key, value) {
+  if (key === 'flag') return { pick: 'Pick', reject: 'Reject', none: 'Clear flag' }[value];
+  if (key === 'rating') return value ? `${value}-star rating` : 'Clear rating';
+  if (key === 'trashed') return value ? 'Move to Trash' : 'Restore from Trash';
+  return value ? (state.settings.colors?.find(color => color.id === value)?.name || 'Color') + ' label' : 'Clear color label';
+}
+
+function decisionSessionKey(session) {
+  return session && JSON.stringify([session.folder, !!session.recursive]);
+}
+
+function reconcileOutstandingDecisions(items, optimistic = true) {
+  if (!outstandingDecisions.size) return;
+  for (const item of items) {
+    const fields = outstandingDecisions.get(item.id);
+    if (!fields) continue;
+    for (const [key, entry] of fields) {
+      if (entry.fingerprint !== item.fingerprint) fields.delete(key);
+      else {
+        entry.name = item.name;
+        if (!optimistic) entry.reloaded = true;
+        if (optimistic && entry.previous.includes(item[key])) item[key] = entry.value;
+      }
+    }
+    if (!fields.size) outstandingDecisions.delete(item.id);
+  }
+}
+
+function renderUnsavedDecisions() {
+  const area = $('unsaved-decisions'), rows = [];
+  for (const [id, fields] of outstandingDecisions) {
+    const groups = new Map();
+    for (const [key, entry] of fields) {
+      if (!entry.error) continue;
+      const group = groups.get(entry.operation) || [];
+      group.push([key, entry]); groups.set(entry.operation, group);
+    }
+    for (const entries of groups.values()) {
+      const entry = entries[0][1], row = workspaceNode('div'), retry = workspaceNode('button', entry.saving ? 'Retrying…' : 'Retry save');
+      const labels = entries.map(([key, edit]) => decisionLabel(key, edit.value)).join(', ');
+      const cause = /disk full|no space|ENOSPC/i.test(entry.error) ? 'Free up space, then retry.' : entry.error;
+      row.append(workspaceNode('span', `${labels} for ${entry.name} is unsaved. ${cause}`), retry);
+      retry.dataset.paletteAction = 'retry-' + entry.operation + id;
+      retry.type = 'button'; retry.className = 'button quiet'; retry.dataset.operation = entry.operation + id;
+      retry.setAttribute('aria-label', `Retry save for ${entry.name}: ${labels}`);
+      retry.setAttribute('aria-disabled', String(entry.saving));
+      retry.onclick = () => {
+        if (entry.saving) return;
+        const item = state.session?.items.find(photo => photo.id === id);
+        if (item) void saveDecision([item], Object.fromEntries(entries.map(([key, edit]) => [key, edit.value])), entry.operation);
+      };
+      rows.push(row);
+    }
+  }
+  const focused = area.contains(document.activeElement) && document.activeElement.dataset.operation;
+  area.replaceChildren(...rows); area.hidden = !rows.length;
+  if (focused) {
+    const buttons = [...area.querySelectorAll('button')];
+    (buttons.find(button => button.dataset.operation === focused) || buttons[0] || $('toggle-sidebar')).focus();
+  }
+}
+
+async function saveDecision(targets, patch, retryId) {
+  const session = state.session, sessionKey = decisionSessionKey(session), ledger = outstandingDecisions;
+  const operation = { id: retryId || `${editClient}-${++editSequence}` }, writes = [];
+  decisionSessions.set(sessionKey, ledger);
+  if (retryId) operation.previous = {};
+  for (const item of targets) {
+    const fields = ledger.get(item.id) || new Map();
+    ledger.set(item.id, fields);
+    for (const [key, value] of Object.entries(patch)) {
+      const entry = retryId ? fields.get(key) : {
+        id: item.id, name: item.name, fingerprint: item.fingerprint, modified: item.modified,
+        operation: operation.id, previous: [...new Set([...(fields.get(key)?.previous || []), item[key]])], value
+      };
+      if (retryId) {
+        operation.previous[key] = entry.previous;
+        if (entry.reloaded || key === 'trashed') operation.modified = entry.modified;
+      }
+      entry.saving = true; fields.set(key, entry);
+      writes.push({ key, entry });
+    }
+  }
+  state.pendingSaves++; setStatus('Saving…'); renderUnsavedDecisions();
+  let failure, saved;
   try {
-    if (targets.length > 1) await api.decideMany(sessionId, [...ids], patch);
-    else await api.decide(sessionId, targets[0].id, patch);
-  } catch (e) { state.saveError = true; toast(`Could not save: ${e.message}`); }
+    if (targets.length > 1) saved = await api.decideMany(session.id, targets.map(item => item.id), patch, operation);
+    else saved = await api.decide(session.id, targets[0].id, patch, operation);
+  } catch (error) { failure = error.message || String(error); }
   finally {
     state.pendingSaves--;
-    if ($('export-dialog').open) renderCopyOptions();
-    if (!state.pendingSaves) setStatus(state.saveError ? 'Save failed' : 'Saved', state.saveError);
+    if (saved && ledger === outstandingDecisions) {
+      const updates = new Map((saved.items || [saved]).map(result => [result.id, result]));
+      for (const item of targets) {
+        const revision = updates.get(item.id)?.modified;
+        if (revision === undefined) continue;
+        item.modified = Math.max(item.modified || 0, revision);
+      }
+    }
+    for (const { key, entry } of writes) {
+      const fields = ledger.get(entry.id);
+      if (fields?.get(key) !== entry) continue;
+      if (failure) { entry.error = failure; entry.saving = false; }
+      else {
+        fields.delete(key);
+        if (retryId && ledger === outstandingDecisions && saved) {
+          const item = state.session?.items.find(photo => photo.id === entry.id);
+          if (item) {
+            item[key] = saved[key];
+            if (saved[key] !== entry.value) toast(`Kept the newer decision for ${item.name}.`);
+          }
+        }
+      }
+      if (!fields.size) ledger.delete(entry.id);
+    }
+    if (!ledger.size && decisionSessions.get(sessionKey) === ledger) decisionSessions.delete(sessionKey);
+    if (ledger === outstandingDecisions) {
+      renderUnsavedDecisions();
+      if (retryId) render(); else renderBulkActions();
+      if ($('export-dialog').open) renderCopyOptions();
+    }
+    if (!state.pendingSaves && state.session) setStatus('Saved');
   }
+}
+
+function retireDecisionFields(id, keys) {
+  const fields = outstandingDecisions.get(id);
+  if (!fields) return;
+  for (const key of keys) fields.delete(key);
+  if (!fields.size) outstandingDecisions.delete(id);
 }
 
 async function history(direction) {
   if (!state.session) return;
   try {
     const session = state.session;
-    const result = await api.history(session.id, direction);
+    const result = await api.history(session.id, direction, true);
     if (state.session !== session) return;
     if (!result) return toast(direction === 'redo' ? 'Nothing to redo' : 'Nothing to undo');
     const items = result.items || [result], byId = new Map(state.session.items.map(i => [i.id, i]));
-    for (const item of items) Object.assign(byId.get(item.id), item);
+    for (const item of items) {
+      const {changedFields, ...snapshot} = item;
+      retireDecisionFields(item.id, changedFields || Object.keys(snapshot));
+      const target = byId.get(item.id);
+      if (target) Object.assign(target, snapshot);
+    }
+    reconcileOutstandingDecisions(state.session.items);
+    renderUnsavedDecisions();
     regroupBursts();
     state.selected = items[0].id; state.anchor = state.selected; state.marked = new Set(items.map(i => i.id));
     render(); setStatus('Saved');
@@ -888,12 +1032,53 @@ api.onSettings(() => hideDeletePrompt());
 api.onSettings(() => { if (!document.querySelector('dialog[open]')) commands.execute('settings'); });
 document.body.classList.toggle('platform-mac', api.platform === 'darwin');
 if (api.platform === 'darwin') document.querySelectorAll('#help-dialog kbd').forEach(key => { key.textContent = key.textContent.replaceAll('Ctrl', '⌘').replaceAll('Alt', '⌥'); });
-$('open-folder').onclick = openFolder; $('empty-open').onclick = openFolder;
+function renderEmptyStage() {
+  if ($('empty').hidden) return;
+  const studio = state.studio && tether;
+  let title = 'Open a folder or a camera card to start culling', action = 'Open folder';
+  let hint = 'Ctrl/Cmd+O opens a folder · Ctrl/Cmd+K finds any command';
+  if (studio) {
+    if (!api.canTether) {
+      title = 'Camera control needs the desktop app'; action = ''; hint = 'You can set up naming and composition in the Tether tools.';
+    } else if (!tether.active()) {
+      title = 'Start a tethered shoot'; action = tether.lastResumable() ? 'Resume last session' : 'Start session…';
+      hint = tether.lastResumable()?.name || 'Choose a capture folder to begin.';
+    } else {
+      const reason = tether.canCapture();
+      title = reason ? tether.connected() ? 'Capture on hold' : 'Waiting for a camera' : 'Ready for the first capture';
+      const shortcut = tether.host.shutterShortcut();
+      hint = reason || (shortcut === 'Unassigned' ? 'Use Capture in the Tether tools.' : `Press ${shortcut} or use Capture in the Tether tools.`);
+      action = '';
+    }
+  } else if (state.session) {
+    title = 'No photos in this folder'; action = 'Choose another folder'; hint = state.session.folder;
+  }
+  $('empty').querySelector('.empty-title').textContent = title;
+  $('empty').querySelector('.empty-hint').textContent = hint;
+  $('empty-open').hidden = !action;
+  $('empty-open').querySelector('span').textContent = action;
+  $('empty-subfolders').hidden = !!studio || !state.session || state.session.recursive || state.session.removable;
+}
+$('open-folder').onclick = () => openFolder();
+$('empty-open').onclick = () => {
+  if (!state.studio) return openFolder();
+  const last = tether.lastResumable();
+  if (!tether.active() && api.canTether) return last ? tether.resume(last.shootId) : tether.openStart();
+};
+$('empty-subfolders').onclick = () => {
+  if (state.session && !state.session.recursive && !state.session.removable && !state.studio) void openFolder(true);
+};
+$('compact-workspace').onchange = event => setMode(event.target.value);
+if (api.server) $('compact-workspace').querySelector('[value=develop]').remove();
 $('review-mode').onclick = () => setMode('review'); $('grid-mode').onclick = () => setMode('grid'); $('develop-mode').onclick = () => setMode('develop'); $('tether-mode').onclick = () => setMode('tether');
 const filterPanel = $('metadata-filters');
 function clearFilters() {
-  state.filter = 'all'; state.query = ''; state.colorFilter = ''; state.metadataFilters = {};
-  $('search').value = ''; $('color-filter').value = '';
+  state.filter = 'all'; state.query = ''; $('search').value = '';
+  clearMetadataFilters();
+}
+function clearMetadataFilters() {
+  state.colorFilter = ''; state.metadataFilters = {};
+  $('color-filter').value = '';
   for (const control of filterPanel.querySelectorAll('[name]')) control.value = '';
 }
 function closeMetadataFilters() {
@@ -912,6 +1097,29 @@ function renderMetadataFilters() {
   renderIndexStatus();
   const count = Object.keys(state.metadataFilters).length + Number(!!state.colorFilter);
   $('filter-count').hidden = !count; $('filter-count').textContent = count;
+  const chips = $('active-metadata-filters');
+  const entries = Object.entries(state.metadataFilters);
+  if (state.colorFilter) entries.push(['color',state.colorFilter]);
+  const labels = { focalMin:'Min focal length',focalMax:'Max focal length',isoMin:'Min ISO',isoMax:'Max ISO',fMin:'Min aperture',fMax:'Max aperture',shutterMin:'Min shutter',shutterMax:'Max shutter',dateFrom:'From',dateTo:'Through' };
+  const chipsData = entries.map(([name,value]) => {
+    const field = name === 'color' ? $('color-filter') : filterPanel.querySelector(`[name="${name}"]`);
+    const label = (field?.value === value && field.selectedOptions?.[0]?.textContent) || (labels[name] ? `${labels[name]} ${value}` : value);
+    return [name,label];
+  });
+  const signature = JSON.stringify(chipsData);
+  if (chips.dataset.signature !== signature) {
+    chips.dataset.signature = signature; chips.hidden = !chipsData.length;
+    chips.replaceChildren(...chipsData.map(([name,label]) => {
+      const button=document.createElement('button'); button.className='button quiet'; button.textContent=label+' ×';
+      button.dataset.paletteAction = 'remove-filter-' + name;
+      button.setAttribute('aria-label','Remove '+label+' filter');
+      button.onclick=()=>{
+        if (name==='color') { state.colorFilter=''; $('color-filter').value=''; }
+        else { const filters = { ...state.metadataFilters }; delete filters[name]; state.metadataFilters = filters; filterPanel.querySelector(`[name="${name}"]`).value=''; }
+        $('grid').scrollTop=0; render(true); (chips.firstElementChild || $('metadata-filter-toggle')).focus();
+      }; return button;
+    }));
+  }
   if (filterPanel.hidden) return;
   const facets = { camera: new Set(), lens: new Set(), date: new Set(), keyword: new Set() };
   for (const item of state.session?.items || []) {
@@ -949,7 +1157,7 @@ filterPanel.addEventListener('input', event => {
   if (value) filters[name] = value; else delete filters[name];
   state.metadataFilters = filters; $('grid').scrollTop = 0; render(true);
 });
-$('clear-metadata-filters').onclick = () => { clearFilters(); render(true); };
+$('clear-metadata-filters').onclick = () => { clearMetadataFilters(); render(true); };
 
 const iptc = $('iptc-form'), dirtyFields = new Set();
 let editorSelection = '', chipSignature = '', savingIptc = false;
@@ -1278,6 +1486,8 @@ function removeFromSession(ids) {
   }
   state.session.items = state.session.items.filter(i => !gone.has(i.id));
   regroupBursts();
+  for (const id of gone) outstandingDecisions.delete(id);
+  renderUnsavedDecisions();
   for (const id of gone) { gridNodes.get(id)?.remove(); gridNodes.delete(id); filmNodes.delete(id); }
   $('review-image').dataset.itemId = ''; $('review-image').dataset.stamp = '';
   $('folder-detail').textContent = `${state.session.items.length} photos`;
@@ -1294,6 +1504,18 @@ function applyTetherDelta(delta) {
   if (gone.has(state.selected)) { state.selected = nextSurvivor(before, gone)?.id ?? null; resetSelection(); }
   state.selected = move(state.selected); state.anchor = move(state.anchor); state.marked = new Set([...state.marked].map(move).filter(id => !gone.has(id)));
   for (const map of [culling.metadata, culling.scores]) for (const [from, to] of remap) if (map.has(from)) { if (!map.has(to)) map.set(to, map.get(from)); map.delete(from); }
+  for (const [from, to] of remap) {
+    const fields = outstandingDecisions.get(from);
+    if (!fields) continue;
+    const merged = outstandingDecisions.get(to) || new Map(), item = delta.upserts?.find(photo => photo.id === to);
+    for (const [key, entry] of fields) {
+      entry.id = to;
+      if (item) { entry.fingerprint = item.fingerprint; entry.name = item.name; }
+      if (!merged.has(key)) merged.set(key, entry);
+    }
+    outstandingDecisions.set(to, merged); outstandingDecisions.delete(from);
+  }
+  for (const id of gone) outstandingDecisions.delete(id);
   survey.remap(remap);
   let refresh = false;
   const items = state.session.items.filter(i => !removed.has(i.id) && !remap.has(i.id) || upserted.has(i.id)), byId = new Map(items.map(i => [i.id, i]));
@@ -1303,6 +1525,7 @@ function applyTetherDelta(delta) {
     if ((item.contentRev || 0) !== (patch.contentRev || 0)) { refresh = true; gridNodes.get(item.id)?.remove(); gridNodes.delete(item.id); filmNodes.delete(item.id); }
     Object.assign(item, patch);
   }
+  reconcileOutstandingDecisions(items); renderUnsavedDecisions();
   state.session.items = items.sort((a, b) => nameOrder.compare(a.name, b.name));
   regroupBursts();
   $('folder-detail').textContent = `${items.length} photos`; $('export').disabled = !items.length || state.deleting;
@@ -1314,6 +1537,7 @@ function replaceTetherLibrary(session) {
   if (state.session?.id !== session.id) return;
   const ids = new Set(session.items.map(i => i.id));
   for (const id of [...gridNodes.keys()]) if (!ids.has(id)) { gridNodes.get(id).remove(); gridNodes.delete(id); filmNodes.delete(id); }
+  reconcileOutstandingDecisions(session.items, false); renderUnsavedDecisions();
   state.session.items = session.items; state.session.warnings = session.warnings ?? state.session.warnings;
   if (!ids.has(state.selected)) { state.selected = filtered()[0]?.id ?? null; resetSelection(); }
   regroupBursts(); $('folder-detail').textContent = `${session.items.length} photos`; $('export').disabled = !session.items.length;
@@ -1371,9 +1595,24 @@ function renderDeleteMode() {
 }
 // The delete dialog empties either the Rejects view or PhotoCull's Trash.
 let deleteScope = 'reject';
+function renderBulkActions() {
+  const loaded = !!state.session?.items.length;
+  const rejects = scopeItems('reject').length, trashed = scopeItems('trash').length, locked = testBlocksCulling() || state.busy || state.copy.running || state.deleting;
+  $('delete-rejects').hidden = !loaded || state.filter !== 'reject' || !rejects;
+  $('delete-rejects').disabled = locked;
+  $('delete-rejects').querySelector('span').textContent = `Delete ${rejects} reject${rejects === 1 ? '' : 's'}`;
+  $('trash-restore').hidden = !loaded || state.filter !== 'trash' || !state.session.items.some(item => item.trashed);
+  $('empty-trash').hidden = !loaded || state.filter !== 'trash' || !trashed;
+  $('trash-restore').disabled = $('empty-trash').disabled = locked;
+}
+
 function scopeItems(scope) {
   const items = state.session?.items ?? [];
-  return scope === 'trash' ? items.filter(i => i.trashed) : items.filter(i => i.flag === 'reject' && !i.trashed);
+  return items.filter(item => {
+    const pending = outstandingDecisions.get(item.id);
+    if (pending?.has('trashed')) return false;
+    return scope === 'trash' ? item.trashed : item.flag === 'reject' && !item.trashed && !pending?.has('flag');
+  });
 }
 $('delete-rejects').onclick = () => openDeleteDialog('reject');
 $('empty-trash').onclick = () => openDeleteDialog('trash');
@@ -1671,10 +1910,10 @@ $('edit-external').onclick=()=>{void developView.openBatch().catch(e=>toast(e.me
 function menuItem(text,run,id) {const el=document.createElement('button');el.type='button';el.className='menu-item';el.setAttribute('role','menuitem');el.tabIndex=-1;el.textContent=text;if(id)el.id=id;el.onclick=()=>Promise.resolve().then(run).catch(e=>toast(e.message));return el;}
 function menuSeparator() {const el=document.createElement('div');el.className='menu-separator';el.setAttribute('role','separator');return el;}
 function closeMenus(except) {for(const m of menus)if(m!==except&&!m.menu.hidden){m.menu.hidden=true;m.button.setAttribute('aria-expanded','false');}}
-function bindMenu(button,menu) {
+function bindMenu(button,menu,prepare) {
   const entry={button,menu};menus.push(entry);
   const items=()=>[...menu.querySelectorAll('[role=menuitem]:not(:disabled)')];
-  const open=index=>{if(button.disabled)return;closeMenus(entry);menu.hidden=false;button.setAttribute('aria-expanded','true');const list=items();(list[(index+list.length)%list.length]||menu).focus();};
+  const open=index=>{if(button.disabled)return;prepare?.();closeMenus(entry);menu.hidden=false;button.setAttribute('aria-expanded','true');const list=items();(list[(index+list.length)%list.length]||menu).focus();};
   const close=()=>{menu.hidden=true;button.setAttribute('aria-expanded','false');button.focus();};
   menu.tabIndex=-1;
   button.onclick=()=>menu.hidden?open(0):close();
@@ -1692,6 +1931,25 @@ function bindMenu(button,menu) {
   });
 }
 document.addEventListener('pointerdown',e=>{for(const m of menus)if(!m.menu.hidden&&!m.menu.contains(e.target)&&!m.button.contains(e.target))closeMenus();});
+bindMenu($('output-button'), $('output-menu'), () => {
+  const actions = [];
+  function add(title, run, disabled = false) {
+    const item = menuItem(title, run);
+    item.disabled = disabled;
+    actions.push(item);
+  }
+  if (!api.server) add('Export finished images…', () => imageExport.open(), $('image-export').disabled);
+  add('Copy picks…', () => commands.execute('copy-picks'), $('export').disabled);
+  add('Contact Sheet…', () => contactSheet.open(), $('contact-sheet').disabled);
+  add('Play slideshow', () => slideshow.open(), $('start-slideshow').disabled);
+  if (!api.server) {
+    actions.push(menuSeparator());
+    for (const editor of state.settings.editors || []) add(`Edit in ${editor.name}…`, () => developView.openBatch(editor.id), $('edit-external').disabled);
+    if (!state.settings.editors?.length) add('Edit in…', () => developView.openBatch(), $('edit-external').disabled);
+    add('Configure editors…', () => openSettings('editors'));
+  }
+  $('output-menu').replaceChildren(...actions);
+});
 bindMenu($('export-menu-button'),$('export-menu'));
 bindMenu($('external-editor-menu'),$('external-editor-list'));
 bindMenu($('develop-recipe-menu-button'),$('develop-recipe-menu'));
@@ -1774,10 +2032,20 @@ palette.innerHTML='<button type="button" id="command-close" class="close-dialog"
 document.body.append(palette);$('command-close').onclick=()=>palette.close();
 let paletteRows=[],paletteIndex=0,paletteFocus;
 function openPalette(query='') {if(document.querySelector('dialog[open]'))return;paletteFocus=document.activeElement;palette.showModal();$('command-query').value=query;paletteIndex=0;drawPalette();$('command-query').focus();}
+function contextualCommands(query) {
+  const buttons = [...document.querySelectorAll('[data-palette-action]')];
+  return buttons.filter(button => !button.closest('[hidden]') && !button.matches(':disabled,[aria-disabled=true]'))
+    .map(button => ({
+      id: button.dataset.paletteAction, category: button.dataset.paletteCategory || 'Photo',
+      title: button.getAttribute('aria-label') || button.textContent,
+      run: () => button.click()
+    })).filter(row => PhotoCullCommands.fuzzy(query, row.title + ' ' + row.category));
+}
 function drawPalette() {
   const query=$('command-query').value,findPhoto=query.startsWith('>');
   paletteRows=findPhoto?(state.session?.items||[]).filter(item=>!item.trashed&&PhotoCullCommands.fuzzy(query.slice(1),item.name)).slice(0,60).map(item=>({id:'photo-'+item.id,title:item.name,category:'Photo',run:()=>{clearFilters();state.selected=item.id;resetSelection();render(true);}})):
     [...commands.search(query,recentCommands).filter(offered).map(command=>({...command,disabled:!PhotoCullCommands.active(command,commandContext())||!command.enabled(),run:()=>commands.execute(command.id)})),
+     ...contextualCommands(query),
      ...(api.server?[]:state.settings.editors||[]).map(e=>({id:'edit-with-'+e.id,title:`Edit in ${e.name}…`,category:'Files',disabled:$('edit-external').disabled,run:()=>developView.openBatch(e.id)})).filter(row=>PhotoCullCommands.fuzzy(query,row.title+' '+row.category)>0)].slice(0,60);
   paletteIndex=Math.min(paletteIndex,Math.max(0,paletteRows.length-1));
   $('command-results').replaceChildren(...paletteRows.map((row,index)=>{
@@ -2127,16 +2395,17 @@ $('burst-cancel').onclick=()=>{$('burst-dialog').close();burstPrompt=null;};
 $('burst-dialog').addEventListener('cancel',()=>{burstPrompt=null;});
 $('burst-confirm').onclick=async()=>{
   const prompt=burstPrompt;if(!prompt || prompt.session!==state.session?.id)return;$('burst-confirm').disabled=true;
-  try {const result=await api.keepSharpest(prompt.session,prompt.ids);if(state.session?.id===prompt.session){for(const patch of result.items)Object.assign(state.session.items.find(i=>i.id===patch.id),patch);state.selected=result.best;resetSelection();render();toast('Kept the sharpest frame · Undo restores the whole burst');}$('burst-dialog').close();burstPrompt=null;}
+  try {const result=await api.keepSharpest(prompt.session,prompt.ids);if(state.session?.id===prompt.session){for(const patch of result.items){retireDecisionFields(patch.id,['flag']);Object.assign(state.session.items.find(i=>i.id===patch.id),patch);}renderUnsavedDecisions();state.selected=result.best;resetSelection();render();toast('Kept the sharpest frame · Undo restores the whole burst');}$('burst-dialog').close();burstPrompt=null;}
   catch(error){toast(error.message);}finally{$('burst-confirm').disabled=false;}
 };
-survey=PhotoCullSurvey.create({api,session:()=>state.session?.id,revision:()=>`${state.previewRevision}:${state.showOriginal}`,items:filtered,item:id=>state.session?.items.find(i=>i.id===id),url:imageUrl,metadata:cullingMetadata,focus:focusOf,overlay:()=>!!state.settings.focusOverlay,
+survey=PhotoCullSurvey.create({api,session:()=>state.session?.id,revision:()=>`${state.previewRevision}:${state.showOriginal}`,items:filtered,library:()=>state.session?.items || [],item:id=>state.session?.items.find(i=>i.id===id),url:imageUrl,metadata:cullingMetadata,focus:focusOf,overlay:()=>!!state.settings.focusOverlay,
   activate:id=>{if(state.selected!==id){state.selected=id;renderSelection();}},
-  decide:async(id,patch)=>{if(state.busy || state.deleting)return;const session=state.session.id;try{const result=await api.decide(session,id,patch);if(state.session?.id===session){Object.assign(state.session.items.find(i=>i.id===id),result);render();}}catch(error){toast(error.message);}}
+  decide:(id,patch)=>{const item=state.session?.items.find(photo=>photo.id===id);if(item && !state.busy && !state.deleting)return decide(patch,item);}
+
 });
 const narrowLayout=()=>matchMedia('(max-width: 900px)').matches;
 const inspectorShown=()=>narrowLayout()?document.body.classList.contains('mobile-details'):layoutPrefs.details;
-tether=PhotoCullTether.create({api,toast,
+tether=PhotoCullTether.create({api,toast,emptyChanged:renderEmptyStage,shutterShortcut:()=>shortcutLabel(commands.commands.find(c=>c.id==='tether-shutter')),
   settings:()=>state.settings,saveSettings:async patch=>{state.settings=await api.settings(patch);return state.settings;},
   session:()=>state.session,mode:()=>state.mode,photo,item:id=>state.session?.items.find(i=>i.id===id),original:()=>state.showOriginal,imageUrl:(item,kind)=>imageUrl(item,kind),
   loadSession,applyDelta:applyTetherDelta,replaceLibrary:replaceTetherLibrary,survey:()=>survey,flushDevelop:()=>developView.flush(),

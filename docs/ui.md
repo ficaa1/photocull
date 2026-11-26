@@ -5,7 +5,7 @@ PhotoCull is a dark, keyboard-first photo tool. The photograph is the brightest 
 ## Layout
 
 ```text
-[≡] PhotoCull  [Open folder|▾]  path…     [Grid|Review|Develop]     [Copy picks] [Edit in X|▾] [Export…] [≡]
+[≡] PhotoCull  [Open folder|▾]  path…     [Grid|Review|Develop|Tether]     [Copy picks] [Edit in X|▾] [Export…] [≡]
 [sources   ][Photos 15  Expand burst  Keep sharpest     ● Focus ready  AF  Compare | colors  search ][details  ]
 [cards     ][                                                                               ][navigator]
 [filters   ][                              photograph                                       ][capture  ]
@@ -19,7 +19,7 @@ PhotoCull is a dark, keyboard-first photo tool. The photograph is the brightest 
 - **Status bar**: save status on the left; in Grid, the thumbnail size slider on the right, so it is available at every window width.
 - **Sidebars**: Sources (196 px) and Details (248 px), each hidden with B / I. Develop replaces Details with its own panel.
 
-Labels give way before controls as the window narrows. At 1320 px the analysis status keeps only its dot (the text stays in its title and live region) and Compare becomes an icon, so the toolbar stays on one row at 1280 px; search shrinks before anything wraps. Copy picks and AF become icon buttons at 1200 px; at 1150 px the path and view-switch labels go, Pause/Resume/Retry analysis becomes an icon button and the colour filter narrows to 100 px. If the right-hand group still cannot fit at its minimum it moves below the title as one group, and the panes become overlays below 900 px. Hidden labels fall back to each button's title as its accessible name.
+At 1320 px the toolbar compacts routine analysis status and Compare. Analysis failures keep their count and Retry analysis label. At 1150 px the app bar hides the path and uses workspace icons. At 900 px and below a named workspace selector and the primary Output menu share the bar with Open folder and the pane toggles. Output includes finished-image export, copying picks, slideshow, contact sheet and configured editors where available. The workspace selector identifies an active Live View stream.
 
 ## Tokens
 

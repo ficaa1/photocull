@@ -44,11 +44,18 @@ PhotoCullExport.init = context => {
     await page.evaluate(folder => window.loadTestFolder(folder, false), photos);
     await page.keyboard.press('Control+a'); await page.keyboard.press('p');
     await page.waitForFunction(() => document.querySelector('#count-pick').textContent === '2');
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Control+Shift+E');
+    await page.locator('#image-export-dialog').waitFor();
+    assert.equal(await page.locator('#image-export-scope').inputValue(), 'selection');
+    assert.equal(await page.locator('#image-export-start').textContent(), 'Export 2 JPEGs');
+    await page.locator('#image-export-close').click();
     await page.locator('.film-card[aria-label="a.ARW"]').click();
     const size = await page.evaluate(async () => (await photocull.previewStatus(state.session.id, state.selected, 'preview')).size);
     assert.equal(size, null);
     await page.keyboard.press('Control+Shift+E');
     await page.locator('#image-export-dialog').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#image-export-scope').inputValue(), 'picks');
     assert.match(await page.locator('#image-export-counts').innerText(), /2 photos/);
     await page.locator('#image-export-destination').click();
     await page.locator('#image-export-format').selectOption('jxl');
