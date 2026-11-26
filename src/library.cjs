@@ -2,7 +2,8 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const { mapLimit } = require('./queue.cjs');
-const { DEFAULTS } = require('./preferences.cjs');
+const { descriptive, textFields } = require('./renderer/metadata-filter.js');
+const { DEFAULTS, text } = require('./preferences.cjs');
 const { readXmp, writeXmp, atomicWrite, sidecarPaths, portableDevelop, resolveDevelop, shouldWriteSidecars, normalizeCaptureMetadata } = require('./xmp.cjs');
 const { developState, checkSettings } = require('./develop.cjs');
 
@@ -78,7 +79,12 @@ function insertSorted(items, item) {
 function captureMetadata(value) { try { return value ? normalizeCaptureMetadata(value) : undefined; } catch { return undefined; } }
 const captureState = c => ({ exposureId: typeof c.exposureId === 'string' ? c.exposureId : undefined, ordinal: Number.isSafeInteger(c.ordinal) ? c.ordinal : undefined,
   contentRev: Number.isSafeInteger(c.contentRev) && c.contentRev > 0 ? c.contentRev : 0, captureMetadata: captureMetadata(c.captureMetadata), captureDevelop: c.captureDevelop === true });
-const restore = (item, cached, folder) => Object.assign(item, decision(cached), { modified: cached.modified || 0, edited: cached.edited ?? (cached.flag !== 'none' || cached.rating > 0), develop: developState(resolveDevelop(cached.develop, item.path, folder)), ...captureState(cached) });
+const metadataState = item => Object.hasOwn(item, 'metadataOverrides') ? { metadataOverrides: item.metadataOverrides } : {};
+const restore = (item, cached, folder) => Object.assign(item, decision(cached), captureState(cached), metadataState(cached), {
+  modified: cached.modified || 0, edited: cached.edited ?? (cached.flag !== 'none' || cached.rating > 0),
+  develop: developState(resolveDevelop(cached.develop, item.path, folder)), cardDecisionTime: cached.cardDecisionTime,
+  sidecarMetadata: Object.hasOwn(cached, 'metadataOverrides') ? cached.sidecarMetadata : item.sidecarMetadata
+});
 // Session JSON fields that tie a photo to a tethered exposure.
 const captureFields = i => ({ ...(i.exposureId ? { exposureId: i.exposureId, ordinal: i.ordinal } : {}), ...(i.contentRev ? { contentRev: i.contentRev } : {}),
   ...(i.captureMetadata ? { captureMetadata: i.captureMetadata } : {}), ...(i.captureDevelop ? { captureDevelop: true } : {}) });
@@ -97,10 +103,10 @@ function unindexItem(s, item) {
 const developSummary = develop => ({ developed: !!develop?.tiff && !develop?.missing, externalEdit: !!develop?.editedBy && !develop?.missing, editedBy: develop?.editedBy ?? null, tiff: develop?.tiff ?? null, handoffLinked: !!develop?.handoffs.some(r => r.path === develop.tiff && r.linked), handoffMissing: !!develop?.missing, developRevision: develop?.revision ?? 0, recipe: develop?.recipe ?? null, adjusted: !!develop?.settings });
 
 class Library {
-  constructor(dataDir, { settings = () => DEFAULTS, recipeSettings = () => null, onWarning = () => {}, keepSessions = 1, linkedHandoffs = () => new Set(), pairingExclusions = () => [], captureExposure = () => null } = {}) {
+  constructor(dataDir, { settings = () => DEFAULTS, recipeSettings = () => null, onWarning = () => {}, keepSessions = 1, linkedHandoffs = () => new Set(), pairingExclusions = () => [], captureExposure = () => null, embeddedMetadata = async () => ({}) } = {}) {
     // The desktop app has one open folder. The server keeps several, one per
     // folder, with a stable id so every browser shares it.
-    this.keepSessions = keepSessions;
+    this.keepSessions = keepSessions; this.embeddedMetadata = embeddedMetadata;
     this.settings = settings; this.recipeSettings = recipeSettings; this.onWarning = onWarning; this.linkedHandoffs = linkedHandoffs; this.pairingExclusions = pairingExclusions; this.captureExposure = captureExposure;
     this.ingests = Promise.resolve();
     this.dataDir = dataDir;
@@ -140,8 +146,9 @@ class Library {
     const items = groupFiles(stats.filter(Boolean), { exclude: exclusionMap(this.pairingExclusions(folder)) });
     let imported = false; const unsynced = [];
     const store = path.join(this.dataDir, 'sessions', hash(folder + ':' + recursive) + '.json');
-    const previous = this.keepSessions > 1 ? [...this.sessions.values()].find(s => s.store === store) : null;
-    if (previous) await this.writes.catch(() => {});
+    const existing = [...this.sessions.values()].find(s => s.store === store);
+    const previous = this.keepSessions > 1 ? existing : null;
+    if (existing) await this.writes.catch(() => {});
     let saved = {};
     try { saved = JSON.parse(await fs.readFile(store, 'utf8')).decisions ?? {}; }
     catch (e) { if (e.code !== 'ENOENT') warnings.push('Saved session could not be read; existing XMP will be used.'); }
@@ -177,9 +184,16 @@ class Library {
       if (existingSidecars.length) item.sidecar = existingSidecars[0].file;
       if (sidecars.length) {
         const winner = sidecars[0];
+        if (!valid || winner.modified > item.modified || !Object.hasOwn(cached, 'metadataOverrides')) item.sidecarMetadata = winner.state.metadata;
         if (!valid || winner.modified > item.modified) {
           const state = winner.state;
           Object.assign(item, decision({ ...item, ...state }), { modified: winner.modified });
+          // A card's automatic rating write can be newer than session-only IPTC edits.
+          const localCardEdit = removable && valid && Object.hasOwn(cached, 'metadataOverrides') && state.modified === (cached.cardDecisionTime ?? cached.modified);
+          if (!localCardEdit) {
+            if (state.metadataOverrides) item.metadataOverrides = state.metadataOverrides;
+            else delete item.metadataOverrides;
+          }
           if (state.captureMetadata) item.captureMetadata = state.captureMetadata;
           imported = true;
           if (Object.hasOwn(state, 'develop')) {
@@ -188,7 +202,8 @@ class Library {
           }
         }
       }
-      if (valid && item.modified > (sidecars[0]?.modified || 0) && (item.edited || item.develop || item.captureMetadata)) unsynced.push(item);
+      const syncTime = removable ? item.cardDecisionTime ?? item.modified : item.modified;
+      if (valid && syncTime > (sidecars[0]?.modified || 0) && (item.edited || item.develop || item.captureMetadata || !removable && Object.hasOwn(item, 'metadataOverrides'))) unsynced.push(item);
       if (item.develop?.tiff) item.develop.missing = !await fs.stat(item.develop.tiff).then(s => s.isFile(), () => false);
     });
     if (superseded()) throw new Error('Folder scan was superseded.');
@@ -205,8 +220,9 @@ class Library {
     return this.publicSession(session);
   }
 
-  publicItem({ id, name, size, raw, companion, flag, rating, color, trashed, source, edited, develop, contentRev, exposureId, ordinal, captureMetadata }) {
+  publicItem({ id, name, size, raw, companion, flag, rating, color, trashed, source, edited, develop, contentRev, exposureId, ordinal, captureMetadata, sidecarMetadata, metadataOverrides }) {
     return { id, name, size, raw, paired: !!companion, flag, rating, color, trashed, source, edited, ...developSummary(develop), contentRev: contentRev || 0,
+      ...(sidecarMetadata ? { sidecarMetadata } : {}), ...(metadataOverrides !== undefined ? { metadataOverrides } : {}),
       ...(exposureId ? { exposureId, ordinal } : {}), ...(captureMetadata ? { captureMetadata } : {}) };
   }
 
@@ -235,7 +251,12 @@ class Library {
     const write = this.writes.catch(() => {}).then(async () => {
       this.pendingSaves.delete(s.id);
       const data = JSON.stringify({ version: 1, folder: s.folder, decisions: Object.fromEntries(s.items.map(i =>
-        [i.id, { ...decision(i), path: path.relative(s.folder, i.path), fingerprint: i.fingerprint, modified: i.modified, edited: i.edited, ...(i.develop ? { develop: portableDevelop(i.develop, i.path, s.folder) } : {}), ...captureFields(i) }])) });
+        [i.id, {
+          ...decision(i), path: path.relative(s.folder, i.path), fingerprint: i.fingerprint, modified: i.modified,
+          edited: i.edited, cardDecisionTime: i.cardDecisionTime, ...captureFields(i), ...metadataState(i),
+          sidecarMetadata: Object.hasOwn(i, 'metadataOverrides') ? i.sidecarMetadata : undefined,
+          ...(i.develop ? { develop: portableDevelop(i.develop, i.path, s.folder) } : {})
+        }])) });
       await fs.mkdir(path.dirname(s.store), { recursive: true });
       await atomicWrite(s.store, data); this.stats.sessionWrites++;
     });
@@ -248,9 +269,13 @@ class Library {
     return { ...item, photoRoot: s.folder, develop };
   }
 
-  changed(s, items) {
-    for (const item of items) item.modified = Math.max(Date.now(), (item.modified || 0) + 1);
-    this.queueSidecars(s, items);
+  changed(s, items, metadataOnly = false) {
+    for (const item of items) {
+      if (metadataOnly && s.removable) item.cardDecisionTime ??= item.modified || 0;
+      else delete item.cardDecisionTime;
+      item.modified = Math.max(Date.now(), (item.modified || 0) + 1);
+    }
+    if (!metadataOnly || !s.removable) this.queueSidecars(s, items);
   }
 
   queueSidecars(s, items) {
@@ -278,7 +303,12 @@ class Library {
           const source = await fs.lstat(item.path);
           if (!source.isFile() || source.isSymbolicLink() || `${source.dev}:${source.ino}` !== item.fileId || source.size !== item.size || source.mtimeMs !== item.mtimeMs) throw new Error('Photo changed; reopen it before writing XMP.');
           if (owners.get(s.id).get(item.sidecar) > 1) throw new Error('Multiple photos share this sidecar name.');
-          await writeXmp(item.sidecar, this.sidecarItem(s, item), this.settings());
+          const snapshot = this.sidecarItem(s, item);
+          if (s.removable) {
+            snapshot.modified = item.cardDecisionTime ?? item.modified;
+            delete snapshot.metadataOverrides;
+          }
+          await writeXmp(item.sidecar, snapshot, this.settings());
           this.stats.sidecarWrites++;
         } catch (e) {
           const warning = `${item.name}: XMP not written: ${e.message}`;
@@ -371,7 +401,7 @@ class Library {
       Object.assign(item, decision({ ...item, ...patch }), { edited: Object.keys(patch).length > 0, ...capture, captureMetadata: metadata });
       applyDevelop(item);
     };
-    const relevant = item => item.edited || item.captureMetadata || item.develop;
+    const relevant = item => item.edited || item.captureMetadata || item.develop || !s.removable && Object.hasOwn(item, 'metadataOverrides');
     let target;
     const knownId = s.byPath.get(f.path);
     if (knownId) {
@@ -412,7 +442,7 @@ class Library {
         // JPEG first: the RAW takes over the provisional row with every decision and reference.
         const donor = previous.find(old => !after.has(old.id) && item.companion === old.path);
         if (donor) {
-          Object.assign(item, decision(donor), { modified: donor.modified, edited: donor.edited, develop: donor.develop ?? null, captureMetadata: donor.captureMetadata,
+          Object.assign(item, decision(donor), metadataState(donor), { sidecarMetadata: donor.sidecarMetadata, cardDecisionTime: donor.cardDecisionTime, modified: donor.modified, edited: donor.edited, develop: donor.develop ?? null, captureMetadata: donor.captureMetadata,
             exposureId: donor.exposureId ?? capture.exposureId, ordinal: donor.ordinal ?? capture.ordinal, contentRev: (donor.contentRev || 0) + 1, captureDevelop: donor.captureDevelop === true });
           if (!sidecars.length && item.sidecars.includes(donor.sidecar)) item.sidecar = donor.sidecar;
           if (item.exposureId === capture.exposureId) applyDevelop(item);
@@ -533,6 +563,51 @@ class Library {
     return { items: result };
   }
 
+  async editMetadata(sessionId, ids, patch) {
+    const s = this.get(sessionId);
+    if (!Array.isArray(ids) || !ids.length || ids.length > 100_000) throw new Error('Choose photos to edit.');
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('Invalid metadata edit.');
+    const fields = {}, operations = {};
+    for (const [key, value] of Object.entries(patch)) {
+      if (textFields.includes(key)) fields[key] = text(value, key === 'caption' ? 8192 : 1024);
+      else if (key === 'addKeyword' || key === 'removeKeyword') {
+        operations[key] = text(value, 128);
+        if (!operations[key]) throw new Error('Enter a keyword.');
+      } else throw new Error('Unknown metadata field.');
+    }
+    const original = [...new Set(ids.map(id => this.item(sessionId, id)))];
+    const keywords = Object.keys(operations).length > 0;
+    const embedded = keywords ? await mapLimit(original, 3, item =>
+      item.metadataOverrides?.keywords || item.sidecarMetadata?.keywords ? {} : this.embeddedMetadata(item)) : [];
+    if (s !== this.get(sessionId)) throw coded('STALE_SESSION', 'This folder session has changed.');
+    const batch = [], items = [];
+    for (const [index, requested] of original.entries()) {
+      const item = this.item(sessionId, requested.id), before = item.metadataOverrides || null;
+      const next = { ...before, ...fields };
+      if (keywords) {
+        const current = descriptive(item, embedded[index], this.settings().metadata).keywords;
+        const words = current.filter(word => word !== operations.removeKeyword);
+        if (operations.addKeyword && !words.includes(operations.addKeyword)) words.push(operations.addKeyword);
+        if (words.length > 100) throw new Error('Use at most 100 keywords.');
+        if (words.length !== current.length || words.some((word, i) => word !== current[i])) next.keywords = words;
+      }
+      if (JSON.stringify(before || {}) === JSON.stringify(next)) continue;
+      items.push(item);
+      batch.push({ id: item.id, before: { metadataOverrides: before }, after: { metadataOverrides: next } });
+    }
+    if (!batch.length) {
+      await this.save(s);
+      return { items: original.map(item => ({ id: item.id, ...metadataState(item) })) };
+    }
+    for (const [i, entry] of batch.entries()) Object.assign(items[i], entry.after);
+    s.undo.push({ batch });
+    if (s.undo.length > 500) s.undo.shift();
+    s.redo = [];
+    this.changed(s, items, true);
+    await this.save(s);
+    return { items: batch.map(entry => ({ id: entry.id, ...entry.after })) };
+  }
+
   async history(sessionId, direction) {
     const s = this.get(sessionId);
     const from = direction === 'redo' ? s.redo : s.undo;
@@ -542,10 +617,15 @@ class Library {
     to.push(action);
     const items = (action.batch || [action]).map(entry => {
       const item = this.item(sessionId, entry.id);
-      Object.assign(item, direction === 'redo' ? entry.after : entry.before, { edited: true });
+      const patch = direction === 'redo' ? entry.after : entry.before;
+      if (Object.hasOwn(patch, 'metadataOverrides')) {
+        Object.assign(item, patch);
+        return { id: item.id, ...patch };
+      }
+      Object.assign(item, patch, { edited: true });
       return { id: item.id, ...decision(item), edited: true };
     });
-    this.changed(s, items.map(i => this.item(sessionId, i.id)));
+    this.changed(s, items.map(i => this.item(sessionId, i.id)), Object.hasOwn(items[0], 'metadataOverrides'));
     await this.save(s);
     return action.batch ? { items } : items[0];
   }
@@ -554,7 +634,7 @@ class Library {
     await this.flushSidecars();
     const s = this.get(sessionId);
     // Snapshot decisions so keystrokes during export do not change the current batch.
-    const items = s.items.filter(i => i.edited || i.modified && (i.develop || i.captureMetadata)).map(i => this.sidecarItem(s, i));
+    const items = s.items.filter(i => i.edited || i.modified && (i.develop || i.captureMetadata || Object.hasOwn(i, 'metadataOverrides'))).map(i => this.sidecarItem(s, i));
     const failures = [], paths = new Map();
     // A same-stem second RAW format must never silently overwrite another decision.
     for (const item of s.items) {
@@ -637,7 +717,7 @@ class Library {
   manifest(sessionId) {
     const s = this.get(sessionId);
     return { version: 1, folder: s.folder, created: new Date().toISOString(), images: s.items.map(i => ({
-      file: i.path, companion: i.companion, sidecar: i.sidecar, ...decision(i) })) };
+      file: i.path, companion: i.companion, sidecar: i.sidecar, ...decision(i), ...metadataState(i) })) };
   }
 }
 

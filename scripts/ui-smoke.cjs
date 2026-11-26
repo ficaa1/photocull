@@ -12,6 +12,11 @@ async function main() {
   const screenshots = path.join(root, 'artifacts');
   await fs.rm(photos, { recursive: true, force: true });
   await fixtures(photos, 36);
+  const { ExifTool } = require('exiftool-vendored'), exif = new ExifTool();
+  try {
+    await exif.write(path.join(photos, 'DSC_0003.jpg'), { Model: 'Studio A7', LensModel: 'Prime 50', ISO: 800,
+      FNumber: 2.8, FocalLength: 50, ExposureTime: 0.004, DateTimeOriginal: '2026:11:03 18:05:00', 'XMP-dc:Subject': ['dancers'] }, ['-overwrite_original']);
+  } finally { await exif.end(); }
   const raw = path.join(root, 'artifacts', 'fixtures', 'iss030e122639.NEF');
   try { await fs.copyFile(raw, path.join(photos, '000_NASA.NEF')); } catch { /* A RAW fixture is optional for this UI test. */ }
   let app;
@@ -26,6 +31,31 @@ async function main() {
     await page.evaluate(folder => window.loadTestFolder(folder), photos);
     await page.waitForFunction(() => document.querySelector('#review-image').dataset.complete === 'yes', { timeout: 60000 });
     assert.ok(Number(await page.locator('#count-all').textContent()) >= 36);
+    await page.locator('#metadata-filter-toggle').click();
+    const panel = page.locator('#metadata-filters');
+    await panel.locator('[name=camera]').selectOption('Studio A7');
+    await panel.locator('[name=lens]').selectOption('Prime 50');
+    await panel.locator('[name=orient]').selectOption('portrait');
+    await panel.locator('[name=date]').selectOption('2026-11-03');
+    await panel.locator('[name=keyword]').selectOption('dancers');
+    await panel.locator('[name=isoMin]').fill('800');
+    await panel.locator('[name=shutterMax]').fill('1/250');
+    assert.equal(await page.locator('#photo-name').textContent(), 'DSC_0003.jpg');
+    assert.equal(await page.locator('#view-count').textContent(), '1');
+    const viewport = page.viewportSize();
+    for (const width of [375, 1024]) {
+      await page.setViewportSize({ width, height: 720 });
+      assert.ok(await panel.evaluate(node => {
+        const main = node.closest('main').getBoundingClientRect();
+        return [...node.parentElement.querySelectorAll('input, button, select'), node].every(control => {
+          const box = control.getBoundingClientRect();
+          return !box.width || box.left >= main.left - 1 && box.right <= main.right + 1;
+        });
+      }), `Filter controls fit the photo column at ${width}px`);
+    }
+    await page.setViewportSize(viewport);
+    await page.locator('#clear-metadata-filters').click();
+    await page.locator('#view-title').click();
     await page.keyboard.press('5');
     await page.keyboard.press('p');
     await page.waitForFunction(() => document.querySelector('#count-pick').textContent === '1');
@@ -175,6 +205,30 @@ async function main() {
     assert.equal(Number(await count('all')), total - 2);
     await page.evaluate(folder => window.loadTestFolder(folder), photos);
     assert.equal(Number(await page.locator('#count-all').textContent()), total - 2, 'deleted photos stay gone after reopening');
+    await page.locator('#grid-mode').click();
+    await cards.first().click();
+    await page.locator('#iptc-editor summary').click();
+    const iptcTitle = page.locator('#iptc-form [name=title]');
+    await iptcTitle.fill('Golden hour');
+    await iptcTitle.press('End'); await iptcTitle.press('p');
+    assert.equal(await count('pick'), '0', 'typing in the inspector does not flag a photo');
+    await iptcTitle.press('Backspace'); await page.locator('#iptc-save').click();
+    await page.waitForFunction(() => document.querySelector('#iptc-save').disabled && !document.querySelector('#iptc-form fieldset').disabled);
+    await cards.nth(1).click({ modifiers: ['Shift'] });
+    assert.equal(await iptcTitle.getAttribute('placeholder'), '(Mixed)');
+    await page.locator('#iptc-keyword').fill('studio'); await page.locator('#iptc-keyword').press('Enter');
+    await page.getByRole('button', { name: 'Remove keyword studio' }).waitFor();
+    await page.locator('#metadata-filter-toggle').click();
+    await page.locator('#metadata-filters [name=keyword]').selectOption('studio');
+    assert.equal(await page.locator('#view-count').textContent(), '2');
+    assert.equal(await page.locator('#filter-count').textContent(), '1');
+    await page.locator('#close-metadata-filters').click();
+    await page.locator('#search').fill('title:"golden hour" AND tag:studio OR tag:absent');
+    assert.equal(await page.locator('#view-count').textContent(), '1');
+    assert.equal(await iptcTitle.inputValue(), 'Golden hour');
+    await page.getByRole('button', { name: 'Remove keyword studio' }).click();
+    await page.locator('#no-matches:not([hidden])').waitFor();
+    await page.locator('#reset-filter').click();
     await page.locator('#search').fill('nothing-matches-this');
     assert.equal(await page.locator('#no-matches').isVisible(), true);
     await page.locator('#reset-filter').click();
@@ -183,7 +237,7 @@ async function main() {
     assert.deepEqual(errors, []);
     const stats = await page.evaluate(() => window.photocull.stats());
     const report = { passed: true, imageCount: Number(await page.locator('#count-all').textContent()), renderedGridCards: cardCount,
-      checks: ['RAW preview display', 'keyboard picks and ratings', 'auto advance', 'undo/redo', 'reject', '100% zoom toggle', 'virtual grid', 'shift-click and batch undo', 'keyboard range, toggle and select all', 'marquee selection', 'batch trash, restore and delete prompt', 'pick filter', 'XMP export', 'reopen persistence', 'delete rejects', 'trash, restore and undo', 'permanent delete prompt', 'search empty state', 'shortcut help', 'preview cache usage and clear'], stats, errors };
+      checks: ['RAW preview display', 'keyboard picks and ratings', 'auto advance', 'undo/redo', 'reject', '100% zoom toggle', 'virtual grid', 'shift-click and batch undo', 'keyboard range, toggle and select all', 'marquee selection', 'batch trash, restore and delete prompt', 'pick filter', 'XMP export', 'reopen persistence', 'delete rejects', 'trash, restore and undo', 'permanent delete prompt', 'metadata filter panel and boolean search', 'mixed IPTC and keyword edits', 'search empty state', 'shortcut help', 'preview cache usage and clear'], stats, errors };
     await fs.writeFile(path.join(screenshots, 'ui-smoke.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report, null, 2));
   } finally {

@@ -52,7 +52,7 @@ console.log = console.info = console.debug = console.error;
 
 const rendererDir = path.join(__dirname, 'renderer');
 const RENDERER_FILES = new Map([['index.html', 'text/html'], ['styles.css', 'text/css'], ['app.js', 'text/javascript'],
-  ['commands.js', 'text/javascript'], ['histogram.js', 'text/javascript'], ['develop.js', 'text/javascript'], ['export.js', 'text/javascript'],
+  ['metadata-filter.js', 'text/javascript'], ['commands.js', 'text/javascript'], ['histogram.js', 'text/javascript'], ['develop.js', 'text/javascript'], ['export.js', 'text/javascript'],
   ['naming.js', 'text/javascript'], ['image-view.js', 'text/javascript'], ['loupe.js', 'text/javascript'], ['culling.js', 'text/javascript'], ['survey.js', 'text/javascript'], ['bridge.js', 'text/javascript'], ['server.js', 'text/javascript'],
   ['tether.js', 'text/javascript'], ['overlays.js', 'text/javascript']]);
 const inside = (parent, child) => { const rel = path.relative(parent, child); return rel === '' || !!rel && !rel.startsWith('..') && !path.isAbsolute(rel); };
@@ -90,9 +90,13 @@ async function start() {
 
   const settings = new SettingsStore(dataDir); await settings.init();
   if (config?.previewCacheGB && settings.value.previewCacheGB !== config.previewCacheGB) await settings.update({ previewCacheGB: config.previewCacheGB });
-  let externalEdits, tether;
-  const library = new Library(dataDir, { keepSessions: serverMode ? 8 : 1, linkedHandoffs: () => externalEdits?.linkedPaths || new Set(), pairingExclusions: () => tether?.exclusions() || [], captureExposure: file => tether?.captureExposure(file) ?? null, settings: () => settings.value, recipeSettings: id => recipes.get(id)?.settings, onWarning: warning => send('sidecar-warning', warning) });
-  let previews;
+  let externalEdits, tether, previews;
+  const library = new Library(dataDir, {
+    keepSessions: serverMode ? 8 : 1, settings: () => settings.value, recipeSettings: id => recipes.get(id)?.settings,
+    embeddedMetadata: item => previews.metadata(item).then(data => data.index.embedded),
+    linkedHandoffs: () => externalEdits?.linkedPaths || new Set(), pairingExclusions: () => tether?.exclusions() || [],
+    captureExposure: file => tether?.captureExposure(file) ?? null, onWarning: warning => send('sidecar-warning', warning)
+  });
   const transfers = new TransferService({ recipeSettings: id => recipes.get(id)?.settings, onProgress: value => send('copy-progress', value), captureDate: item => previews.metadata(item).then(data => data.captured) });
   const backups = new BackupService(dataDir, { onProgress: value => send('backup-progress', value) });
   const cards = smoke ? async () => process.env.PHOTOCULL_TEST_DEVICES ? JSON.parse(await fs.readFile(process.env.PHOTOCULL_TEST_DEVICES, 'utf8')) : [] : () => discoverDevices(settings.value);
@@ -274,6 +278,7 @@ async function start() {
     'cancel-copy': () => transfers.cancel(),
     'decide': (session, id, patch) => library.decide(session, id, patch),
     'decide-many': (session, ids, patch) => library.decideMany(session, ids, patch),
+    'edit-metadata': (session, ids, patch) => library.editMetadata(session, ids, patch),
     'analysis-source': (session,id) => culling.source(session,id),
     'analysis-store': (session,id,key,score) => culling.store(session,id,key,score),
     'keep-sharpest': (session,ids) => deleting ? Promise.reject(new Error('Wait for the deletion to finish.')) : culling.keep(session,ids),
@@ -417,7 +422,7 @@ async function start() {
   // What a browser may ask the server for. Everything else names arbitrary
   // files (dialogs, settings bundles, editors) or belongs to the desktop app.
   const SERVER_METHODS = new Set(['app-info', 'workspace-info', 'server-info', 'browse', 'scan', 'last-session', 'prepare-folder', 'prepare-status', 'prepare-cancel',
-    'sharpness', 'analysis-source', 'keep-sharpest', 'devices', 'open-device', 'test-destination', 'copy-picks', 'naming-preview', 'cancel-copy', 'decide', 'decide-many',
+    'sharpness', 'analysis-source', 'keep-sharpest', 'devices', 'open-device', 'test-destination', 'copy-picks', 'naming-preview', 'cancel-copy', 'decide', 'decide-many', 'edit-metadata',
     'history', 'metadata', 'preview-status', 'settings', 'save-preset', 'delete-preset', 'preview-settings', 'preview-cache', 'retry-preview',
     'focus', 'visible', 'export-xmp', 'forget', 'stats', 'delete-photos', 'recipes', 'handoff-usage', 'develop-get']);
   const call = async (method, params) => {
