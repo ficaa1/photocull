@@ -1,4 +1,4 @@
-// node settings-ui-smoke.cjs EXECUTABLE|- REPORT_FOLDER SONY_FIXTURE_FOLDER
+// Optional arguments: EXECUTABLE|- REPORT_FOLDER SONY_FIXTURE_FOLDER
 const { launch: launchApp } = require('./launch.cjs');
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -7,10 +7,9 @@ const assert = require('node:assert/strict');
 const { updateXmp } = require('../src/xmp.cjs');
 const { version } = require('../package.json');
 async function main() {
-  const executable = process.argv[2], reports = path.resolve(process.argv[3]), fixture = path.resolve(process.argv[4]);
-  await fs.mkdir(reports,{recursive:true}); const root=await fs.mkdtemp(path.join(os.tmpdir(),'photocull-settings-ui-'));
-  const photos=path.join(root,'photos'), destination=path.join(root,'out'), data=path.join(root,'state');await fs.mkdir(photos);await fs.mkdir(destination);
-  await fs.copyFile(path.join(fixture,'sample-01.ARW'),path.join(photos,'a.ARW'));await fs.copyFile(path.join(fixture,'sample-01.JPG'),path.join(photos,'a.JPG'));await fs.copyFile(path.join(fixture,'sample-02.JPG'),path.join(photos,'b.JPG'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'photocull-settings-ui-'));
+  const reports = process.argv[3] ? path.resolve(process.argv[3]) : root;
+  const photos = path.join(root, 'photos'), destination = path.join(root, 'out'), data = path.join(root, 'state');
   const errors=[], checks=[]; let app,page;
   // The backend applies writes in order; poll it from Node so an in-flight write cannot satisfy the wait.
   async function waitForSettings(test){for(let i=0;i<200;i++){if(test(await page.evaluate(()=>window.photocull.settings())))return;await new Promise(r=>setTimeout(r,25));}throw new Error('Settings did not reach the expected state.');}
@@ -21,6 +20,16 @@ async function main() {
     await page.evaluate(folder=>window.loadTestFolder(folder),photos);await page.waitForFunction(()=>document.querySelector('#review-image').dataset.complete==='yes',null,{timeout:60000});
   }
   try {
+    await fs.mkdir(reports, { recursive: true }); await fs.mkdir(photos); await fs.mkdir(destination);
+    if (process.argv[4]) {
+      for (const [sample, name] of [['sample-01.ARW', 'a.ARW'], ['sample-01.JPG', 'a.JPG'], ['sample-02.JPG', 'b.JPG']]) {
+        await fs.copyFile(path.join(process.argv[4], sample), path.join(photos, name));
+      }
+    } else {
+      const jpeg = await require('sharp')({ create: { width: 1200, height: 800, channels: 3, background: '#738294' } })
+        .withExif({ IFD2: { DateTimeOriginal: '2026:09:26 10:00:00' } }).jpeg().toBuffer();
+      for (const name of ['a.ARW', 'a.JPG', 'b.JPG']) await fs.writeFile(path.join(photos, name), jpeg);
+    }
     await launch();
     await page.locator('#settings-open').click();
     await page.locator('[data-settings-tab="about"]').click();
@@ -40,7 +49,7 @@ async function main() {
     const settings=await page.evaluate(()=>window.photocull.settings());assert.equal(settings.metadata.creator,'Test Photographer & friends');assert.equal(settings.autoAdvance,false);assert.equal(settings.writeSidecars,'never');assert.equal(settings.colors[3].label,'To edit');checks.push('settings save and named preset include metadata, palette, filename template and XMP policy');
     await page.keyboard.press('Alt+4');await page.keyboard.press('5');await page.keyboard.press('p');await page.waitForFunction(()=>document.querySelector('#count-pick').textContent==='1');
     assert.equal(await page.locator('#photo-name').textContent(),'a.ARW');assert.equal(await page.locator('#color-labels button[aria-label="Review"]').getAttribute('aria-pressed'),'true');
-    await page.locator('#color-filter').selectOption('4');assert.equal(await page.locator('#view-count').textContent(),'1');await page.locator('#color-filter').selectOption('');checks.push('independent color shortcut, selected swatch, and color filter');
+    await page.locator('#metadata-filter-toggle').click();await page.locator('#color-filter').selectOption('4');assert.equal(await page.locator('#view-count').textContent(),'1');await page.locator('#color-filter').selectOption('');await page.locator('#close-metadata-filters').click();checks.push('independent color shortcut, selected swatch, and color filter');
     await page.locator('#export').click();await page.locator('#copy-destination').click();await page.locator('#copy-xmp').check();await page.locator('#copy-jpeg').check();await page.waitForFunction(()=>document.querySelector('#copy-name-preview').textContent==='Trip_20260926_007.ARW');
     assert.equal(await page.locator('#export-dialog p').count(),2);await page.screenshot({path:path.join(reports,`copy-compact-${process.platform}.png`)});
     await page.locator('#copy-start').click();await page.waitForFunction(()=>document.querySelector('#copy-status').textContent.startsWith('1 copied'),null,{timeout:60000});

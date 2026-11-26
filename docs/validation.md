@@ -6,7 +6,7 @@ Use disposable photo copies and an isolated `PHOTOCULL_DATA_DIR`. Never point sm
 
 Run `npm ci`, `npm test`, `npm run test:ui`, `node scripts/develop-ui-smoke.cjs` and `node scripts/image-export-ui-smoke.cjs`. These use synthetic fixtures and loopback services. The native shell additionally needs `cargo test --locked` and `cargo build --locked` in `src-tauri` on the target platform.
 
-`node scripts/settings-ui-smoke.cjs - REPORT_FOLDER SONY_FIXTURE_FOLDER` and `node scripts/export-ui-smoke.cjs - REPORT_FOLDER SONY_FIXTURE_FOLDER` require copied `sample-01.ARW`, `sample-01.JPG` and `sample-02.JPG`. They check settings persistence, presets, filename planning, XMP escaping and embedded metadata. Windows Shell metadata checks run on Windows.
+`node scripts/settings-ui-smoke.cjs - REPORT_FOLDER SONY_FIXTURE_FOLDER` and `node scripts/export-ui-smoke.cjs - REPORT_FOLDER SONY_FIXTURE_FOLDER` require copied `sample-01.ARW`, `sample-01.JPG` and `sample-02.JPG`. Running the settings smoke without arguments uses synthetic fixtures and temporary reports. The checks cover settings persistence, presets, filename planning, XMP escaping and embedded metadata. Windows Shell metadata checks run on Windows.
 
 ## RAW fallback
 

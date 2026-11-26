@@ -7,13 +7,25 @@ class MetadataWriter {
     if (signal?.aborted) throw new Error('Copy canceled.');
     const config = normalizeSettings(settings), metadata = config.metadata, tags = {};
     const tiff = ['.arw','.dng','.nef','.nrw','.cr2','.tif','.tiff','.jpg','.jpeg'].includes(path.extname(file).toLowerCase());
-    if (metadata.creator) {
-      tags['XMP-dc:Creator'] = [metadata.creator];
+    const owned = key => Object.hasOwn(item.metadataOverrides || {}, key);
+    if (metadata.creator || owned('creator')) {
+      tags['XMP-dc:Creator'] = metadata.creator ? [metadata.creator] : null;
       if (tiff) { tags['IFD0:Artist'] = metadata.creator; tags['IFD0:XPAuthor'] = metadata.creator; }
     }
-    if (metadata.copyright) { tags['XMP-dc:Rights'] = metadata.copyright; if(tiff) tags['IFD0:Copyright'] = metadata.copyright; }
-    if (metadata.title) { tags['XMP-dc:Title'] = metadata.title; if(tiff) tags['IFD0:XPTitle'] = metadata.title; }
-    if (metadata.caption) { tags['XMP-dc:Description'] = metadata.caption; if(tiff) tags['IFD0:XPComment'] = metadata.caption; }
+    if (metadata.copyright || owned('copyright')) { tags['XMP-dc:Rights'] = metadata.copyright; if(tiff) tags['IFD0:Copyright'] = metadata.copyright; }
+    if (metadata.title || owned('title')) { tags['XMP-dc:Title'] = metadata.title; if(tiff) tags['IFD0:XPTitle'] = metadata.title; }
+    if (metadata.caption || owned('caption')) { tags['XMP-dc:Description'] = metadata.caption; if(tiff) tags['IFD0:XPComment'] = metadata.caption; }
+    const legacy = { title: ['IPTC:ObjectName', 'IFD0:XPTitle'], creator: ['IPTC:By-line', 'EXIF:Artist', 'IFD0:XPAuthor'],
+      caption: ['IPTC:Caption-Abstract', 'EXIF:ImageDescription', 'IFD0:XPComment'], copyright: ['IPTC:CopyrightNotice', 'EXIF:Copyright'],
+      keywords: ['IPTC:Keywords', 'IFD0:XPKeywords'] };
+    for (const [field, names] of Object.entries(legacy)) {
+      if (!owned(field)) continue;
+      if (!metadata[field].length || !tiff) {
+        for (const name of names) tags[name] = null;
+      } else if (field !== 'keywords') {
+        for (const name of names) if (name.startsWith('IPTC:')) tags[name] = null;
+      }
+    }
     if (metadata.writeRatings) {
       const rating = item.flag === 'reject' && metadata.rejectRating ? -1 : item.rating;
       tags['XMP-xmp:Rating'] = rating;
@@ -23,9 +35,14 @@ class MetadataWriter {
       const id = item.color ?? metadata[item.flag + 'Color'];
       if (item.color !== null && item.color !== undefined || item.flag !== 'none') tags['XMP-xmp:Label'] = config.colors.find(c => c.id === id)?.label || '';
     }
+    if (owned('keywords')) {
+      tags['XMP-dc:Subject'] = metadata.keywords.length ? metadata.keywords : null;
+      tags['IPTC:Keywords'] = metadata.keywords.length && tiff ? metadata.keywords : null;
+      tags['IFD0:XPKeywords'] = metadata.keywords.length && tiff ? metadata.keywords.join(';') : null;
+    }
     if (!Object.keys(tags).length && !metadata.keywords.length) return;
     this.exif ||= new ExifTool({ maxProcs: 1, taskTimeoutMillis: 30000 });
-    if (metadata.keywords.length) {
+    if (metadata.keywords.length && !owned('keywords')) {
       const old = await this.exif.readRaw(file, { readArgs: ['-XMP-dc:Subject', '-IFD0:XPKeywords'] });
       const existing = typeof old.Subject === 'string' ? [old.Subject] : Array.isArray(old.Subject) ? old.Subject : [];
       tags['XMP-dc:Subject'] = [...new Set([...existing, ...metadata.keywords])];

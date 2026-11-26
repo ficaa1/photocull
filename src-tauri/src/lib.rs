@@ -46,6 +46,7 @@ const RENDERER_METHODS: &[&str] = &[
     "cancel-copy",
     "decide",
     "decide-many",
+    "edit-metadata",
     "app-info",
     "keep-sharpest",
     "history",

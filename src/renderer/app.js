@@ -1,10 +1,11 @@
 const api = window.photocull;
 const $ = id => document.getElementById(id);
-const state = { deleting: false, session: null, selected: null, marked: new Set(), anchor: null, filter: 'all', query: '', mode: 'review', studio: false, fullscreen: false,
+const state = { deleting: false, session: null, selected: null, marked: new Set(), anchor: null, filter: 'all', query: '', metadataFilters: {}, mode: 'review', studio: false, fullscreen: false,
   generation: 0, previewRevision: 0, showOriginal: false, proposals: [], proposalsLoading: false, proposalsBusy: false, proposalWarning: '', pendingSaves: 0, saveError: false, busy: false, settings: { autoAdvance: true, recursive: false, autoOpenCards: true, colors: [], naming: { template: '{filename}', text: '', start: 1 } }, settingsReady: false, colorFilter: '', devices: [], deviceError: '', autoOpened: new Set(), copy: { running: false, destination: null, copiedTo: null } };
 let toastTimer, metadataTimer, framePending = false, handoffUsageKey = '', handoffUsageGeneration = 0;
 const gridNodes = new Map(), filmNodes = new Map();
 const culling = { metadata:new Map(), jobs:new Map(), scores:new Map(), bursts:[], byId:new Map(), expanded:new Set(), epoch:0, paused:false, running:false };
+let metadataIndex;
 let survey, burstPrompt=null, tether=null;
 const menus = [];
 // Automatic card opening waits until first-run Welcome has been shown and answered.
@@ -228,26 +229,44 @@ const updater = api.desktop && initUpdater({ api, $, toast, getTether: () => tet
 function photo() { return state.session?.items.find(i => i.id === state.selected); }
 function selection() { return state.marked.size > 1 ? filtered().filter(i => state.marked.has(i.id)) : photo() ? [photo()] : []; }
 function resetSelection() { state.marked = new Set(state.selected ? [state.selected] : []); state.anchor = state.selected; }
-function viewKey() { return JSON.stringify([state.filter, state.query, state.colorFilter]); }
+function viewKey() { return JSON.stringify([state.filter, state.query, state.colorFilter, state.metadataFilters]); }
 function sameIds(ids, items = selection()) { const marked = new Set(ids); return ids.length === items.length && items.every(item => marked.has(item.id)); }
 function additive(event) {
   if (api.platform === 'darwin') return event.metaKey;
   return api.platform === 'web' ? event.ctrlKey || event.metaKey : event.ctrlKey; // web: tests run on macOS, where Ctrl+click is a right-click
 }
 function reviewed(item) { return item.flag !== 'none' || item.rating > 0 || !!item.color; }
+const indexedRows = new WeakMap();
+function metadataRow(item) {
+  const index = culling.metadata.get(item.id)?.index;
+  const preset = state.settings.metadata;
+  const cached = indexedRows.get(item);
+  if (cached && cached.index === index && cached.preset === preset && cached.overrides === item.metadataOverrides &&
+    cached.reverts === item.metadataReverts && cached.sidecar === item.sidecarMetadata && cached.capture === item.captureMetadata) return cached.row;
+  const row = { name: item.name, metadataPending: !index, ...index, ...PhotoCullMetadata.descriptive(item, index?.embedded, preset) };
+  indexedRows.set(item, { index, preset, overrides: item.metadataOverrides, reverts: item.metadataReverts, sidecar: item.sidecarMetadata, capture: item.captureMetadata, row });
+  return row;
+}
+let compiledQuery, compiledFilters, matchMetadata;
+function matchesMetadata(item) {
+  if (compiledQuery !== state.query || compiledFilters !== state.metadataFilters) {
+    compiledQuery = state.query; compiledFilters = state.metadataFilters;
+    matchMetadata = state.query || Object.keys(compiledFilters).length ? PhotoCullMetadata.compile(state.query, compiledFilters) : null;
+  }
+  return !matchMetadata || matchMetadata(metadataRow(item));
+}
 function filtered() {
   return (state.session?.items ?? []).filter(item => {
     // Trashed photos only appear in the Trash view.
     const match = state.filter === 'trash' ? item.trashed : !item.trashed && (state.filter === 'all' || state.filter === 'unreviewed' && !reviewed(item) ||
       state.filter === 'external' && item.externalEdit || state.filter === 'rated' && item.rating > 0 || item.flag === state.filter);
-    return match && (!state.colorFilter || colorOf(item) === state.colorFilter) && item.name.toLowerCase().includes(state.query);
+    return match && (!state.colorFilter || colorOf(item) === state.colorFilter) && matchesMetadata(item);
   });
 }
 function imageUrl(item, kind = 'thumb', prefetch = false) {
   return api.imageUrl(state.session.id, item.id, kind, `&d=${item.developRevision || 0}&edit=${item.externalEdit ? 1 : 0}&v=${state.previewRevision}${state.showOriginal ? '&original=1' : ''}${item.contentRev ? `&cr=${item.contentRev}` : ''}${prefetch ? '&prefetch=1' : ''}`);
 }
-// Matches the backend's source XMP export: decisions, develop state or frozen capture metadata.
-const xmpEligible = item => item.edited || item.adjusted || item.developed || item.externalEdit || item.recipe || item.developRevision > 0 || !!item.captureMetadata;
+const xmpEligible = item => item.edited || item.adjusted || item.developed || item.externalEdit || item.recipe || item.developRevision > 0 || !!item.captureMetadata || Object.hasOwn(item, 'metadataOverrides');
 function fileSize(bytes) { return bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`; }
 function setStatus(text, error = false) {
   $('save-status').textContent = text;
@@ -279,8 +298,8 @@ function loadSession(session) {
   state.session = session; state.selected = session.items[0]?.id ?? null;
   state.proposals = []; state.proposalsBusy = false; state.proposalsLoading = !api.server; state.proposalWarning = ''; proposalSignature = '';
   resetSelection();
-  state.showOriginal = false; state.filter = 'all'; state.colorFilter = ''; $('color-filter').value = ''; state.query = ''; state.saveError = false; loupe.reset();
-  $('search').value = ''; $('grid').scrollTop = 0;
+  state.showOriginal = false; clearFilters(); closeMetadataFilters(); state.saveError = false; loupe.reset();
+  $('grid').scrollTop = 0;
   const folderName = session.folder.split(/[\\/]/).filter(Boolean).pop();
   $('folder-name').textContent = folderName; $('folder-name').title = session.folder;
   $('folder-detail').textContent = `${session.items.length} photos`;
@@ -357,6 +376,7 @@ function renderCounts() {
 }
 
 function render(reset = false) {
+  renderMetadataFilters();
   renderEditorActions();
   $('export').disabled = state.busy || state.deleting || !state.session?.items.length;
   $('image-export').disabled = state.busy || !state.session?.items.length || state.deleting || state.copy.running;
@@ -406,7 +426,7 @@ function render(reset = false) {
 function pendingProposals(scoped = false) {
   return state.proposals.filter(p => {
     const item = state.session?.items.find(i => i.id === p.itemId);
-    return item && !item.trashed && !item.tiff && (!scoped || (!state.colorFilter || colorOf(item) === state.colorFilter) && item.name.toLowerCase().includes(state.query));
+    return item && !item.trashed && !item.tiff && (!scoped || (!state.colorFilter || colorOf(item) === state.colorFilter) && matchesMetadata(item));
   });
 }
 let proposalSignature = '';
@@ -457,6 +477,7 @@ $('proposal-accept-all').onclick = () => decideProposals(pendingProposals(true).
 $('proposal-reject-all').onclick = () => decideProposals(pendingProposals(true).map(p => p.id), false);
 
 function renderSelection() {
+  renderIptc();
   const item = photo();
   developView.sync({ mode: state.mode, session: state.session, photo: item });
   tether?.selectionChanged();
@@ -565,12 +586,16 @@ async function loadMetadata(item) {
   }
   try {
     const metadata = await api.metadata(sessionId,imageId,loupe.kind());
-    if(state.session?.id===sessionId)culling.metadata.set(imageId,metadata);
+    if (state.session?.id === sessionId) {
+      const newlyIndexed = metadata.index && !culling.metadata.get(imageId)?.index;
+      culling.metadata.set(imageId, metadata);
+      if (newlyIndexed && (state.query || Object.keys(state.metadataFilters).length || !filterPanel.hidden)) render();
+      if (state.selected === imageId) renderIptc();
+    }
     if (state.selected !== imageId || state.session.id !== sessionId || state.generation !== generation) return;
     const rows = [['Camera', metadata.camera], ['Lens', metadata.lens], ['Exposure', [metadata.shutter ? `${metadata.shutter} s` : '', metadata.aperture, metadata.iso ? `ISO ${metadata.iso}` : ''].filter(Boolean).join(' · ')],
       ['Captured', formatCaptureDate(metadata.captured)], ...(metadata.flash ? [['Flash', flashText(metadata)]] : []), ['Autofocus', metadata.focus?.source], ['Sharpness', Number.isFinite(culling.scores.get(imageId)) ? culling.scores.get(imageId).toFixed(1) + ' · preview detail' : api.canAnalyze ? 'Pending analysis' : 'Desktop app required'], ['Preview', metadata.width && metadata.height ? `${metadata.width} × ${metadata.height}` : ''], ['Source', metadata.source], ['Develop', item.externalEdit ? `Edited in ${editorName(item.editedBy)} · open Develop to view` : item.developed ? 'Developed hand-off' : item.adjusted ? 'RAW adjustments' : '']];
-    // Metadata frozen when a tethered shot was taken; empty fields stay out of the list.
-    const shot = state.session.items.find(i => i.id === imageId)?.captureMetadata;
+    const shot = item.captureMetadata && metadataRow(item);
     if (shot) rows.push(...[['Creator', shot.creator], ['Copyright', shot.copyright], ['Caption', shot.caption], ['Keywords', shot.keywords?.join(', ')]].filter(([, value]) => value));
     $('metadata').replaceChildren(...rows.flatMap(([name, value]) => {
       const dt = document.createElement('dt'), dd = document.createElement('dd');
@@ -832,7 +857,9 @@ async function decide(patch) {
 async function history(direction) {
   if (!state.session) return;
   try {
-    const result = await api.history(state.session.id, direction);
+    const session = state.session;
+    const result = await api.history(session.id, direction);
+    if (state.session !== session) return;
     if (!result) return toast(direction === 'redo' ? 'Nothing to redo' : 'Nothing to undo');
     const items = result.items || [result], byId = new Map(state.session.items.map(i => [i.id, i]));
     for (const item of items) Object.assign(byId.get(item.id), item);
@@ -852,11 +879,144 @@ document.body.classList.toggle('platform-mac', api.platform === 'darwin');
 if (api.platform === 'darwin') document.querySelectorAll('#help-dialog kbd').forEach(key => { key.textContent = key.textContent.replaceAll('Ctrl', '⌘').replaceAll('Alt', '⌥'); });
 $('open-folder').onclick = openFolder; $('empty-open').onclick = openFolder;
 $('review-mode').onclick = () => setMode('review'); $('grid-mode').onclick = () => setMode('grid'); $('develop-mode').onclick = () => setMode('develop'); $('tether-mode').onclick = () => setMode('tether');
-$('search').oninput = event => { state.query = event.target.value.toLowerCase(); $('grid').scrollTop = 0; render(true); };
+const filterPanel = $('metadata-filters');
+function clearFilters() {
+  state.filter = 'all'; state.query = ''; state.colorFilter = ''; state.metadataFilters = {};
+  $('search').value = ''; $('color-filter').value = '';
+  for (const control of filterPanel.querySelectorAll('[name]')) control.value = '';
+}
+function closeMetadataFilters() {
+  filterPanel.hidden = true;
+  $('metadata-filter-toggle').setAttribute('aria-expanded', 'false');
+  renderIndexStatus();
+}
+function renderIndexStatus() {
+  const status = $('metadata-index-status');
+  const run = metadataIndex;
+  const active = !filterPanel.hidden || state.query || Object.keys(state.metadataFilters).length;
+  status.hidden = !active || !run || run.session !== state.session || run.done && !run.failures;
+  if (!status.hidden) status.textContent = run.done ? `Metadata unavailable for ${run.failures} photos` : `Indexing metadata (${run.processed}/${run.total})…`;
+}
+function renderMetadataFilters() {
+  renderIndexStatus();
+  const count = Object.keys(state.metadataFilters).length + Number(!!state.colorFilter);
+  $('filter-count').hidden = !count; $('filter-count').textContent = count;
+  if (filterPanel.hidden) return;
+  const facets = { camera: new Set(), lens: new Set(), date: new Set(), keyword: new Set() };
+  for (const item of state.session?.items || []) {
+    const row = metadataRow(item);
+    for (const key of ['camera', 'lens', 'date']) if (row[key]) facets[key].add(row[key]);
+    for (const word of row.keywords) facets.keyword.add(word);
+  }
+  for (const [key, values] of Object.entries(facets)) {
+    const select = filterPanel.querySelector(`[name="${key}"]`), current = state.metadataFilters[key] || '';
+    if (current) values.add(current);
+    const choices = [...values].sort((a, b) => a.localeCompare(b));
+    if (select.length !== choices.length + 1 || choices.some((value, i) => select.options[i + 1].value !== value)) {
+      select.replaceChildren(option('', 'Any'), ...choices.map(value => option(value, value)));
+    }
+    select.value = current;
+  }
+}
+$('metadata-filter-toggle').onclick = () => {
+  if (!filterPanel.hidden) return closeMetadataFilters();
+  filterPanel.hidden = false; $('metadata-filter-toggle').setAttribute('aria-expanded', 'true');
+  renderMetadataFilters(); filterPanel.querySelector('[name=camera]').focus();
+};
+$('close-metadata-filters').onclick = () => { closeMetadataFilters(); $('metadata-filter-toggle').focus(); };
+filterPanel.addEventListener('keydown', event => {
+  if (event.key === 'Escape') { event.preventDefault(); $('close-metadata-filters').click(); }
+  event.stopPropagation();
+});
+document.addEventListener('pointerdown', event => {
+  if (!filterPanel.hidden && !filterPanel.contains(event.target) && !$('metadata-filter-toggle').contains(event.target)) closeMetadataFilters();
+});
+filterPanel.addEventListener('input', event => {
+  const { name, value } = event.target;
+  if (!name) return;
+  const filters = { ...state.metadataFilters };
+  if (value) filters[name] = value; else delete filters[name];
+  state.metadataFilters = filters; $('grid').scrollTop = 0; render(true);
+});
+$('clear-metadata-filters').onclick = () => { clearFilters(); render(true); };
+
+const iptc = $('iptc-form'), dirtyFields = new Set();
+let editorSelection = '', chipSignature = '', savingIptc = false;
+function renderIptc() {
+  const editor = $('iptc-editor');
+  editor.hidden = !!testShot() || testBlocksCulling() || !photo();
+  if (editor.hidden || !editor.open) { editorSelection = ''; return; }
+  const targets = selection(), key = [state.session.id, ...targets.map(item => item.id)].join('/');
+  if (key !== editorSelection) {
+    dirtyFields.clear(); $('iptc-keyword').value = ''; editorSelection = key;
+  }
+  const rows = targets.map(metadataRow);
+  for (const field of PhotoCullMetadata.textFields) {
+    if (dirtyFields.has(field)) continue;
+    const control = iptc.elements[field], value = rows[0]?.[field] || '', mixed = rows.some(row => row[field] !== value);
+    control.placeholder = mixed ? '(Mixed)' : '';
+    if (control.value !== (mixed ? '' : value)) control.value = mixed ? '' : value;
+  }
+  const words = new Map();
+  for (const row of rows) for (const word of row.keywords) words.set(word, (words.get(word) || 0) + 1);
+  const chips = [...words].map(([word, count]) => [word, count < rows.length]);
+  const signature = JSON.stringify(chips);
+  if (chipSignature !== signature) {
+    chipSignature = signature;
+    $('iptc-tags').replaceChildren(...chips.map(([word, mixed]) => {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'keyword-chip';
+      button.textContent = word + (mixed ? ' (Mixed)' : '') + ' ×';
+      button.setAttribute('aria-label', 'Remove keyword ' + word);
+      button.onclick = () => saveIptc({ removeKeyword: word });
+      return button;
+    }));
+  }
+  iptc.querySelector('fieldset').disabled = savingIptc || !rows.length;
+  $('iptc-save').disabled = !dirtyFields.size;
+}
+async function saveIptc(patch) {
+  if (savingIptc || !Object.keys(patch).length || guardStageCull()) return;
+  const session = state.session, key = editorSelection, focus = document.activeElement;
+  savingIptc = true; state.pendingSaves++; setStatus('Saving…'); renderIptc();
+  try {
+    const result = await api.editMetadata(session.id, selection().map(item => item.id), patch);
+    if (state.session !== session) return;
+    const updates = new Map(result.items.map(item => [item.id, item]));
+    for (const item of session.items) if (updates.has(item.id)) Object.assign(item, updates.get(item.id));
+    if (editorSelection === key) {
+      for (const field of Object.keys(patch)) dirtyFields.delete(field);
+      if (patch.addKeyword) $('iptc-keyword').value = '';
+    }
+    render();
+  } catch (error) { state.saveError = true; toast(error.message); }
+  finally {
+    savingIptc = false; state.pendingSaves--; renderIptc();
+    if (focus === $('iptc-keyword') && editorSelection === key && document.activeElement === document.body) focus.focus();
+    if (!state.pendingSaves) setStatus(state.saveError ? 'Save failed' : 'Saved', state.saveError);
+  }
+}
+$('iptc-editor').ontoggle = () => renderIptc();
+iptc.oninput = event => {
+  if (PhotoCullMetadata.textFields.includes(event.target.name)) { dirtyFields.add(event.target.name); $('iptc-save').disabled = false; }
+};
+iptc.addEventListener('keydown', event => {
+  const control = event.target;
+  if (!control.matches('input, textarea')) return;
+  event.stopPropagation();
+  if (control.placeholder === '(Mixed)' && !control.value && ['Backspace', 'Delete'].includes(event.key)) {
+    dirtyFields.add(control.name); $('iptc-save').disabled = false;
+  }
+});
+$('search').onkeydown = event => event.stopPropagation();
+iptc.onsubmit = event => { event.preventDefault(); void saveIptc(Object.fromEntries([...dirtyFields].map(field => [field, iptc.elements[field].value]))); };
+$('iptc-add').onclick = () => { const word = $('iptc-keyword').value.trim(); if (word) void saveIptc({ addKeyword: word }); };
+$('iptc-keyword').onkeydown = event => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); $('iptc-add').click(); } };
+$('search').oninput = event => { state.query = event.target.value; $('grid').scrollTop = 0; render(true); };
 document.querySelectorAll('.filter').forEach(button => { button.onclick = () => {
   state.filter = button.dataset.filter; if (state.filter === 'external') setMode('grid'); $('grid').scrollTop = 0; render(true);
 }; });
-$('reset-filter').onclick = () => { state.colorFilter = ''; $('color-filter').value = ''; state.filter = 'all'; state.query = ''; $('search').value = ''; render(true); };
+$('reset-filter').onclick = () => { clearFilters(); render(true); };
 $('previous').onclick = () => navigate(-1); $('next').onclick = () => navigate(1);
 $('pick').onclick = () => decide({ flag: photo()?.flag === 'pick' ? 'none' : 'pick' });
 $('reject').onclick = () => decide({ flag: photo()?.flag === 'reject' ? 'none' : 'reject' });
@@ -1582,7 +1742,7 @@ let paletteRows=[],paletteIndex=0,paletteFocus;
 function openPalette(query='') {if(document.querySelector('dialog[open]'))return;paletteFocus=document.activeElement;palette.showModal();$('command-query').value=query;paletteIndex=0;drawPalette();$('command-query').focus();}
 function drawPalette() {
   const query=$('command-query').value,findPhoto=query.startsWith('>');
-  paletteRows=findPhoto?(state.session?.items||[]).filter(item=>!item.trashed&&PhotoCullCommands.fuzzy(query.slice(1),item.name)).slice(0,60).map(item=>({id:'photo-'+item.id,title:item.name,category:'Photo',run:()=>{state.filter='all';state.query='';state.colorFilter='';$('search').value='';$('color-filter').value='';state.selected=item.id;resetSelection();render(true);}})):
+  paletteRows=findPhoto?(state.session?.items||[]).filter(item=>!item.trashed&&PhotoCullCommands.fuzzy(query.slice(1),item.name)).slice(0,60).map(item=>({id:'photo-'+item.id,title:item.name,category:'Photo',run:()=>{clearFilters();state.selected=item.id;resetSelection();render(true);}})):
     [...commands.search(query,recentCommands).filter(offered).map(command=>({...command,disabled:!PhotoCullCommands.active(command,commandContext())||!command.enabled(),run:()=>commands.execute(command.id)})),
      ...(api.server?[]:state.settings.editors||[]).map(e=>({id:'edit-with-'+e.id,title:`Edit in ${e.name}…`,category:'Files',disabled:$('edit-external').disabled,run:()=>developView.openBatch(e.id)})).filter(row=>PhotoCullCommands.fuzzy(query,row.title+' '+row.category)>0)].slice(0,60);
   paletteIndex=Math.min(paletteIndex,Math.max(0,paletteRows.length-1));
@@ -1738,7 +1898,7 @@ async function cullingMetadata(id,session=state.session?.id) {
   if(!session)return null;
   if(culling.metadata.has(id))return culling.metadata.get(id);
   if(culling.jobs.has(id))return culling.jobs.get(id);
-  const job=api.metadata(session,id,'preview').then(metadata=>{if(state.session?.id===session){culling.metadata.set(id,metadata);if(state.selected===id)applyFocus();}return metadata;}).finally(()=>{if(culling.jobs.get(id)===job)culling.jobs.delete(id);});
+  const job=api.metadata(session,id,'preview').then(metadata=>{if(state.session?.id===session && culling.jobs.get(id)===job){culling.metadata.set(id,metadata);if(state.selected===id)applyFocus();}return metadata;}).finally(()=>{if(culling.jobs.get(id)===job)culling.jobs.delete(id);});
   culling.jobs.set(id,job);return job;
 }
 function focusOf(id) {return culling.metadata.get(id)?.focus || null;}
@@ -1796,18 +1956,36 @@ function toggleBurst(burst=culling.byId.get(state.selected)) {
 function setPauseLabel(text) {$('analysis-pause').textContent=text;$('analysis-pause').dataset.action=text.split(' ')[0].toLowerCase();}
 function setAnalysis(text,phase) {$('analysis-status').textContent=text;$('analysis-status').dataset.phase=phase;$('analysis-status').closest('.analysis').title=text;}
 function cancelCulling() {culling.epoch++;culling.running=false;void api.cancelSharpness().catch(()=>{});}
+function indexSessionMetadata(session, items) {
+  if (metadataIndex?.session === session && (!metadataIndex.done || !metadataIndex.failures)) return metadataIndex.job;
+  const run = { session, total: items.length, processed: 0, failures: 0, done: false };
+  metadataIndex = run;
+  run.job = (async () => {
+    for (const item of items) {
+      if (state.session !== session || metadataIndex !== run) break;
+      try { await cullingMetadata(item.id, session.id); } catch { run.failures++; }
+      if (state.session !== session || metadataIndex !== run) break;
+      run.processed++;
+      if (run.processed % 8 === 0 || run.processed === 1 || run.processed === run.total) {
+        regroupBursts(); render();
+        if (culling.running) setAnalysis(`Metadata ${run.processed}/${run.total}`, 'running');
+      }
+      await new Promise(resolve => setTimeout(resolve, 35));
+    }
+    run.done = true;
+    if (metadataIndex === run) renderIndexStatus();
+    return run.failures;
+  })();
+  return run.job;
+}
 async function analyzeCulling() {
   cancelCulling();culling.paused=false;culling.running=true;const epoch=culling.epoch,session=state.session?.id,items=[...(state.session?.items || [])];
   $('analysis-pause').hidden=!items.length || !!api.server;setPauseLabel('Pause analysis');
   const current=()=>epoch===culling.epoch && session===state.session?.id && !culling.paused;
-  const yieldUI=()=>new Promise(resolve=>setTimeout(resolve,35));let failures=0;
+  const yieldUI=()=>new Promise(resolve=>setTimeout(resolve,35));
   try {
-    for(const [index,item] of items.entries()) {
-      if(!current())return;try{await cullingMetadata(item.id,session);}catch{failures++;}
-      if(!current())return;
-      if(index%8===0 || index===items.length-1){regroupBursts();render();setAnalysis(`Metadata ${index+1}/${items.length}`,'running');}
-      await yieldUI();
-    }
+    let failures = await indexSessionMetadata(state.session, items);
+    if (!current()) return;
     if(api.canAnalyze) {
       const burstIds=new Set(culling.byId.keys()),order=[...items.filter(i=>burstIds.has(i.id)),...items.filter(i=>!burstIds.has(i.id))];
       for(const item of order) {
@@ -1849,7 +2027,7 @@ tether=PhotoCullTether.create({api,toast,
   session:()=>state.session,mode:()=>state.mode,photo,item:id=>state.session?.items.find(i=>i.id===id),original:()=>state.showOriginal,imageUrl:(item,kind)=>imageUrl(item,kind),
   loadSession,applyDelta:applyTetherDelta,replaceLibrary:replaceTetherLibrary,survey:()=>survey,flushDevelop:()=>developView.flush(),
   visible:id=>filtered().some(i=>i.id===id),
-  showAll:()=>{state.filter='all';state.colorFilter='';$('color-filter').value='';state.query='';$('search').value='';render();},
+  showAll:()=>{clearFilters();render();},
   show:(id,{review=false}={})=>{if(review && !['review','compare','tether'].includes(state.mode))setMode(stageMode());select(id);},
   activate:id=>{if(state.selected!==id){state.selected=id;resetSelection();renderSelection();}},
   inspecting:()=>photoStage() && loupe.zoomed || state.mode==='compare' && !survey.pinned(),

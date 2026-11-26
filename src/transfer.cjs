@@ -72,7 +72,7 @@ class TransferService {
           if (item.companionSize !== undefined && (stat.size !== item.companionSize || stat.mtimeMs !== item.companionMtimeMs)) throw new Error('Companion JPEG changed. Reopen the folder before copying.');
           files.push({ source: item.companion, relative: path.join(directory, renamed.stem + path.extname(item.companion)), stat });
         }
-        if (options.includeXmp || session.removable && normalizeSettings(options.metadataSettings).writeSidecars !== 'never') {
+        if (options.includeXmp || (session.removable || item.removable) && normalizeSettings(options.metadataSettings).writeSidecars !== 'never') {
           let xml = '';
           try {
             const info = await sourceStat(item.sidecar);

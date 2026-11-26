@@ -99,9 +99,9 @@ The resettable **Dehancer** preset uses 16-bit uncompressed sRGB TIFF, one proce
 
 Original image bytes are never changed by decisions, Develop or hand-offs. XMP files are separate:
 
-- By default, PhotoCull autosaves XMP **beside photos in ordinary folders**, but **not on recognized camera cards**. **Settings → General → Write XMP sidecars** selects Always, Except camera cards (default), or Never. Use **Treat folder as card** for an unrecognized card folder, or choose Never before reviewing a read-only source library.
+- By default, PhotoCull autosaves XMP **beside photos in ordinary folders**, but **not on recognized camera cards**. **Settings → General → Write XMP sidecars** selects Except camera cards (default) or Never. Card protection also applies when scanning a parent folder recursively. Use **Treat folder as card** for an unrecognized card folder, or choose Never before reviewing a read-only source library.
 - Card copies generate XMP beside the **destination** photos by default, unless the policy is Never. For ordinary folder copies, the copy dialog’s XMP checkbox controls destination sidecars. Embedding metadata changes destination copies only.
-- **Settings → Metadata → Export metadata → Write source XMP** is an explicit source-sidecar write command, including when automatic writing is Never. Selecting Always also opts into automatic card-sidecar writes. Neither writes metadata into original image files.
+- **Settings → Metadata → Export metadata → Write source XMP** is an explicit source-sidecar write command, including when automatic writing is Never. Use explicit export to write sidecars on camera cards. PhotoCull keeps original image files intact.
 
 Sidecars use standard `xmp:Rating` and `xmp:Label` for ratings/rejects and labels. A label is not a universal Lightroom pick flag. PhotoCull also stores flags, original ratings, develop settings and hand-off records in its own namespace. Other applications do not interpret PhotoCull adjustments as their own RAW development settings.
 

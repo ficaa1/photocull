@@ -15,4 +15,41 @@ test('unsafe folder names, symlink subfolders, and existing files cannot overwri
 test('metadata failure rolls back the copied image group and leaves sources untouched',async t=>{const{photos,out,library}=await setup(t);for(const file of ['a.ARW','a.JPG'])await fs.writeFile(path.join(photos,'100MSDCF',file),file);const s=await picks(library,photos);let called=0;const copies=new TransferService({metadataWriter:{async write(){called++;throw new Error('Unsupported metadata format');},async close(){}}});t.after(()=>copies.close());
  const result=await copies.copy(s,out,{includeJpeg:true,includeXmp:true,embedMetadata:true});assert.equal(called,1);assert.equal(result.copied,0);assert.equal(result.failures.length,1);assert.deepEqual(await fs.readdir(out),[]);assert.deepEqual((await fs.readdir(path.join(photos,'100MSDCF'))).sort(),['a.ARW','a.JPG']);});
 test('old creator preference enables copy embedding and folder choice persists in a preset',async t=>{const{root}=await setup(t),state=path.join(root,'state2');await fs.mkdir(path.join(state,'settings'),{recursive:true});await fs.writeFile(path.join(state,'settings','settings.json'),JSON.stringify({metadata:{creator:'Test Photographer'}}));const store=new SettingsStore(state);await store.init();assert.equal(store.value.copyMetadata,true);assert.equal(store.value.folders.mode,'flat');const value=normalizeSettings({folders:{mode:'named',name:'Trip'}}),{preset}=await store.savePreset('Travel',value);const fresh=new SettingsStore(state);await fresh.init();assert.equal(fresh.presets.find(p=>p.id===preset.id).folders.name,'Trip');});
-test('embedded JPEG metadata preserves pixels and obeys disabled rating/label writes',async t=>{const{root}=await setup(t),file=path.join(root,'image.JPG');const sharp=require('sharp'),{ExifTool}=require('exiftool-vendored'),{MetadataWriter}=require('../src/metadata-writer.cjs');await sharp({create:{width:64,height:48,channels:3,background:'#557788'}}).jpeg().toFile(file);const pixels=await sharp(file).raw().toBuffer();const writer=new MetadataWriter(),reader=new ExifTool();t.after(async()=>{await writer.close();await reader.end();});await writer.write(file,{flag:'pick',rating:5,color:'4'},{metadata:{creator:'Test Photographer',keywords:['existing']}});await writer.write(file,{flag:'reject',rating:1,color:'1'},{metadata:{creator:'Test Photographer',writeRatings:false,writeLabels:false,keywords:['new']}});const tags=await reader.readRaw(file,{readArgs:['-Artist','-Creator','-Rating','-Label','-Subject']});assert.equal(tags.Artist,'Test Photographer');assert.equal(tags.Creator,'Test Photographer');assert.equal(Number(tags.Rating),5);assert.equal(tags.Label,'Blue');assert.deepEqual(tags.Subject,['existing','new']);assert.deepEqual(await sharp(file).raw().toBuffer(),pixels);});
+test('embedded JPEG metadata preserves pixels and obeys disabled rating/label writes',async t=>{const{root}=await setup(t),file=path.join(root,'image.JPG');const sharp=require('sharp'),{ExifTool}=require('exiftool-vendored'),{MetadataWriter}=require('../src/metadata-writer.cjs');await sharp({create:{width:64,height:48,channels:3,background:'#557788'}}).jpeg().toFile(file);const pixels=await sharp(file).raw().toBuffer();const writer=new MetadataWriter(),reader=new ExifTool();t.after(async()=>{await writer.close();await reader.end();});await writer.write(file,{flag:'pick',rating:5,color:'4'},{metadata:{creator:'Test Photographer',keywords:['existing']}});await writer.write(file,{flag:'reject',rating:1,color:'1'},{metadata:{creator:'Test Photographer',writeRatings:false,writeLabels:false,keywords:['new']}});const tags=await reader.readRaw(file,{readArgs:['-Artist','-Creator','-Rating','-Label','-Subject']});assert.equal(tags.Artist,'Test Photographer');assert.equal(tags.Creator,'Test Photographer');assert.equal(Number(tags.Rating),5);assert.equal(tags.Label,'Blue');assert.deepEqual(tags.Subject,['existing','new']);
+ const item = { flag:'none', rating:0, metadataOverrides:{ creator:'', keywords:['existing'] } };
+ const { captureSettings } = require('../src/xmp.cjs');
+ await writer.write(file,item,captureSettings({metadata:{creator:'Preset',keywords:['new']}},item));
+ const edited = await reader.readRaw(file,{readArgs:['-Creator','-Artist','-Subject']});
+ assert.equal(edited.Creator,undefined);assert.equal(edited.Artist,undefined);assert.equal(edited.Subject,'existing');
+ assert.deepEqual(await sharp(file).raw().toBuffer(),pixels);});
+
+for (const ext of ['jpg', 'png', 'webp']) test(`clearing IPTC fields removes legacy fallback values only from embedded ${ext} copies`, async t => {
+  const { root, photos, out } = await setup(t), name = 'sample.' + ext, source = path.join(photos, name);
+  const { ExifTool } = require('exiftool-vendored'), exif = new ExifTool();
+  const { PreviewService } = require('../src/previews.cjs');
+  const previews = new PreviewService(path.join(root, 'previews'), { exif });
+  const library = new Library(path.join(root, 'library'), {
+    settings: () => normalizeSettings({ writeSidecars: 'never' }), embeddedMetadata: item => previews.metadata(item).then(m => m.index.embedded)
+  });
+  const copies = new TransferService();
+  t.after(async () => { await copies.close(); await library.close(); await previews.close(); });
+  await require('sharp')({ create: { width: 64, height: 48, channels: 3, background: '#405060' } }).toFile(source);
+  const legacy = ['IFD0:XPTitle', 'IFD0:XPComment', 'IFD0:XPAuthor', 'IFD0:XPKeywords', 'EXIF:Artist',
+    'EXIF:ImageDescription', 'EXIF:Copyright', 'XMP-dc:Subject'];
+  if (ext === 'jpg') legacy.push('IPTC:Keywords', 'IPTC:ObjectName', 'IPTC:By-line', 'IPTC:Caption-Abstract', 'IPTC:CopyrightNotice');
+  await exif.write(source, Object.fromEntries(legacy.map(tag => [tag, 'Legacy'])), ['-overwrite_original']);
+  const readTags = file => exif.readRaw(file, { readArgs: legacy.map(tag => '-' + tag) });
+  const seeded = await readTags(source);
+  for (const tag of legacy) assert.equal(seeded[tag.split(':')[1]], 'Legacy', tag);
+  const original = await fs.readFile(source), session = await library.scan(photos), id = session.items[0].id;
+  await library.decide(session.id, id, { flag: 'pick' });
+  await library.editMetadata(session.id, [id], { title: '', creator: '', caption: '', copyright: '', removeKeyword: 'Legacy' });
+  const result = await copies.copy(library.get(session.id), out, { embedMetadata: true, includeXmp: false });
+  assert.equal(result.copied, 1, JSON.stringify(result.failures));
+  assert.deepEqual(await fs.readdir(out), [name]);
+  const copy = await library.scan(out), item = library.item(copy.id, copy.items[0].id);
+  assert.deepEqual((await previews.metadata(item)).index.embedded, { title: '', caption: '', creator: '', copyright: '', keywords: [] });
+  const actual = await readTags(item.path);
+  for (const tag of legacy) assert.equal(actual[tag.split(':')[1]], undefined, tag);
+  assert.deepEqual(await fs.readFile(source), original);
+});

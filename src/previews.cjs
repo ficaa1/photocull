@@ -1,6 +1,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const sharp = require('sharp');
+const { fromExif } = require('./renderer/metadata-filter.js');
 const { ExifTool } = require('exiftool-vendored');
 const { PriorityQueue } = require('./queue.cjs');
 const { hash } = require('./library.cjs');
@@ -360,10 +361,13 @@ class PreviewService {
     const key = this.baseKey(item);
     if (!this.metadataJobs.has(key)) {
       const job = (async () => {
-        const file=path.join(this.cacheDir,key+'.metadata-v3.json');
+        const file=path.join(this.cacheDir,key+'.metadata-v5.json');
         try { return JSON.parse(await fs.readFile(file,'utf8')); } catch {}
-        const tags=await this.exif.readRaw(item.path, { readArgs: ['-fast', '-Make', '-Model', '-SerialNumber', '-InternalSerialNumber', '-LensModel', '-FNumber', '-ExposureTime', '-ISO', '-Flash', '-FlashExposureComp', '-DateTimeOriginal', '-SubSecTimeOriginal', '-OffsetTimeOriginal', '-ImageWidth', '-ImageHeight', '-ExifImageWidth', '-ExifImageHeight', '-Orientation#', '-DefaultCropOrigin', '-DefaultCropSize', '-FocusLocation', '-FocusLocation2', '-FocusFrameSize#', '-FocalPlaneAFPoint*', '-AFPointsUsed', '-AFCoordinatesAvailable#', '-AFImageWidth', '-AFImageHeight', '-AFAreaXPosition*', '-AFAreaYPosition*', '-AFAreaWidth*', '-AFAreaHeight*', '-AFPointsInFocus', '-FocusPixel', '-AFPointSelected#', '-AFPointPosition#'] });
-        const data={camera:[tags.Make,tags.Model].filter(Boolean).join(' '),cameraKey:[tags.Make,tags.Model,tags.SerialNumber || tags.InternalSerialNumber].filter(Boolean).join(':'),lens:tags.LensModel || '',
+        const tags=await this.exif.readRaw(item.path, { readArgs: ['-fast', '-MIMEType', '-Error', '-Warning', '-Make', '-Model', '-SerialNumber', '-InternalSerialNumber', '-LensModel', '-FocalLength#', '-XMP-dc:Title', '-XMP-dc:Description', '-XMP-dc:Creator', '-XMP-dc:Rights', '-XMP-dc:Subject',
+          '-IPTC:ObjectName', '-IPTC:Caption-Abstract', '-IPTC:By-line', '-IPTC:CopyrightNotice', '-IPTC:Keywords', '-Artist', '-ImageDescription', '-Copyright', '-FNumber', '-ExposureTime', '-ISO', '-Flash', '-FlashExposureComp', '-DateTimeOriginal', '-SubSecTimeOriginal', '-OffsetTimeOriginal', '-ImageWidth', '-ImageHeight', '-ExifImageWidth', '-ExifImageHeight', '-Orientation#', '-DefaultCropOrigin', '-DefaultCropSize', '-FocusLocation', '-FocusLocation2', '-FocusFrameSize#', '-FocalPlaneAFPoint*', '-AFPointsUsed', '-AFCoordinatesAvailable#', '-AFImageWidth', '-AFImageHeight', '-AFAreaXPosition*', '-AFAreaYPosition*', '-AFAreaWidth*', '-AFAreaHeight*', '-AFPointsInFocus', '-FocusPixel', '-AFPointSelected#', '-AFPointPosition#'] });
+        const failure = tags.errors?.[0] || tags.warnings?.find(message => !/^\[minor\]/i.test(message));
+        if (failure || !tags.MIMEType?.startsWith('image/')) throw new Error(failure || 'Could not read image metadata.');
+        const data={index:fromExif(tags),camera:[tags.Make,tags.Model].filter(Boolean).join(' '),cameraKey:[tags.Make,tags.Model,tags.SerialNumber || tags.InternalSerialNumber].filter(Boolean).join(':'),lens:tags.LensModel || '',
           aperture:tags.FNumber ? `f/${tags.FNumber}` : '',shutter:String(tags.ExposureTime || ''),iso:tags.ISO || '',
           flash:String(tags.Flash || ''),
           flashFired:tags.Flash ? (/\bfired\b/i.test(String(tags.Flash)) && !/\bdid not fire\b/i.test(String(tags.Flash))) : null,
