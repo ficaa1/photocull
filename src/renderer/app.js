@@ -1229,7 +1229,6 @@ iptc.addEventListener('keydown', event => {
     dirtyFields.add(control.name); $('iptc-save').disabled = false;
   }
 });
-$('search').onkeydown = event => event.stopPropagation();
 iptc.onsubmit = event => { event.preventDefault(); void saveIptc(Object.fromEntries([...dirtyFields].map(field => [field, iptc.elements[field].value]))); };
 $('iptc-add').onclick = () => { const word = $('iptc-keyword').value.trim(); if (word) void saveIptc({ addKeyword: word }); };
 $('iptc-keyword').onkeydown = event => { if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); $('iptc-add').click(); } };
