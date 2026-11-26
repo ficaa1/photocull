@@ -5247,6 +5247,53 @@ pub async fn tether_location(
 }
 
 #[tauri::command]
+pub async fn tether_backup_location(
+    window: WebviewWindow,
+    app: AppHandle,
+    tether: State<'_, TetherManager>,
+    shoot_id: String,
+    expected_config_rev: u64,
+    op: String,
+) -> Result<Value, String> {
+    let tether = tether.inner().clone();
+    Ok(envelope(
+        async move {
+            tether.check(&shoot_id, None)?;
+            let picked = match op.as_str() {
+                "choose" => {
+                    let Some(folder) = window
+                        .dialog()
+                        .file()
+                        .set_parent(&window)
+                        .set_title("Choose a backup location")
+                        .blocking_pick_folder()
+                        .and_then(|p| p.into_path().ok())
+                    else {
+                        return Ok(Value::Null);
+                    };
+                    Some(folder.into_os_string().into_string().map_err(|_| {
+                        TetherError::new(
+                            "UNSUPPORTED",
+                            "Choose a backup folder with a Unicode path.",
+                        )
+                    })?)
+                }
+                "clear" | "enable" | "disable" | "retry" => None,
+                _ => return Err(TetherError::new("UNSUPPORTED", "Unknown backup operation.")),
+            };
+            tether.check(&shoot_id, None)?;
+            node(
+                &app,
+                "tether-backup-location",
+                json!([shoot_id, expected_config_rev, op, picked]),
+            )
+            .await
+        }
+        .await,
+    ))
+}
+
+#[tauri::command]
 pub async fn tether_devices(tether: State<'_, TetherManager>) -> Result<Value, String> {
     let tether = tether.inner().clone();
     Ok(envelope(tether.device_list(true).await))

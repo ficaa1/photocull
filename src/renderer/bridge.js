@@ -15,7 +15,7 @@
     return () => subscribers.get(name).delete(callback);
   };
   const EVENTS = ['backup-progress','edit-shortcut', 'open-folder-shortcut', 'settings-shortcut', 'fullscreen-toggle', 'fullscreen-changed', 'devices-changed', 'copy-progress', 'sidecar-warning', 'preview-state', 'develop-progress', 'export-progress', 'lens-database-progress', 'prepare-progress',
-    'update-progress', 'check-updates-shortcut', 'tether-connection', 'tether-properties', 'tether-config-changed', 'tether-transfer', 'tether-library-delta', 'tether-live-state', 'tether-issue', 'tether-composition', 'tether-backfill'];
+    'update-progress', 'check-updates-shortcut', 'tether-connection', 'tether-properties', 'tether-config-changed', 'tether-backup-changed', 'tether-transfer', 'tether-library-delta', 'tether-live-state', 'tether-issue', 'tether-composition', 'tether-backfill'];
 
   let backend, imageBase, platform, host, shell;
   if (tauri) {
@@ -219,6 +219,7 @@
     tetherPrimary: (shootId, session, input) => tetherNode('tether-primary', shootId, session, input),
     tetherShoots: () => tetherNode('tether-shoots'),
     tetherOpen: ({ session = null, useOpenFolder = false, layout = 'single', includeShots = true, resume = null } = {}) => tetherShell('tether_open', { session, useOpenFolder, layout, includeShots, resume }),
+    tetherBackupLocation: args => tetherShell('tether_backup_location', args),
     tetherLocation: args => tetherShell('tether_location', args),
     tetherDevices: () => tetherShell('tether_devices', {}),
     tetherDiscoverWifi: () => tetherShell('tether_discover_wifi', {}),
@@ -238,6 +239,7 @@
     tetherPresented: (shootId, exposureId, ordinal, quality) => tetherShell('tether_presented', { shootId, exposureId, ordinal, quality }),
     onTetherConnection: callback => subscribe('tether-connection', callback),
     onTetherProperties: callback => subscribe('tether-properties', callback),
+    onTetherBackup: callback => subscribe('tether-backup-changed', callback),
     onTetherConfig: callback => subscribe('tether-config-changed', callback),
     onTetherTransfer: callback => subscribe('tether-transfer', callback),
     onTetherLibrary: callback => subscribe('tether-library-delta', callback),

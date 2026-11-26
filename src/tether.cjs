@@ -4,11 +4,12 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
-const { atomicWrite, normalizeCaptureMetadata } = require('./xmp.cjs');
+const { backupState, hasAncestor, checkRoot, mirrorFile } = require('./tether-backup.cjs');
+const { atomicWrite, normalizeCaptureMetadata, sidecarPaths } = require('./xmp.cjs');
 const { checkSettings } = require('./develop.cjs');
 const { TETHER, normalizeTether } = require('./preferences.cjs');
 const { renderCaptureName, validateCaptureTemplate, validStem } = require('./renderer/naming.js');
-const { SUPPORTED, RAW, JPEG, coded, inside } = require('./library.cjs');
+const { SUPPORTED, RAW, JPEG, coded } = require('./library.cjs');
 
 const STAGE = '.photocull-tether';
 const LIMIT = 999_999_999;
@@ -135,8 +136,8 @@ function copyGroups(base, source, groups) {
 }
 
 class TetherService {
-  constructor({ dataDir, library, settings, presets = () => [], recipes, send = () => {}, isCard = async () => false, dimensions = async () => null, onDelta = () => {}, now = () => new Date() }) {
-    Object.assign(this, { library, settings, presets, recipes, send, isCard, dimensions, onDelta, now });
+  constructor({ dataDir, library, settings, presets = () => [], recipes, send = () => {}, isCard = async () => false, dimensions = async () => null, onDelta = () => {}, renameExclusive, now = () => new Date() }) {
+    Object.assign(this, { library, settings, presets, recipes, send, isCard, dimensions, onDelta, renameExclusive, now });
     this.dir = path.join(dataDir, 'tether');
     this.ledgers = new Map(); this.queues = new Map(); this.primaries = new Map();
     this.cameraCounters = { version: 1, bodies: {} }; this.counterWrites = Promise.resolve();
@@ -179,7 +180,11 @@ class TetherService {
     const ledger = this.activeShoot && this.ledgers.get(this.activeShoot);
     return !!ledger && (Object.values(ledger.members).some(m => PENDING.has(m.status)) || Object.values(ledger.exposures).some(e => e.status === 'availablePartial'));
   }
-  async close() { await Promise.allSettled([...this.queues.values(), this.counterWrites]); }
+  async close() {
+    this.closing = true;
+    clearTimeout(this.backupTimer);
+    await Promise.allSettled([...this.queues.values(), this.counterWrites, this.backupWork]);
+  }
 
   ledgerFile(shootId) { return path.join(this.dir, 'shoots', shootId + '.json'); }
   async loadLedger(shootId) {
@@ -205,6 +210,7 @@ class TetherService {
       await atomicWrite(this.ledgerFile(shootId), JSON.stringify(draft));
       this.ledgers.set(shootId, draft);
       for (const [event, payload] of events) this.send(event, { v: 1, shootId, ...payload });
+      if (events.some(([event]) => event === 'tether-backup-changed')) this.wakeBackups();
       if (failure) throw failure;
       return result;
     });
@@ -385,6 +391,10 @@ class TetherService {
         s.activeDirId = await this.directoryIdentity(s, '').catch(() => null);
         s.configRev++;
       } else s.activeDirId = identity;
+      if (s.backup?.enabled) {
+        this.retryMembers(draft);
+        events.push(this.backupEvent(draft));
+      }
       const recoveries = await this.recover(draft, events);
       const session = this.library.get(opened.id);
       s.libraryRev = session.rev || 0;
@@ -392,16 +402,17 @@ class TetherService {
       return { shootId: s.shootId, session: this.library.publicSession(session), configRev: s.configRev, libraryRev: s.libraryRev, recoveries };
     });
     this.activeShoot = shoot.shootId;
+    this.wakeBackups();
     return bound;
   }
 
   // Read-only: runs before anything, including the staging folder, is created in the chosen folder.
-  async checkDestination(root, folderId = null) {
+  async checkDestination(root, folderId = null, options) {
     if (typeof root !== 'string' || !path.isAbsolute(root)) fail('DEST_CHANGED', 'Choose a capture folder.');
     const canonical = await fs.realpath(root).catch(() => null), stat = canonical && await fs.stat(canonical);
     if (!stat?.isDirectory()) fail('DEST_CHANGED', 'Choose a capture folder.');
     if (folderId !== null && `${stat.dev}:${stat.ino}` !== folderId) fail('DEST_CHANGED', `${root} was moved, renamed or deleted. Start a new session instead.`);
-    if (await this.isCard(canonical)) fail('UNSUPPORTED', 'Camera cards cannot be tether destinations. Choose a folder on this computer.');
+    if (await this.isCard(canonical, options)) fail('UNSUPPORTED', 'Camera cards cannot be tether destinations. Choose a folder on this computer.');
     return { canonicalRoot: canonical, folderId: `${stat.dev}:${stat.ino}` };
   }
 
@@ -421,6 +432,130 @@ class TetherService {
       events.push(this.configEvent(ledger));
       return { configRev: shoot.configRev, location: this.location(shoot) };
     });
+  }
+
+  backupEvent(ledger) {
+    ledger.shoot.backupRev = (ledger.shoot.backupRev || 0) + 1;
+    return ['tether-backup-changed', { session: ledger.shoot.session, backup: backupState(ledger) }];
+  }
+
+  retryMembers(ledger, offlineOnly = false) {
+    for (const { backup } of Object.values(ledger.members)) {
+      if (backup?.status === 'failed' && (!offlineOnly || backup.unavailable)) {
+        Object.assign(backup, { status: 'pending', error: null, unavailable: false });
+      }
+    }
+  }
+
+  async backupLocation(shootId, expectedRev, op, picked = null) {
+    let destination;
+    if (op === 'choose') {
+      const { canonicalRoot: root, folderId } = await this.checkDestination(picked, null, { cameraOnly: true });
+      const primary = this.ledger(shootId).shoot;
+      if (await hasAncestor(root, primary.folderId) || await hasAncestor(primary.canonicalRoot, folderId)) {
+        fail('DEST_CHANGED', 'Choose a backup folder separate from the capture location.');
+      }
+      destination = { root, folderId, enabled: true };
+    }
+    return this.tx(shootId, async (ledger, events) => {
+      const { shoot } = ledger;
+      if (shoot.closedAt || this.activeShoot !== shootId) fail('STALE_SESSION', 'This tethered shoot is no longer active.');
+      this.checkRev(shoot, expectedRev);
+      if (op === 'clear') shoot.backup = null;
+      else {
+        if (op === 'choose') shoot.backup = destination;
+        else if (!shoot.backup) fail('DEST_CHANGED', 'Choose a backup location first.');
+        else if (op === 'enable' || op === 'disable') shoot.backup.enabled = op === 'enable';
+        else if (op !== 'retry' || !shoot.backup.enabled) fail('UNSUPPORTED', 'Enable backup before retrying.');
+        shoot.backup.generation = randomUUID();
+        for (const { backup } of Object.values(ledger.members)) {
+          if (backup && backup.status !== 'synced' && (backup.folderId !== shoot.backup.folderId || backup.destination !== shoot.backup.root)) {
+            Object.assign(backup, { destination: shoot.backup.root, folderId: shoot.backup.folderId, path: null });
+          }
+        }
+        if (shoot.backup.enabled) this.retryMembers(ledger);
+      }
+      shoot.configRev++;
+      events.push(this.configEvent(ledger), this.backupEvent(ledger));
+      return { configRev: shoot.configRev, backup: backupState(ledger) };
+    });
+  }
+
+  wakeBackups() {
+    if (this.closing || this.backupWork || !this.activeShoot) return;
+    this.backupWork = this.drainBackups().catch(error => {
+      console.warn('Tether backup: %s', error.message);
+      this.scheduleBackupCheck();
+    }).finally(() => { this.backupWork = null; });
+  }
+
+  scheduleBackupCheck() {
+    if (this.closing || this.backupTimer) return;
+    this.backupTimer = setTimeout(async () => {
+      this.backupTimer = null;
+      const shootId = this.activeShoot;
+      if (!shootId) return;
+      const ledger = this.ledger(shootId), config = ledger.shoot.backup;
+      if (!config?.enabled || !Object.values(ledger.members).some(m => m.backup?.unavailable || m.backup?.status === 'pending')) return;
+      try {
+        await checkRoot(config);
+        if (this.closing) return;
+        if (Object.values(ledger.members).some(m => m.backup?.unavailable)) {
+          await this.tx(shootId, async (draft, events) => {
+            if (draft.shoot.closedAt || draft.shoot.backup?.generation !== config.generation) return;
+            this.retryMembers(draft, true);
+            events.push(this.backupEvent(draft));
+          });
+        }
+        this.wakeBackups();
+      } catch { this.scheduleBackupCheck(); }
+    }, 5000);
+    this.backupTimer.unref();
+  }
+
+  async drainBackups() {
+    while (!this.closing && this.activeShoot) {
+      const shootId = this.activeShoot, ledger = this.ledger(shootId), { shoot } = ledger, backup = shoot.backup;
+      if (!backup?.enabled || shoot.closedAt) return;
+      const members = Object.values(ledger.members);
+      const member = members.find(m => m.backup?.status === 'pending');
+      if (!member) {
+        if (members.some(m => m.backup?.unavailable)) this.scheduleBackupCheck();
+        return;
+      }
+      const current = () => this.activeShoot === shootId && this.ledger(shootId).shoot.backup?.generation === backup.generation;
+      const checkCurrent = () => { if (!current() || this.closing) throw new Error('Backup paused.'); };
+      const source = this.absolute(shoot, member.finalRelPath);
+      const relative = path.relative(shoot.canonicalRoot, source);
+      const options = { backup, checkCurrent, renameExclusive: this.renameExclusive };
+      let result;
+      try {
+        await checkRoot(backup);
+        const photo = await mirrorFile({ ...options, source, relative, expectedHash: member.sha256 });
+        result = { ...photo, status: 'synced', error: null, unavailable: false };
+        await this.library.flushSidecars();
+        const sidecars = sidecarPaths(source), index = sidecars.findIndex(file => path.basename(file) === member.backup.sidecarName);
+        if (index >= 0) {
+          const stat = await fs.lstat(sidecars[index]).catch(error => { if (error.code !== 'ENOENT') throw error; });
+          if (stat?.isFile()) {
+            const sidecar = sidecarPaths(photo.path)[index];
+            result.sidecar = await mirrorFile({ ...options, source: sidecars[index], relative: path.relative(backup.root, sidecar) });
+          }
+        }
+      } catch (error) {
+        if (!current() || this.closing) continue;
+        // A disconnect during the copy should retry as soon as the original folder returns.
+        const unavailable = error.code === 'BACKUP_UNAVAILABLE' || !await checkRoot(backup).then(() => true, () => false);
+        result = { ...result, status: 'failed', unavailable, error: unavailable ? 'Backup drive unavailable.' : error.message };
+      }
+      if (!current() || this.closing) continue;
+      await this.tx(shootId, async (draft, events) => {
+        if (draft.shoot.closedAt || draft.shoot.backup?.generation !== backup.generation) return;
+        const entry = draft.members[member.memberId].backup;
+        Object.assign(entry, result, { attempts: entry.attempts + 1 });
+        events.push(this.backupEvent(draft));
+      });
+    }
   }
 
   config(shootId, expectedRev, patch) {
@@ -855,9 +990,21 @@ class TetherService {
 
   async ingestMember(ledger, events, member, receipt = {}) {
     const shoot = ledger.shoot, exposure = ledger.exposures[member.exposureId], policy = exposure.frozenPolicy;
+    if (shoot.backup?.enabled && !member.backup) {
+      member.backup = { destination: shoot.backup.root, folderId: shoot.backup.folderId, status: 'pending', path: null, hash: member.sha256, error: null, attempts: 0 };
+      events.push(this.backupEvent(ledger));
+    }
     const delta = await this.library.ingestCapture(shoot.session, { path: this.absolute(shoot, member.finalRelPath), shootId: shoot.shootId, exposureId: exposure.exposureId, ordinal: exposure.ordinal,
       expectedRoles: exposure.expectedHostRoles, initial: policy.initial, captureMetadata: policy.metadata, develop: { recipe: policy.adjustments.recipe, settings: policy.adjustments.settings }, separate: member.separate,
-      fileIdentity: { size: member.receivedBytes, ...(receipt.dev !== undefined ? { dev: receipt.dev } : {}), ...(receipt.ino !== undefined ? { ino: receipt.ino } : {}) } });
+      fileIdentity: { size: member.receivedBytes, ...(receipt.dev !== undefined ? { dev: receipt.dev } : {}), ...(receipt.ino !== undefined ? { ino: receipt.ino } : {}) } }).catch(error => {
+      if (member.backup) error.persist = true;
+      throw error;
+    });
+    if (member.backup) {
+      const source = this.absolute(shoot, member.finalRelPath);
+      const sidecar = this.sessionItem(shoot, delta.itemId)?.sidecar;
+      if (sidecarPaths(source).includes(sidecar)) member.backup.sidecarName = path.basename(sidecar);
+    }
     Object.assign(member, { status: 'ingested', fileIdentity: { bytes: member.receivedBytes, dev: receipt.dev ?? null, ino: receipt.ino ?? null } });
     if (!member.separate || !exposure.currentItemId) exposure.currentItemId = delta.itemId;
     const settled = new Set(Object.values(ledger.members).filter(m => m.exposureId === exposure.exposureId && m.status === 'ingested').map(m => m.role));
@@ -1276,7 +1423,7 @@ class TetherService {
     const issues = members.filter(m => m.status === 'held').map(m => ({ exposureId: m.exposureId, memberId: m.memberId, code: m.code, message: m.reason, retryable: m.code !== UNPUBLISHABLE,
       actions: m.code === UNPUBLISHABLE ? [] : m.code === 'NAME_TAKEN' ? ['saveSeparate'] : m.code === 'NAME_INVALID' ? ['repairName'] : ['retry'] }));
     return { session: shoot.session, shootId: shoot.shootId, configRev: shoot.configRev, libraryRev: shoot.libraryRev, config: structuredClone(shoot.config), location: this.location(shoot),
-      counters: { ...shoot.counters, camera: shoot.lastBodyKey ? this.cameraCounters.bodies[shoot.lastBodyKey] ?? 0 : null }, queue, space: await this.space(shoot), issues, overlayAsset: shoot.overlayAsset };
+      counters: { ...shoot.counters, camera: shoot.lastBodyKey ? this.cameraCounters.bodies[shoot.lastBodyKey] ?? 0 : null }, queue, backup: backupState(ledger), space: await this.space(shoot), issues, overlayAsset: shoot.overlayAsset };
   }
 
   libraryState(shootId, sessionId) {

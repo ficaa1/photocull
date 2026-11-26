@@ -66,6 +66,15 @@ function simulateCamera() {
       return { deviceId: `wifi:${address}` };
     },
     tetherState: async session => T.shoot?.session === session ? structuredClone(T.shoot) : null,
+    tetherBackupLocation: async ({ op, shootId, expectedConfigRev }) => {
+      const s = T.shoot;
+      if (shootId !== s.shootId || expectedConfigRev !== s.configRev) throw new Error('Stale backup command');
+      if (op === 'choose') s.backup = { enabled: true, root: '/Mirror', synced: 0, pending: 0, failed: 0 };
+      if (op === 'clear') s.backup = null;
+      if (op === 'enable' || op === 'disable') s.backup.enabled = op === 'enable';
+      if (op === 'retry') Object.assign(s.backup, { failed: 0, pending: 1, error: null });
+      return { configRev: ++s.configRev, backup: structuredClone(s.backup) };
+    },
     tetherConfig: async (shootId, configRev, patch) => { log('config', Object.keys(patch).sort().join()); if (T.holdConfig) await new Promise(resolve => { T.finishConfig = resolve; }); await wait(60); Object.assign(T.shoot.config, patch); T.shoot.configRev++; return { configRev: T.shoot.configRev, config: structuredClone(T.shoot.config) }; },
     tetherNamePreview: async (shootId, input) => PhotoCullNaming.renderCaptureName(input.namingTemplate, { jobName: input.jobName, counter: 1, extensions: ['.ARW'] }, { preview: true }),
     tetherPrimary: async (shootId, session, input) => { log('primary', input.seq, input.id); await wait(120); log('primary-ack', input.seq); return { acceptedSeq: input.seq, sourceId: input.id }; },
@@ -145,7 +154,7 @@ function simulateCamera() {
     lensDatabase: async () => ({ installed: false }),
     onTetherConnection: on('tether-connection'), onTetherProperties: on('tether-properties'), onTetherConfig: on('tether-config-changed'), onTetherTransfer: on('tether-transfer'),
     onTetherLibrary: on('tether-library-delta'), onTetherLive: on('tether-live-state'), onTetherIssue: on('tether-issue'), onTetherComposition: on('tether-composition'),
-    onTetherBackfill: on('tether-backfill'),
+    onTetherBackfill: on('tether-backfill'), onTetherBackup: on('tether-backup-changed'),
   });
 }
 
@@ -206,6 +215,8 @@ async function main() {
     assert.equal(await page.locator('#tether-capture').isDisabled(), true);
     assert.match(await page.locator('#tether-capture-reason').textContent(), /desktop app/);
     assert.match(await page.locator('#tether-panel-note').textContent(), /desktop app/);
+    assert.ok(await page.locator('#tether-backup-choose').isDisabled());
+    assert.ok(await page.locator('#tether-backup-enabled').isDisabled());
     await press('b'); assert.equal(await visible('#tether-dock'), false, 'B hides the dock');
     await press('b'); assert.equal(await visible('#tether-dock'), true);
     await press('i'); assert.equal(await visible('#inspector'), false, 'I hides the inspector');
@@ -427,6 +438,28 @@ async function main() {
     assert.equal(await visible('#tether-stop'), true, 'a running shoot offers Stop session');
     assert.equal(await page.locator('#tether-capture').isDisabled(), false);
     check('simulated camera: session started and connected');
+
+    await page.locator('#tether-backup-choose').click();
+    assert.equal(await page.locator('#tether-backup-path').textContent(), '/Mirror');
+    assert.ok(await page.locator('#tether-backup-enabled').isChecked());
+    await page.locator('#tether-backup-enabled').uncheck();
+    assert.equal(await page.locator('#tether-backup-status').textContent(), 'Backup off');
+    await page.locator('#tether-backup-enabled').check();
+    const backupProgress = patch => page.evaluate(patch => {
+      const s = __camera.shoot;
+      Object.assign(s.backup, patch);
+      __camera.emit('tether-backup-changed', { shootId: s.shootId, session: s.session, backup: structuredClone(s.backup) });
+    }, patch);
+    await backupProgress({ failed: 1, error: 'Drive unavailable' });
+    assert.match(await page.locator('#tether-backup-status').textContent(), /1 failed.*Drive unavailable/);
+    await page.locator('#tether-backup-retry').click();
+    assert.match(await page.locator('#tether-backup-status').textContent(), /Syncing.*1 pending/);
+    await backupProgress({ pending: 0, synced: 1 });
+    assert.match(await page.locator('#tether-backup-status').textContent(), /Synced \(1\)/);
+    assert.equal(await visible('#tether-backup-retry'), false);
+    await page.locator('#tether-backup-clear').click();
+    assert.equal(await page.locator('#tether-backup-path').textContent(), '');
+    check('backup location, toggle, progress and retry follow the active shoot');
 
     await page.locator('#tether-discover').click();
     await page.waitForFunction(() => tether.camera.devices[0]?.availability === 'connected');
@@ -885,7 +918,8 @@ async function main() {
     await untilCall(c => c[0] === 'presented' && c[1] === 'E14', 'presented E14');
     assert.equal(await page.evaluate(() => loupe.item?.id), ids[2], 'the JPEG shows first');
     await page.waitForTimeout(400);
-    assert.deepEqual((await calls()).filter(c => c[0] === 'primary' && c[2] === null), [], 'the JPEG-only moment keeps the current Primary');
+    const jpegCalls = await calls(), shown = jpegCalls.findIndex(c => c[0] === 'presented' && c[1] === 'E14');
+    assert.deepEqual(jpegCalls.slice(shown).filter(c => c[0] === 'primary' && c[2] === null), [], 'the displayed provisional JPEG keeps the current Primary');
     assert.match(await page.locator('#tether-adjust-source').textContent(), /waiting for its RAW/);
     await emitDelta({ firstArrival: false, ordinal: 14, exposureId: 'E14', itemId: ids[3], pairState: 'paired', remap: [{ from: ids[2], to: ids[3] }], upserts: [{ ...rawLater, raw: true, exposureId: 'E14', ordinal: 14, contentRev: (rawLater.contentRev || 0) + 1 }] });
     await page.waitForFunction(id => loupe.item?.id === id && document.querySelector('#review-image').src.startsWith('blob:') && document.querySelector('#preview-source').textContent === 'Developed RAW', ids[3]);
