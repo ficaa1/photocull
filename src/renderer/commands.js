@@ -8,6 +8,8 @@
   add('settings', 'Settings', 'Application', ['Mod+,'], APP, { typing: true, ignoreShift: true, allowModifiers: ['Alt'] });
   add('open', 'Open folder…', 'Application', ['Mod+O'], APP, { typing: true, ignoreShift: true, allowModifiers: ['Alt'] });
   add('export', 'Export finished images…', 'Files', ['Mod+Shift+E'], ALL, { typing: true, allowModifiers: ['Alt'] });
+  add('contact-sheet', 'Export Contact Sheet…', 'Files', [], ALL, { button: 'contact-sheet' });
+  add('slideshow', 'Play slideshow', 'View', ['Mod+Enter'], ALL, { button: 'start-slideshow' });
   add('fullscreen-key', 'Fullscreen (F11)', 'View', ['F11'], ALL, { typing: true, ignoreShift: true, allowModifiers: ['Ctrl','Meta','Alt'] });
   add('switch-view', 'Switch review / contact sheet', 'View', ['Ctrl+Tab'], ALL, { typing: true, ignoreShift: true, allowModifiers: ['Meta','Alt'] });
   add('edit', 'Edit in external editor…', 'Files', ['Mod+E'], ALL, { allowModifiers: ['Alt'] });
@@ -125,12 +127,12 @@
     for(const id of Object.keys(out))if(table.some(c=>c.id===id)&&conflicts(table,out,id,out[id]).length)throw new Error('Shortcut conflict for '+id+'.');
     return out;
   }
-  // Saved shortcuts predate the tether defaults; a key the user already gave another command keeps that command and leaves the tether one unassigned.
+  // A saved binding takes precedence over defaults introduced by tethering or slideshow.
   function migrateCustom(value) {
     let custom;
     try{custom=Object.fromEntries(Object.entries(value).map(([id,keys])=>[id,[...new Set(keys.map(normalize))]]));}catch{return validateCustom(value);}
     for(const id of Object.keys(custom))if(table.some(c=>c.id===id))
-      for(const clash of conflicts(table,custom,id,custom[id]))if(clash.id.startsWith('tether-')&&!Object.hasOwn(custom,clash.id))custom[clash.id]=[];
+      for(const clash of conflicts(table,custom,id,custom[id]))if((clash.id.startsWith('tether-') || clash.id==='slideshow')&&!Object.hasOwn(custom,clash.id))custom[clash.id]=[];
     return validateCustom(custom);
   }
   function fuzzy(query,text) {
@@ -141,7 +143,7 @@
     const commands=table.map(row=>({...row,enabled:()=>enabled(row),run:event=>actions[row.id]?.(event)}));
     return {commands,execute(id,event={}){const c=commands.find(c=>c.id===id);if(!c||!active(c,context())||!c.enabled())return false;const input=typeof event.preventDefault==='function'?event:{...event,preventDefault(){}};const result=c.run(input);onRun(c);return result??true;},
       dispatch(event,{typing=false,button=false}={}){if(event.defaultPrevented)return false;const key=eventKey(event);if(!key)return false;
-        const command=commands.find(c=>active(c,context())&&(!typing||c.typing)&&(!button||!['Space','Enter'].includes(event.key===' '?'Space':event.key))&&c.enabled()&&matches(c,event,custom(),platform));
+        const command=commands.find(c=>active(c,context())&&(!typing||c.typing)&&(!button||event.ctrlKey||event.metaKey||!['Space','Enter'].includes(event.key===' '?'Space':event.key))&&c.enabled()&&matches(c,event,custom(),platform));
         if(!command)return false;event.preventDefault();this.execute(command.id,event);return true;},
       search(query,recent=[]){return commands.map(c=>({command:c,score:fuzzy(query,c.title+' '+c.category)+(query?0:Math.max(0,10-recent.indexOf(c.id))*(recent.includes(c.id)?1:0))})).filter(r=>r.score>0).sort((a,b)=>b.score-a.score).map(r=>r.command);}};
   }

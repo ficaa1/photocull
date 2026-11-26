@@ -25,7 +25,7 @@ const path = require('node:path');
 const os = require('node:os');
 const readline = require('node:readline');
 const { randomBytes } = require('node:crypto');
-const { Library } = require('./library.cjs');
+const { Library, photoPaths, inside } = require('./library.cjs');
 const { RecipeStore, planExport } = require('./develop.cjs');
 const { planTiffs, writableFolder } = require('./develop-plan.cjs');
 const { PreviewService } = require('./previews.cjs');
@@ -40,6 +40,7 @@ const { normalizeSettings } = require('./preferences.cjs');
 const { SettingsStore } = require('./settings.cjs');
 const { serverConfig, FolderRoots, allowedHost, createAuth, LOGIN_PAGE } = require('./server.cjs');
 const { ServerTrash } = require('./server-trash.cjs');
+const { exportContactSheet } = require('./contact-sheet.cjs');
 const { PrepareJobs } = require('./prepare.cjs');
 const { ExternalEdits } = require('./external-edits.cjs');
 const { TetherService } = require('./tether.cjs');
@@ -54,8 +55,8 @@ const rendererDir = path.join(__dirname, 'renderer');
 const RENDERER_FILES = new Map([['index.html', 'text/html'], ['styles.css', 'text/css'], ['app.js', 'text/javascript'],
   ['metadata-filter.js', 'text/javascript'], ['commands.js', 'text/javascript'], ['histogram.js', 'text/javascript'], ['develop.js', 'text/javascript'], ['export.js', 'text/javascript'],
   ['naming.js', 'text/javascript'], ['image-view.js', 'text/javascript'], ['loupe.js', 'text/javascript'], ['culling.js', 'text/javascript'], ['survey.js', 'text/javascript'], ['bridge.js', 'text/javascript'], ['server.js', 'text/javascript'],
+  ['contact-sheet-layout.js', 'text/javascript'], ['contact-sheet.js', 'text/javascript'], ['slideshow.js', 'text/javascript'],
   ['tether.js', 'text/javascript'], ['overlays.js', 'text/javascript']]);
-const inside = (parent, child) => { const rel = path.relative(parent, child); return rel === '' || !!rel && !rel.startsWith('..') && !path.isAbsolute(rel); };
 
 function defaultDataDir() {
   // Matches Electron's userData folder, which is named after productName
@@ -145,6 +146,7 @@ async function start() {
   };
   const backupSource = async source => { if(typeof source !== 'string' || !path.isAbsolute(source))throw new Error('Choose a card or folder.');const real=await fs.realpath(source);if(!(await fs.stat(real)).isDirectory())throw new Error('Choose a folder.');return real; };
   previews.editorName = id => settings.value.editors.find(e=>e.id===id)?.name;
+  let contactSheet = null;
   let importing=false;
   const previewPhoto = photo => photo.develop?.missing ? { ...photo, develop: null } : photo;
   const methods = {
@@ -206,7 +208,7 @@ async function start() {
       if (!Array.isArray(ids) || !ids.length || ids.length > 100_000) throw new Error('Choose photos to export.');
       const items = [...new Set(ids)].map(id => library.item(session, id));
       if (items.some(item => item.trashed)) throw new Error('Photos in Trash cannot be exported.');
-      return planExport(items, { ...(options || {}), protectedPaths: s.items.flatMap(i => [i.path, i.companion, i.develop?.tiff, ...(i.develop?.handoffs || []).map(r=>r.path)]).filter(Boolean), captureDate: item => previews.metadata(item).then(data => data.captured) });
+      return planExport(items, { ...(options || {}), protectedPaths: photoPaths(s.items), captureDate: item => previews.metadata(item).then(data => data.captured) });
     },
     // Shell-only: Lightcraft's AVIF muxer carries EXIF but omits XMP. The file is still staged.
     'export-embed-xmp': async (file, xmp) => {
@@ -322,6 +324,25 @@ async function start() {
       await fs.writeFile(file, JSON.stringify(library.manifest(session), null, 2));
       return file;
     },
+    ...(!web && {
+      'export-contact-sheet': async (session, ids, options, file) => {
+        if (contactSheet) throw new Error('A contact sheet is already being exported.');
+        const source = library.get(session);
+        let photos = source.items;
+        if ((options?.scope ?? 'selection') === 'selection') {
+          if (!Array.isArray(ids)) throw new Error('Invalid photo selection.');
+          photos = [...new Set(ids.map(id => library.item(session, id)))];
+        }
+        const controller = new AbortController();
+        const job = exportContactSheet({ photos, options, file, previews, protectedPaths: photoPaths(source.items),
+          isCard: folder => source.removable && inside(source.folder, folder) || onCard(folder),
+          colors: settings.value.colors, metadata: settings.value.metadata, signal: controller.signal,
+          onProgress: progress => send('contact-sheet-progress', progress) });
+        contactSheet = { controller, job };
+        try { return await job; } finally { contactSheet = null; }
+      },
+      'contact-sheet-cancel': () => contactSheet?.controller.abort(new Error('Contact sheet export canceled.')),
+    }),
     'session-folder': session => library.get(session).folder,
     'deletion-plan': async (session, ids) => {
       if (deleting) throw new Error('Another deletion is already running.');
@@ -459,6 +480,7 @@ async function start() {
         // prefetch=N ranks look-ahead work below anything on screen.
         const rank = Number(url.searchParams.get('prefetch')) || 0;
         const data = url.searchParams.has('cached') ? await previews.peek(item, kind)
+          : kind === 'full' && url.searchParams.has('slideshow') ? await previews.getForPresentation(item, kind)
           : await previews.get(item, kind, kind === 'thumb' ? 1 : url.searchParams.has('prefetch') ? Math.max(2, Math.min(9, 10 - rank)) : 100);
         if (!data) { res.writeHead(404, { 'Cache-Control': 'no-store' }).end(); return; }
         res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=31536000, immutable', 'Content-Length': data.length });
@@ -501,6 +523,10 @@ async function start() {
   let closing = null;
   const shutdown = () => closing ??= (async () => {
     server.close(); prepare.close();
+    if (contactSheet) {
+      contactSheet.controller.abort(new Error('Contact sheet export canceled.'));
+      await contactSheet.job.catch(() => {});
+    }
     await Promise.allSettled([externalEdits.decisions, externalEdits.writes, tether.close()]);
     await Promise.allSettled([library.close(), settings.writes, previews.close(), transfers.close(), backups.close(), devices.close()]);
     process.exit(0);

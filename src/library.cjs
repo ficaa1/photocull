@@ -789,4 +789,8 @@ class Library {
   }
 }
 
-module.exports = { Library, groupFiles, groupKey, RAW, JPEG, SUPPORTED, hash, coded, inside };
+function photoPaths(items) {
+  return items.flatMap(i => [i.path, i.companion, i.develop?.tiff,
+    ...(i.develop?.handoffs || []).flatMap(r => [r.path, r.realPath])]).filter(Boolean);
+}
+module.exports = { Library, photoPaths, groupFiles, groupKey, RAW, JPEG, SUPPORTED, hash, coded, inside };

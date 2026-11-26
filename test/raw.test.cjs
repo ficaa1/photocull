@@ -40,6 +40,42 @@ function fakeRender(counter) {
 }
 function service(t, cache, options) { const p = new PreviewService(cache, options); t.after(() => p.close()); return p; }
 
+test('gallery pruning preserves shared slideshow RAW renders and queued contact sheet photos', async t => {
+  const { dir, cache, item } = await setup(t);
+  const items = [item];
+  for (const id of ['slide', 'gallery', 'sheet']) {
+    const file = path.join(dir, id + '.ARW');
+    await fs.copyFile(item.path, file);
+    const stat = await fs.stat(file);
+    items.push({ ...item, id, name: id, path: file, mtimeMs: stat.mtimeMs });
+  }
+  const image = await picture(32, 32), active = Promise.withResolvers(), release = Promise.withResolvers();
+  const queued = new Set(), waiting = Promise.withResolvers();
+  const previews = service(t, cache, { exif: extractor(), render: async (file, output) => {
+    if (file === item.path) { active.resolve(); await release.promise; }
+    await fs.writeFile(output, image); return { width: 32, height: 32 };
+  }, onState: e => {
+    if (e.state === 'queued') queued.add(e.id);
+    if (queued.has('slide') && queued.has('gallery')) waiting.resolve();
+  } });
+  const first = previews.get(item, 'full'); await active.promise;
+  const shared = previews.get(items[1], 'full');
+  const obsolete = assert.rejects(previews.get(items[2], 'full'), /superseded/);
+  await waiting.promise;
+  const slide = previews.getForPresentation(items[1], 'full');
+  const file = path.join(dir, 'sheet.pdf');
+  const { exportContactSheet } = require('../src/contact-sheet.cjs');
+  const rendering = Promise.withResolvers();
+  const sheet = exportContactSheet({ photos: [items[3]], file, previews, onProgress: () => rendering.resolve() });
+  await rendering.promise;
+  await new Promise(resolve => setImmediate(resolve));
+  previews.focus([]); previews.visible([]);
+  release.resolve();
+  const [, , bytes, , result] = await Promise.all([first, shared, slide, obsolete, sheet]);
+  assert.equal((await sharp(bytes).metadata()).format, 'jpeg');
+  assert.deepEqual(result.warnings, []);
+});
+
 test('multiple embedded JPEG/TIFF representations choose adequate sizes without rendering', async t => {
   const { cache, item } = await setup(t), count = { count: 0 };
   const exif = extractor({ ThumbnailTIFF: await picture(640, 480, 'tiff'), PreviewImage: await picture(3000, 2000), JpgFromRaw: await picture(6000, 4000) });

@@ -263,8 +263,8 @@ function filtered() {
     return match && (!state.colorFilter || colorOf(item) === state.colorFilter) && matchesMetadata(item);
   });
 }
-function imageUrl(item, kind = 'thumb', prefetch = false) {
-  return api.imageUrl(state.session.id, item.id, kind, `&d=${item.developRevision || 0}&edit=${item.externalEdit ? 1 : 0}&v=${state.previewRevision}${state.showOriginal ? '&original=1' : ''}${item.contentRev ? `&cr=${item.contentRev}` : ''}${prefetch ? '&prefetch=1' : ''}`);
+function imageUrl(item, kind = 'thumb', prefetch = false, original = state.showOriginal) {
+  return api.imageUrl(state.session.id, item.id, kind, `&d=${item.developRevision || 0}&edit=${item.externalEdit ? 1 : 0}&v=${state.previewRevision}${original ? '&original=1' : ''}${item.contentRev ? `&cr=${item.contentRev}` : ''}${prefetch ? '&prefetch=1' : ''}`);
 }
 const xmpEligible = item => item.edited || item.adjusted || item.developed || item.externalEdit || item.recipe || item.developRevision > 0 || !!item.captureMetadata || Object.hasOwn(item, 'metadataOverrides');
 function fileSize(bytes) { return bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`; }
@@ -379,12 +379,14 @@ function render(reset = false) {
   renderMetadataFilters();
   renderEditorActions();
   $('export').disabled = state.busy || state.deleting || !state.session?.items.length;
+  $('export-menu-button').disabled = $('contact-sheet').disabled = state.busy || state.deleting || !state.session?.items.length;
   $('image-export').disabled = state.busy || !state.session?.items.length || state.deleting || state.copy.running;
   renderCounts();
   $('original-toggle').hidden = !state.session?.items.some(i=>i.externalEdit) || state.mode==='develop';
   $('original-toggle').textContent = state.showOriginal ? 'Show External edits (\\)' : 'Show originals (\\)';
   $('original-toggle').setAttribute('aria-pressed',String(state.showOriginal));
   const items = filtered();
+  $('start-slideshow').disabled = state.busy || state.deleting || !items.length;
   if (!items.some(i => i.id === state.selected)) state.selected = items[0]?.id ?? null;
   const visible = new Set(items.map(i => i.id)), hadMarked = state.marked.size > 0;
   state.marked = new Set([...state.marked].filter(id => visible.has(id)));
@@ -1048,23 +1050,36 @@ function applyFullscreen(value) {
   if (!value) { clearTimeout(dockTimer); document.body.classList.remove('filmstrip-visible'); }
   requestAnimationFrame(() => loupe.layout());
 }
-async function setFullscreen(value = !state.fullscreen) {
+async function setFullscreen(value = !state.fullscreen, presentation = false) {
   if (value && !photo()) return;
-  if (value && !photoStage()) setMode('review');
+  if (!presentation && value && !photoStage()) setMode('review');
   const request = ++fullscreenRequest, previous = state.fullscreen;
   fullscreenPending++;
-  applyFullscreen(value);
+  if (!presentation) applyFullscreen(value);
   // Native fullscreen transitions are asynchronous. Keep rapid toggles in order,
   // and ignore intermediate native events while a newer target is pending.
-  const transition = fullscreenQueue.catch(() => {}).then(() => api.fullscreen(value));
+  const transition = fullscreenQueue.catch(() => {}).then(() => api.setFullscreen(value));
   fullscreenQueue = transition;
-  try { const result = await transition; if (request === fullscreenRequest) applyFullscreen(result.fullscreen); }
-  catch (error) { if (request === fullscreenRequest) applyFullscreen(previous); toast(error.message); }
+  try { const result = await transition; if (request === fullscreenRequest && (!presentation || !result.fullscreen)) applyFullscreen(result.fullscreen); }
+  catch (error) { if (!presentation && request === fullscreenRequest) applyFullscreen(previous); toast(error.message); }
   finally { fullscreenPending--; }
 }
 $('fullscreen').innerHTML = fullscreenIcons.enter;
 $('fullscreen').onclick = () => { $('fullscreen').blur(); void setFullscreen(); };
-api.onFullscreen(status => { if (!fullscreenPending) applyFullscreen(status.fullscreen); });
+const labelColor = item => state.settings.colors.find(c => c.id === colorOf(item));
+const contactSheet = PhotoCullContactSheet.init({ $, api, session: () => state.session, selection, labelColor, metadata: cullingMetadata,
+  imageUrl: item => imageUrl(item, 'thumb', false, false) });
+const slideshow = PhotoCullSlideshow.init({ $, items: () => state.marked.size > 1 ? selection() : filtered(),
+  current: () => state.marked.size > 1 ? null : state.selected, imageUrl: (item, kind) => imageUrl(item, kind) + '&slideshow=1',
+  colorOf: labelColor, fullscreen: () => state.fullscreen, setFullscreen });
+$('contact-sheet').onclick = () => contactSheet.open();
+$('start-slideshow').onclick = () => slideshow.open();
+api.onSlideshow(() => { if (!$('start-slideshow').disabled) slideshow.open(); });
+api.onFullscreen(status => {
+  if (fullscreenPending || $('slideshow').open && status.fullscreen) return;
+  applyFullscreen(status.fullscreen);
+  if ($('slideshow').open) void slideshow.exit(false);
+});
 api.onFullscreenToggle(() => hideDeletePrompt());
 api.onFullscreenToggle(() => { if (!document.querySelector('dialog[open]')) void setFullscreen(); });
 $('shortcuts').onclick = () => openHelp();
@@ -1659,6 +1674,7 @@ function bindMenu(button,menu) {
   });
 }
 document.addEventListener('pointerdown',e=>{for(const m of menus)if(!m.menu.hidden&&!m.menu.contains(e.target)&&!m.button.contains(e.target))closeMenus();});
+bindMenu($('export-menu-button'),$('export-menu'));
 bindMenu($('external-editor-menu'),$('external-editor-list'));
 bindMenu($('develop-recipe-menu-button'),$('develop-recipe-menu'));
 $('handoff-cleanup').onclick=async()=>{

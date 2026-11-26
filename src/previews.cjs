@@ -36,7 +36,7 @@ class PreviewService {
     this.suspendedHandoffs = new Set(); this.editorName = null; this.sourceInfo = new Map(); this.infoByKind = new Map(); this.states = new Map(); this.metadataJobs = new Map();
     this.inventories = new Map(); this.extracting = new Map(); this.sizes = new Map();
     this.policy = POLICIES.includes(rendering) ? rendering : 'missing';
-    this.revision = 0; this.itemRevisions = new Map(); this.focusIds = new Set(); this.visibleIds = new Set();
+    this.revision = 0; this.itemRevisions = new Map(); this.presenting = new Map(); this.focusIds = new Set(); this.visibleIds = new Set();
     this.onState = onState; this.closed = false;
     this.stats = { memoryHits: 0, diskHits: 0, generated: 0, embeddedExtractions: 0, directExtractions: 0 };
     this.renders = new RawRenderCache(cacheDir, { render, timeoutMs: renderTimeoutMs,
@@ -82,12 +82,13 @@ class PreviewService {
   }
   focus(items) {
     this.focusIds = new Set(items.map(i => i.id));
-    this.queue.cancelWhere(job => /^(preview|full):/.test(job.key) && !this.focusIds.has(job.key.split(':')[1]));
-    this.renders.cancelObsolete(new Set([...this.focusIds, ...this.visibleIds]));
+    const keep = new Set([...this.presenting.keys(), ...this.focusIds]);
+    this.queue.cancelWhere(job => /^(preview|full):/.test(job.key) && !keep.has(job.key.split(':')[1]));
+    this.renders.cancelObsolete(new Set([...keep, ...this.visibleIds]));
   }
   visible(items) {
     this.visibleIds = new Set(items.map(i => i.id));
-    const keep = new Set([...this.focusIds, ...this.visibleIds]);
+    const keep = new Set([...this.presenting.keys(), ...this.focusIds, ...this.visibleIds]);
     this.queue.cancelWhere(job => !keep.has(job.key.split(':')[1]));
     this.renders.cancelObsolete(keep);
   }
@@ -287,6 +288,17 @@ class PreviewService {
     const metadata = await sharp(selected.file, { limitInputPixels: 160_000_000 }).metadata();
     return metadata.format === 'jpeg' && (metadata.orientation || 1) === 1 && (!metadata.space || metadata.space === 'srgb') ? fs.readFile(selected.file) : null;
   }
+  async getForPresentation(item, kind) {
+    const ids = new Set([item.schedulingId || item.id, item.id]);
+    for (const id of ids) this.presenting.set(id, (this.presenting.get(id) || 0) + 1);
+    try { return await this.get(item, kind, 100); }
+    finally {
+      for (const id of ids) {
+        const remaining = this.presenting.get(id) - 1;
+        if (remaining) this.presenting.set(id, remaining); else this.presenting.delete(id);
+      }
+    }
+  }
   async get(item, kind = 'thumb', priority = 1) {
     item = await this.displayItem(item);
     if (this.closed) throw new Error('Preview service is closing.');
@@ -367,8 +379,9 @@ class PreviewService {
           '-IPTC:ObjectName', '-IPTC:Caption-Abstract', '-IPTC:By-line', '-IPTC:CopyrightNotice', '-IPTC:Keywords', '-Artist', '-ImageDescription', '-Copyright', '-FNumber', '-ExposureTime', '-ISO', '-Flash', '-FlashExposureComp', '-DateTimeOriginal', '-SubSecTimeOriginal', '-OffsetTimeOriginal', '-ImageWidth', '-ImageHeight', '-ExifImageWidth', '-ExifImageHeight', '-Orientation#', '-DefaultCropOrigin', '-DefaultCropSize', '-FocusLocation', '-FocusLocation2', '-FocusFrameSize#', '-FocalPlaneAFPoint*', '-AFPointsUsed', '-AFCoordinatesAvailable#', '-AFImageWidth', '-AFImageHeight', '-AFAreaXPosition*', '-AFAreaYPosition*', '-AFAreaWidth*', '-AFAreaHeight*', '-AFPointsInFocus', '-FocusPixel', '-AFPointSelected#', '-AFPointPosition#'] });
         const failure = tags.errors?.[0] || tags.warnings?.find(message => !/^\[minor\]/i.test(message));
         if (failure || !tags.MIMEType?.startsWith('image/')) throw new Error(failure || 'Could not read image metadata.');
+        const focal = Number(tags.FocalLength);
         const data={index:fromExif(tags),camera:[tags.Make,tags.Model].filter(Boolean).join(' '),cameraKey:[tags.Make,tags.Model,tags.SerialNumber || tags.InternalSerialNumber].filter(Boolean).join(':'),lens:tags.LensModel || '',
-          aperture:tags.FNumber ? `f/${tags.FNumber}` : '',shutter:String(tags.ExposureTime || ''),iso:tags.ISO || '',
+          focalLength:Number.isFinite(focal) && focal > 0 ? `${Math.round(focal * 10) / 10} mm` : String(tags.FocalLength || ''),aperture:tags.FNumber ? `f/${tags.FNumber}` : '',shutter:String(tags.ExposureTime || ''),iso:tags.ISO || '',
           flash:String(tags.Flash || ''),
           flashFired:tags.Flash ? (/\bfired\b/i.test(String(tags.Flash)) && !/\bdid not fire\b/i.test(String(tags.Flash))) : null,
           flashComp:tags.FlashExposureComp === undefined || tags.FlashExposureComp === null ? '' : String(tags.FlashExposureComp),

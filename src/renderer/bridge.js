@@ -14,7 +14,7 @@
     subscribers.get(name).add(callback);
     return () => subscribers.get(name).delete(callback);
   };
-  const EVENTS = ['backup-progress','edit-shortcut', 'open-folder-shortcut', 'settings-shortcut', 'fullscreen-toggle', 'fullscreen-changed', 'devices-changed', 'copy-progress', 'sidecar-warning', 'preview-state', 'develop-progress', 'export-progress', 'lens-database-progress', 'prepare-progress',
+  const EVENTS = ['contact-sheet-progress', 'slideshow-shortcut', 'backup-progress','edit-shortcut', 'open-folder-shortcut', 'settings-shortcut', 'fullscreen-toggle', 'fullscreen-changed', 'devices-changed', 'copy-progress', 'sidecar-warning', 'preview-state', 'develop-progress', 'export-progress', 'lens-database-progress', 'prepare-progress',
     'update-progress', 'check-updates-shortcut', 'tether-connection', 'tether-properties', 'tether-config-changed', 'tether-transfer', 'tether-library-delta', 'tether-live-state', 'tether-issue', 'tether-composition', 'tether-backfill'];
 
   let backend, imageBase, platform, host, shell;
@@ -249,13 +249,18 @@
     onEdit: callback => subscribe('edit-shortcut', callback),
     onOpenFolder: callback => subscribe('open-folder-shortcut', callback),
     onSettings: callback => subscribe('settings-shortcut', callback),
+    onSlideshow: callback => subscribe('slideshow-shortcut', callback),
+    onContactSheetProgress: callback => subscribe('contact-sheet-progress', callback),
+    saveContactSheet: (session, ids, options) => shell('save_contact_sheet', { session, ids, options }),
+    cancelContactSheet: () => backend('contact-sheet-cancel'),
     onFullscreenToggle: callback => subscribe('fullscreen-toggle', callback),
     onFullscreen: callback => subscribe('fullscreen-changed', callback),
     onDevices: callback => subscribe('devices-changed', callback),
     onCopyProgress: callback => subscribe('copy-progress', callback),
     onSidecarWarning: callback => subscribe('sidecar-warning', callback),
     onPreviewState: callback => subscribe('preview-state', callback),
-    fullscreen: value => {
+    fullscreen: value => api.setFullscreen(value),
+    setFullscreen: value => {
       if (typeof value !== 'boolean') return Promise.reject(new Error('Invalid fullscreen mode.'));
       return host.fullscreen(value);
     },
