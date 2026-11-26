@@ -11,17 +11,34 @@
       check.onchange=()=>{this.state.linked=check.checked;if(check.checked)this.changed(this.state.active);};label.append(check,document.createTextNode(' Link zoom & pan'));
       const fit=el('button','button quiet','Fit all');fit.onclick=()=>{for(const p of this.panes)p.view.reset();};
       this.hint=el('span','compare-hint','Click a pane or Tab to focus · P / X / 0–5 · ← → swap candidate · Z zoom · C close');
-      bar.append(label,fit,this.hint);
+      this.shortlist = []; this.page = 0;
+      this.pageNav = el('div','compare-pages'); this.pageNav.hidden = true;
+      this.pageLabel = el('span'); this.pageLabel.setAttribute('role','status');
+      this.prevPage = el('button','button quiet'); this.nextPage = el('button','button quiet');
+      this.prevPage.dataset.paletteAction = 'compare-previous-page';
+      this.nextPage.dataset.paletteAction = 'compare-next-page';
+      this.prevPage.dataset.paletteCategory = this.nextPage.dataset.paletteCategory = 'Compare';
+      this.prevPage.onclick = () => this.turnPage(-1); this.nextPage.onclick = () => this.turnPage(1);
+      this.pageNav.append(this.pageLabel,this.prevPage,this.nextPage);
+      bar.append(label,fit,this.pageNav,this.hint);
       this.container=el('div','compare-panes');this.root.append(bar,this.container);
     }
-    open(selected,items) {this.pin=null;this.state=C.compareState(selected,items);this.link.checked=this.state.linked;this.shape='';return this.state.ids.length>=2;}
+    open(selected,items) {
+      this.pin = null;
+      this.shortlist = selected.length > 4 ? selected.slice() : [];
+      this.page = 0;
+      this.state = C.compareState(selected,items);
+      this.link.checked = this.state.linked;
+      this.shape = '';
+      return this.state.ids.length >= 2;
+    }
     pinReference(id) {
       const item=this.host.item(id);if(!item || item.trashed)return false;
       const candidate=this.pin?.candidate!==id?this.pin?.candidate ?? null:null;
-      this.pin={reference:id,candidate};this.state={ids:[id],active:1,linked:this.state.linked};return true;
+      this.shortlist=[];this.pageNav.hidden=true;this.pin={reference:id,candidate};this.state={ids:[id],active:1,linked:this.state.linked};return true;
     }
     unpin() {this.pin=null;}
-    remap(map) {if(this.pin)for(const key of ['reference','candidate'])if(map.has(this.pin[key]))this.pin[key]=map.get(this.pin[key]);this.state.ids=this.state.ids.map(id=>map.get(id)??id);}
+    remap(map) {this.shortlist=[...new Set(this.shortlist.map(id=>map.get(id)??id))];if(this.pin)for(const key of ['reference','candidate'])if(map.has(this.pin[key]))this.pin[key]=map.get(this.pin[key]);this.state.ids=this.state.ids.map(id=>map.get(id)??id);}
     pinned() {return this.pin ? {...this.pin} : null;}
     // The right pane only: the reference never becomes its own candidate. The selection follows only while the incoming pane is active,
     // so decisions keep going to the reference when the user is working on it.
@@ -32,15 +49,43 @@
       return true;
     }
     sync(active) {
-      const items=this.host.items();this.root.hidden=!active || !items.length && !this.pin;if(this.root.hidden)return;
-      if(this.pin)return this.syncPinned();
-      const available=new Set(items.map(i=>i.id));
+      this.root.hidden = !active;
+      if (!active) return;
+      if (this.pin) return this.syncPinned();
+      this.pageNav.hidden = !this.shortlist.length;
+      this.hint.hidden = !this.pageNav.hidden;
+      if (this.shortlist.length) return this.syncPage();
+      const items=this.host.items(), available=new Set(items.map(item=>item.id));
+      if (!items.length) { this.root.hidden=true; return; }
       this.state.ids=this.state.ids.filter(id=>available.has(id));
       if(this.state.ids.length<2)this.state.ids=C.compareState(this.state.ids.length?this.state.ids:[items[0].id],items).ids;
       this.state.active=Math.min(this.state.active,Math.max(0,this.state.ids.length-1));
       this.layout(this.state.ids);
     }
+    syncPage() {
+      const available = new Set(this.host.library().map(item => item.id));
+      const ids = this.shortlist.filter(id => available.has(id));
+      if (!ids.length) { this.root.hidden = true; return; }
+      this.page = Math.min(this.page, Math.floor((ids.length - 1) / 4));
+      const start = this.page * 4;
+      this.state.ids = ids.slice(start, start + 4);
+      this.state.active = Math.min(this.state.active, this.state.ids.length - 1);
+      this.pageLabel.textContent = `Photos ${start + 1}–${start + this.state.ids.length} of ${ids.length} selected`;
+      this.prevPage.textContent = 'Previous 4';
+      this.prevPage.disabled = start === 0;
+      const remaining = ids.length - start - 4;
+      this.nextPage.textContent = remaining > 0 ? `Next ${Math.min(4,remaining)}` : 'Next';
+      this.nextPage.disabled = remaining <= 0;
+      this.layout(this.state.ids);
+      this.host.activate(this.state.ids[this.state.active]);
+    }
+    turnPage(delta) {
+      if ((delta<0 ? this.prevPage : this.nextPage).disabled) return;
+      this.page+=delta; this.sync(true);
+      this.panes[this.state.active]?.pane.focus();
+    }
     syncPinned() {
+      this.hint.hidden=false;
       const live=id=>{const item=id && this.host.item(id);return item && !item.trashed ? item : null;};
       if(!live(this.pin.reference)) {this.pin=null;this.host.unpinned?.('Reference shot removed · pin cleared');return;}
       if(!live(this.pin.candidate))this.pin.candidate=null;
@@ -120,6 +165,7 @@
       }
     }
     swap(delta) {
+      if (this.shortlist.length) { this.turnPage(delta); return; }
       if(this.pin) {
         const items=this.host.items().filter(i=>i.id!==this.pin.reference),index=items.findIndex(i=>i.id===this.pin.candidate);
         const next=items[index<0 ? (delta<0?items.length-1:0) : Math.max(0,Math.min(items.length-1,index+delta))];

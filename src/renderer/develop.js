@@ -174,11 +174,20 @@
         });
         const end = () => { if (this.drag?.range === range) this.drag=null; };
         range.addEventListener('pointerup',end); range.addEventListener('lostpointercapture',end);
-        parent.append(node('div',{class:'develop-slider'},[label,range,number])); this.rows.set(spec.id,{range,number,spec});
+        const resetButton = button('Reset', () => { this.change(spec.id,this.resetValue(spec)); range.focus(); });
+        resetButton.className = 'text-button slider-reset';
+        resetButton.dataset.paletteAction = 'reset-' + spec.id;
+        resetButton.dataset.paletteCategory = 'Develop';
+        parent.append(node('div',{class:'develop-slider'},[label,range,number,resetButton]));
+        this.rows.set(spec.id,{range,number,spec,resetButton});
       }
     }
     value(path) { return get(L.merge(this.base,this.own),path) ?? specOf(path)?.default; }
-    resetValue(spec) { return get(L.merge(this.base,this.recipeSettings),spec.id) ?? spec.default; }
+    resetValue(spec) {
+      const recipe = L.merge(this.base,this.recipeSettings);
+      if (spec.id.startsWith('wb.') && recipe.wb?.mode === 'asShot') return this.info.asShot[spec.id.split('.')[1]];
+      return get(recipe,spec.id) ?? spec.default;
+    }
     message(text) { this.notice.textContent=text || ''; this.notice.hidden=!text; }
     async refreshRecipes() {
       const result = await this.api.recipes(); this.recipes=result.recipes; this.recipeSelect.replaceChildren(...this.recipes.map(r=>node('option',{value:r.id,text:r.name})));
@@ -219,7 +228,14 @@
       } catch(e) { if (token===this.token) this.message(e.message); }
     }
     updateControls() {
-      for (const [path,{range,number,spec}] of this.rows) { let v=this.value(path); if (path.startsWith('wb.') && this.value('wb.mode')==='asShot') v=this.info.asShot[path.split('.')[1]]; range.value=v; number.value=format(spec,v); }
+      for (const [path,{range,number,spec,resetButton}] of this.rows) {
+        let v=this.value(path);
+        if (path.startsWith('wb.') && this.value('wb.mode')==='asShot') v=this.info.asShot[path.split('.')[1]];
+        range.value=v; number.value=format(spec,v);
+        const baseline = this.resetValue(spec);
+        resetButton.hidden = Number(number.value) === baseline;
+        resetButton.setAttribute('aria-label', `Reset ${spec.label} to recipe value ${format(spec,baseline)}`);
+      }
       this.profile.value=this.value('profile.id'); this.wb.value=this.value('wb.mode'); this.lensToggle.checked=this.value('optics.lens_profile'); this.recipeSelect.value=this.recipe;
       this.asShot.textContent=`As shot: ${Math.round(this.info.asShot.temp)} K · Tint ${Math.round(this.info.asShot.tint)}`;
       this.lensStatus.textContent=this.info.lensProfile || (this.info.lensDatabase ? 'No profile for this lens' : 'Lens database is not installed');

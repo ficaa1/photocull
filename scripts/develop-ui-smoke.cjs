@@ -58,6 +58,11 @@ async function main(){
   await page.keyboard.press('Control+Shift+C');await page.keyboard.press('ArrowRight');await page.waitForFunction(()=>!document.querySelector('.develop-controls').disabled);await page.keyboard.press('Control+Shift+V');
   await page.waitForFunction(()=>document.querySelector('#develop-light-exposure').value==='1.25');
   await page.getByLabel('Temp value',{exact:true}).fill('6000');await page.getByLabel('Temp value',{exact:true}).press('Tab');assert.equal(await page.locator('#develop-wb').inputValue(),'custom');
+  const resetExposure = page.getByRole('button',{name:'Reset Exposure to recipe value 0.00'});
+  await resetExposure.press('Enter');
+  assert.equal(await page.evaluate(()=>document.activeElement.id),'develop-light-exposure');
+  assert.equal(await page.getByLabel('Temp value',{exact:true}).inputValue(),'6000');
+  await exp.fill('0.75'); await exp.press('Tab');
   await page.locator('#develop-light-exposure').dblclick();await page.waitForFunction(()=>document.querySelector('#develop-light-exposure').value==='0');
   const plot=await page.locator('#develop-histogram').boundingBox();await page.mouse.move(plot.x+plot.width*.5,plot.y+plot.height*.5);await page.mouse.down();await page.mouse.move(plot.x+plot.width*.6,plot.y+plot.height*.5,{steps:5});await page.mouse.up();assert.ok(Number(await exp.inputValue())>.8);
   // Burst changes coalesce without overlapping renders and preserve the final snapshot.

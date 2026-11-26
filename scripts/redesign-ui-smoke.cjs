@@ -86,6 +86,110 @@ async function main() {
     assert.equal(await page.locator('#toggle-inspector').getAttribute('aria-expanded'), 'false');
     assert.equal(await page.locator('#grid-size').inputValue(), '300');
     checks.push('pane visibility and contact-sheet size persist between launches');
+    for (const width of [320, 720]) {
+      await page.setViewportSize({width, height: 700});
+      for (const id of ['open-folder','compact-workspace','output-button','toggle-sidebar','toggle-inspector']) {
+        assert.ok(await page.locator('#'+id).evaluate(node => {
+          const r = node.getBoundingClientRect();
+          return node.contains(document.elementFromPoint(r.x+r.width/2, r.y+r.height/2));
+        }), `${id} reachable at ${width}px`);
+      }
+      await page.locator('#output-button').click();
+      assert.ok(await page.getByRole('menuitem',{name:'Contact Sheet…',exact:true}).isVisible());
+      await page.keyboard.press('Escape');
+    }
+    checks.push('compact workspace and output actions are reachable at 320 and 720 px');
+    await page.setViewportSize({width: 1280, height: 800});
+    await page.evaluate(async () => syncSettings(await api.settings({writeSidecars:'never'})));
+    const emptyFolder = path.join(dataRoot, 'empty');
+    await fs.mkdir(path.join(emptyFolder, 'child'), { recursive: true });
+    await fs.copyFile(path.join(photos, '001_photo.JPG'), path.join(emptyFolder, 'child', 'nested.jpg'));
+    await page.evaluate(folder => window.loadTestFolder(folder, false), emptyFolder);
+    assert.equal(await page.locator('.empty-title').textContent(), 'No photos in this folder');
+    await page.locator('#empty-subfolders').click();
+    await page.waitForFunction(() => document.querySelector('#photo-name').textContent === 'nested.jpg');
+    await page.evaluate(folder => window.loadTestFolder(folder), photos);
+    await page.locator('.film-card').nth(2).click();
+    await page.locator('#image-viewport').focus();
+    const firstName = await page.locator('#photo-name').textContent();
+    let rejectOnce = true;
+    await page.route('**/rpc*', async route => {
+      if (rejectOnce && route.request().postDataJSON()?.method === 'decide') {
+        rejectOnce = false;
+        return route.fulfill({json:{ok:false,error:'Disk full'}});
+      }
+      return route.continue();
+    });
+    await page.keyboard.press('p');
+    const failure = page.locator('#unsaved-decisions');
+    await failure.waitFor();
+    assert.ok((await failure.innerText()).includes(`Pick for ${firstName} is unsaved. Free up space`));
+    assert.notEqual(await page.locator('#photo-name').textContent(), firstName);
+    await page.keyboard.press('p');
+    await page.waitForFunction(() => !state.pendingSaves);
+    await page.evaluate(folder => window.loadTestFolder(folder, false), emptyFolder);
+    assert.equal(await failure.isVisible(), false);
+    await page.evaluate(folder => window.loadTestFolder(folder), photos);
+    await failure.getByRole('button').press('Enter');
+    await failure.waitFor({state:'hidden'});
+    await page.evaluate(folder => window.loadTestFolder(folder), photos);
+    assert.equal(await page.evaluate(name => state.session.items.find(item => item.name === name).flag, firstName), 'pick');
+    await page.locator('.film-card').nth(4).click();
+    const trashName = await page.locator('#photo-name').textContent();
+    rejectOnce = true;
+    await page.keyboard.press('Backspace');
+    await failure.waitFor();
+    assert.equal(await page.evaluate(() => scopeItems('trash').length), 0);
+    await failure.getByRole('button').press('Enter');
+    await failure.waitFor({state:'hidden'});
+    await page.evaluate(folder => window.loadTestFolder(folder), photos);
+    assert.equal(await page.evaluate(name => state.session.items.find(item => item.name === name).trashed, trashName), true);
+
+    await page.locator('.film-card').nth(3).click();
+    const rejectName = await page.locator('#photo-name').textContent();
+    rejectOnce = true;
+    await page.keyboard.press('x');
+    await failure.waitFor();
+    await page.evaluate(async name => {
+      const item = state.session.items.find(i => i.name === name);
+      await api.decide(state.session.id, item.id, {flag:'pick'});
+    }, rejectName);
+    await page.evaluate(folder => window.loadTestFolder(folder), photos);
+    assert.equal(await page.evaluate(name => scopeItems('reject').some(item => item.name === name), rejectName), false);
+    assert.equal(await page.evaluate(name => state.session.items.find(item => item.name === name).flag, rejectName), 'pick');
+    await failure.getByRole('button').press('Enter');
+    await failure.waitFor({state:'hidden'});
+    assert.equal(await page.evaluate(name => state.session.items.find(item => item.name === name).flag, rejectName), 'pick');
+    await page.locator('.film-card').nth(1).click();
+    const keepName = await page.locator('#photo-name').textContent();
+    rejectOnce = true;
+    await page.keyboard.press('Backspace');
+    await failure.waitFor();
+    await page.locator('[data-filter=trash]').click();
+    await page.getByRole('button',{name:keepName,exact:true}).click();
+    await page.keyboard.press('p');
+    await page.waitForFunction(() => !state.pendingSaves);
+    await page.evaluate(folder => window.loadTestFolder(folder), photos);
+    await failure.getByRole('button').press('Enter');
+    await failure.waitFor({state:'hidden'});
+    assert.equal(await page.evaluate(name => scopeItems('trash').some(item => item.name === name), keepName), false);
+    assert.deepEqual(await page.evaluate(name => {
+      const item = state.session.items.find(i => i.name === name);
+      return [item.flag, item.trashed];
+    }, keepName), ['pick', false]);
+    checks.push('empty folder can include subfolders, failed pick retries its original photo after auto-advance and reopening');
+    await page.locator('#grid-mode').click();
+    const cards = page.locator('.grid-card');
+    await cards.first().click();
+    await cards.nth(5).click({modifiers:['Shift']});
+    await page.keyboard.press('c');
+    await page.locator('.compare-pages').getByRole('button',{name:'Next 2'}).click();
+    assert.equal(await page.locator('.compare-pages [role=status]').textContent(), 'Photos 5–6 of 6 selected');
+    await page.keyboard.press('4');
+    await page.waitForFunction(() => document.querySelector('.compare-pane.active select').value === '4');
+    await page.locator('.compare-pages').getByRole('button',{name:'Previous 4'}).click();
+    assert.equal(await page.locator('.compare-pane').count(), 4);
+    checks.push('six selected frames page in order and accept decisions on the second page');
     assert.deepEqual(errors, []);
     const report = { passed: true, platform: process.platform, checks, errors };
     await fs.writeFile(path.join(output, `redesign-ui-${process.platform}.json`), JSON.stringify(report, null, 2)); console.log(JSON.stringify(report, null, 2));

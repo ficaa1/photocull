@@ -576,6 +576,7 @@ async function main() {
 
     await press('l');
     await page.waitForFunction(() => tether.live.bitmap && !document.querySelector('#tether-live-stage').hidden);
+    assert.equal(await page.locator('#tether-mode').getAttribute('aria-label'), 'Tether, Live View on');
     const boxes = await page.evaluate(() => { const box = id => document.getElementById(id).getBoundingClientRect().toJSON(); return { stage: box('tether-live-stage'), image: box('image-stage'), dock: box('review-dock'), inert: document.getElementById('image-stage').inert }; });
     for (const key of ['x', 'y', 'width', 'height']) assert.ok(Math.abs(boxes.stage[key] - boxes.image[key]) < 1.5, `expanded Live View covers the photo stage: ${key}`);
     assert.ok(boxes.stage.bottom <= boxes.dock.top + 1 && boxes.dock.height > 40, 'the filmstrip and decision bar stay uncovered');
@@ -593,6 +594,7 @@ async function main() {
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => document.querySelector('#tether-live-stage').hidden);
     assert.equal(await page.evaluate(() => document.getElementById('image-stage').inert), false);
+    assert.equal(await page.locator('#tether-tab-state').textContent(), '· Connected');
     check('Live View: stage over the photo only, inert controls, restarted stream adopted, stale poll ignored');
 
     await page.evaluate(() => select(filtered()[0].id));

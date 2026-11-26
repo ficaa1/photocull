@@ -743,9 +743,9 @@ class TetherService {
 
   namePreview(shootId, input = {}) {
     const { shoot } = this.ledger(shootId);
-    only(input, ['jobName', 'namingTemplate', 'relativeShot'], 'name preview');
+    only(input, ['jobName', 'namingTemplate', 'relativeShot', 'camera'], 'name preview');
     const relative = input.relativeShot === undefined || input.relativeShot === null ? shoot.activeRelDir : relativeDir(input.relativeShot);
-    const camera = shoot.lastCamera || {};
+    const camera = input.camera ? cameraSnapshot(input.camera) : shoot.lastCamera || {};
     const { stem, ...preview } = renderCaptureName(input.namingTemplate ?? shoot.config.namingTemplate, {
       jobName: input.jobName ?? shoot.config.jobName, counter: shoot.counters.next, subfolder: relative.split('/').at(-1) || path.basename(this.libraryRoot(shoot)),
       cameraCounter: shoot.lastBodyKey ? this.cameraCounters.bodies[shoot.lastBodyKey] ?? 0 : null, hostTime: this.now(), camera: camera.model,

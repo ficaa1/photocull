@@ -1279,3 +1279,42 @@ body:not(.tether-active) #tether-dock, body:not(.tether-active) #tether-stage-ba
 .rename-table tr.invalid td:last-child, #rename-status, #image-export-wm-status { color: var(--danger); }
 #toast button { margin-inline-start: 10px; }
 #image-export-wm-preview { max-width: 100%; max-height: 160px; margin-inline: auto; display: block; background: var(--surface); }
+
+#unsaved-decisions { max-height: 22vh; overflow: auto; padding: var(--s1) var(--s2); color: var(--warn); background: var(--panel); }
+#unsaved-decisions > div { display: flex; gap: var(--s2); align-items: center; justify-content: space-between; }
+#unsaved-decisions span { overflow-wrap: anywhere; }
+#unsaved-decisions button { flex-shrink: 0; }
+.develop-slider { grid-template-columns: minmax(50px, 82px) minmax(25px, 1fr) 44px 34px; gap: var(--s1); }
+.slider-reset { font-size: var(--fs-s); padding: 0; }
+.compare-pages, #active-metadata-filters { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1); }
+.compare-bar { flex-wrap: wrap; }
+.compare-pages { font-variant-numeric: tabular-nums; }
+#active-metadata-filters .button { height: 24px; }
+.analysis-status[data-phase=warn] { max-width: none; font-size: var(--fs-s); gap: 4px; }
+.analysis .text-button[data-action=retry] { font-size: var(--fs-s); width: auto; }
+.analysis .text-button[data-action=retry]::before { content: none; }
+
+#tether-dock { overflow: hidden; }
+.tether-dock-header { flex: none; }
+.tether-dock-header .tether-path, #tether-next-file strong {
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.compare-panes:has(> :only-child) { grid-template-columns: 1fr; }
+.tether-dock-tools { min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+.tether-status { display: grid; gap: var(--s1); margin: 0; }
+.tether-status dd { margin: 0; }
+.view-switch #tether-tab-state:not(:empty) { display: inline; font-size: var(--fs-s); }
+#compact-workspace, .compact-output { display: none; }
+@media (max-width: 900px) {
+  .topbar, .topbar:has(#update-banner:not([hidden])) { display: flex; justify-content: space-between; gap: 4px; }
+  .topbar .brand, .topbar .view-switch, .topbar-end > #export, .topbar-end > .split-button:not(.compact-output) { display: none; }
+  .topbar-start, .topbar-end { gap: 3px; }
+  #compact-workspace, .compact-output { display: inline-flex; }
+  #compact-workspace { min-width: 0; max-width: 126px; }
+  #output-menu { max-width: 90vw; }
+}
+@media (max-width: 640px) {
+  .topbar:has(#update-banner:not([hidden])) { height: auto; flex-wrap: wrap; }
+  .topbar-end:has(#update-banner:not([hidden])) { display: contents; }
+  #update-banner { order: 1; }
+}
