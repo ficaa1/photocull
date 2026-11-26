@@ -76,12 +76,16 @@ test('batch decisions save once, undo/redo together and survive reopen', async t
   ]);
   assert.deepEqual(await library.history(s.id, 'redo'), result);
   assert.equal(library.item(s.id, c.id).flag, 'none');
-  const reopened = await new Library(data).scan(photos);
+  await library.flushSidecars();
+  const reader = new Library(data);
+  const reopened = await reader.scan(photos);
   for (const item of reopened.items.slice(0, 2)) for (const [key, value] of Object.entries(patch)) assert.equal(item[key], value);
   assert.equal(reopened.items[2].edited, false);
+  await reader.close();
   await library.history(s.id, 'undo');
   await library.decideMany(s.id, ids, { color: '' });
   assert.equal(await library.history(s.id, 'redo'), null, 'a new batch clears redo');
+  await library.close();
 });
 
 test('batch validation is atomic, deduplicates ids and retains the 500-action cap', async t => {
