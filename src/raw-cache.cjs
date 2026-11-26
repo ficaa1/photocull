@@ -14,7 +14,7 @@ class RawRenderCache {
     this.stats = { renders: 0, renderCacheHits: 0, blockedRenders: 0, renderFailures: 0 };
   }
 
-  identity(item) { return hash(`${DECODER_ID}:${item.path}:${item.fingerprint}`); }
+  identity(item) { return hash(`${DECODER_ID}:${item.fileId || ''}:${item.path}:${item.fingerprint}`); }
   paths(item, full) {
     const key = hash(`${this.identity(item)}:${full ? 'full' : 'half'}`);
     return { file: path.join(this.cacheDir, key + '.render.jpg'), info: path.join(this.cacheDir, key + '.render.json'), key };

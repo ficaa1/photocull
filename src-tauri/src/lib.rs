@@ -10,6 +10,7 @@ mod logs;
 mod sharpness;
 mod tether;
 mod updater;
+mod watermark;
 
 use backend::Backend;
 use serde::Serialize;
@@ -43,6 +44,9 @@ const RENDERER_METHODS: &[&str] = &[
     "test-destination",
     "copy-picks",
     "naming-preview",
+    "batch-rename-preview",
+    "batch-rename-apply",
+    "batch-rename-undo",
     "cancel-copy",
     "decide",
     "decide-many",
@@ -93,6 +97,7 @@ const RENDERER_METHODS: &[&str] = &[
 
 #[tauri::command]
 async fn backend(
+    engine: State<'_, std::sync::Arc<develop::Engine>>,
     state: State<'_, Backend>,
     method: String,
     params: Vec<Value>,
@@ -100,7 +105,16 @@ async fn backend(
     if !RENDERER_METHODS.contains(&method.as_str()) {
         return Err(format!("Unknown request: {method}"));
     }
+    let renaming = matches!(method.as_str(), "batch-rename-apply" | "batch-rename-undo");
+    let _busy = if renaming {
+        Some(engine.reserve_file_job()?)
+    } else {
+        None
+    };
     let result = state.call_detail(&method, Value::Array(params)).await;
+    if result.is_ok() && renaming {
+        engine.clear_photo_cache();
+    }
     result.map_err(|failure| {
         logs::write(&format!("{method}: {}", failure.message));
         // Tether panels read the stable error code from the JSON detail.
@@ -121,6 +135,36 @@ async fn pick_folder(window: WebviewWindow, title: String) -> Option<String> {
         .blocking_pick_folder()
         .and_then(|path| path.into_path().ok())
         .map(|path| path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+async fn pick_watermark_image(
+    window: WebviewWindow,
+    engine: State<'_, std::sync::Arc<develop::Engine>>,
+) -> Result<Option<String>, String> {
+    let Some(file) = window
+        .dialog()
+        .file()
+        .set_parent(&window)
+        .set_title("Choose watermark PNG")
+        .add_filter("PNG image", &["png"])
+        .blocking_pick_file()
+    else {
+        return Ok(None);
+    };
+    watermark::approve(
+        &engine.data_dir,
+        &file.into_path().map_err(|e| e.to_string())?,
+    )
+    .map(Some)
+}
+
+#[tauri::command]
+async fn watermark_preview(
+    engine: State<'_, std::sync::Arc<develop::Engine>>,
+    path: String,
+) -> Result<tauri::ipc::Response, String> {
+    watermark::preview(&engine.data_dir, &path).map(tauri::ipc::Response::new)
 }
 
 #[tauri::command]
@@ -476,6 +520,8 @@ pub fn run() {
             pick_editor,
             pick_save_file,
             pick_recipe_file,
+            pick_watermark_image,
+            watermark_preview,
             open_folder,
             open_project_link,
             set_fullscreen,

@@ -1,6 +1,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
+const rename = require('./batch-rename.cjs');
 const { mapLimit } = require('./queue.cjs');
 const { DEFAULTS } = require('./preferences.cjs');
 const { readXmp, writeXmp, atomicWrite, sidecarPaths, portableDevelop, resolveDevelop, shouldWriteSidecars, normalizeCaptureMetadata } = require('./xmp.cjs');
@@ -61,9 +62,9 @@ function groupFiles(files, { exclude } = {}) {
       const raw = RAW.has(path.extname(f.path).toLowerCase());
       const companion = paired ? jpgs[0] : null;
       records.push({ ...f, id: hash(f.path).slice(0, 24), raw, group: key,
-        companion: companion?.path ?? null, companionSize: companion?.size, companionMtimeMs: companion?.mtimeMs,
+        companion: companion?.path ?? null, companionFileId: companion?.fileId, companionSize: companion?.size, companionMtimeMs: companion?.mtimeMs,
         fingerprint: `${f.size}:${f.mtimeMs}:${companion?.size ?? ''}:${companion?.mtimeMs ?? ''}`,
-        sidecar: sidecarPaths(f.path)[0], sidecars: sidecarPaths(f.path), modified: 0,
+        sidecar: sidecarPaths(f.path)[0], sidecars: sidecarPaths(f.path), renameSidecars: new Map(), modified: 0,
         flag: 'none', rating: 0, color: null, edited: false, source: raw ? 'Embedded RAW preview' : 'Original image' });
     }
   }
@@ -117,7 +118,7 @@ class Library {
     await this.flushSidecars();
     folder = await fs.realpath(folder);
     if (!(await fs.stat(folder)).isDirectory()) throw new Error('Choose a folder of images.');
-    const files = [], warnings = [];
+    const files = [], warnings = [], xmpEntries = new Map();
     const visit = async dir => {
       if (superseded()) throw new Error('Folder scan was superseded.');
       const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -127,6 +128,10 @@ class Library {
             if (superseded()) throw e;
             warnings.push(`${entry.name}: ${e.message}`);
           }
+        } else if (path.extname(entry.name).toLowerCase() === '.xmp') {
+          const file = path.join(dir, entry.name), key = rename.fold(file);
+          if (!xmpEntries.has(key)) xmpEntries.set(key, []);
+          xmpEntries.get(key).push(file);
         } else if (entry.isFile() && SUPPORTED.has(path.extname(entry.name).toLowerCase())) {
           files.push({ path: path.join(dir, entry.name), name: entry.name });
         }
@@ -155,9 +160,16 @@ class Library {
         && this.captureExposure({ path: item.companion, size: item.companionSize }) === cached.exposureId) { cached = { ...cached, contentRev: (cached.contentRev || 0) + 1 }; valid = true; }
       if (valid) restore(item, cached, folder);
       const sidecars = [], existingSidecars = [];
-      for (const file of item.sidecars) {
+      const candidates = rename.sideNames(item).flatMap(key => xmpEntries.get(key) || []);
+      item.sidecars = item.sidecars.map(file => {
+        const matches = xmpEntries.get(rename.fold(file));
+        return matches?.length === 1 ? matches[0] : file;
+      });
+      for (const file of candidates) {
         try {
           const stat = await fs.lstat(file);
+          item.renameSidecars.set(file, rename.stamp(stat));
+          if (!item.sidecars.includes(file)) continue;
           existingSidecars.push({ file, modified: stat.mtimeMs });
           if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 2 * 1024 * 1024) throw new Error('Unsupported sidecar');
           const state = readXmp(await fs.readFile(file, 'utf8'), this.settings(), { portable: true });
@@ -235,12 +247,68 @@ class Library {
     const write = this.writes.catch(() => {}).then(async () => {
       this.pendingSaves.delete(s.id);
       const data = JSON.stringify({ version: 1, folder: s.folder, decisions: Object.fromEntries(s.items.map(i =>
-        [i.id, { ...decision(i), path: path.relative(s.folder, i.path), fingerprint: i.fingerprint, modified: i.modified, edited: i.edited, ...(i.develop ? { develop: portableDevelop(i.develop, i.path, s.folder) } : {}), ...captureFields(i) }])) });
+        [i.storageId || i.id, { ...decision(i), path: path.relative(s.folder, i.path), fingerprint: i.fingerprint, modified: i.modified, edited: i.edited, ...(i.develop ? { develop: portableDevelop(i.develop, i.path, s.folder) } : {}), ...captureFields(i) }])) });
       await fs.mkdir(path.dirname(s.store), { recursive: true });
       await atomicWrite(s.store, data); this.stats.sessionWrites++;
     });
     this.pendingSaves.set(s.id, write); this.writes = write;
     return write;
+  }
+
+  async batchRename(sessionId, ids, config, action, captureDate) {
+    const s = this.get(sessionId), undo = action === 'undo' ? s.renameUndo : null;
+    if (s.removable) throw new Error('Batch rename is unavailable on camera cards.');
+    if (action === 'undo') {
+      if (!undo) throw new Error('No batch rename to undo.');
+      ids = [...undo.keys()];
+    }
+    if (!Array.isArray(ids) || !ids.length || ids.length > 100_000) throw new Error('Select photos to rename.');
+    const items = [...new Set(ids.map(id => this.item(sessionId, id)))];
+    await this.flushSidecars();
+    const plan = await rename.plan(s, items, config, captureDate, undo);
+    const signature = hash(JSON.stringify(plan.rows));
+    if (action === 'preview') return { rows: plan.rows, valid: plan.valid, signature };
+    if (config?.signature && config.signature !== signature && plan.valid) throw new Error('The preview changed. Review the filenames again.');
+    const paths = new Map(plan.moves.map(m => [m.from, m.to])), reverse = new Map();
+    const changedIds = new Set(plan.moves.filter(m => m.from !== m.to).map(m => m.row.id));
+    const changed = items.filter(item => changedIds.has(item.id));
+    const before = new Map();
+    for (const item of changed) {
+      const sides = new Map([...item.renameSidecars.keys()].map(file => [paths.get(file), file]));
+      const shared = new Map(rename.sideNames(item).filter(key => plan.owners.get(key)?.size > 1).map(key => [key, plan.owners.get(key)]));
+      reverse.set(item.id, { path: item.path, companion: item.companion, sidecars: sides, shared });
+      before.set(item, { path: item.path, companion: item.companion, name: item.name, group: item.group, storageId: item.storageId,
+        sidecar: item.sidecar, sidecars: item.sidecars, renameSidecars: item.renameSidecars, contentRev: item.contentRev });
+    }
+    const reindex = () => {
+      s.items.sort(itemOrder);
+      s.byGroup.clear(); s.byPath.clear();
+      for (const item of s.items) indexItem(s, item);
+    };
+    await rename.execute(plan, async () => {
+      try {
+        for (const item of changed) {
+          const sidecarIndex = item.sidecars.indexOf(item.sidecar);
+          item.path = paths.get(item.path);
+          item.companion = paths.get(item.companion) || null;
+          item.name = path.basename(item.path);
+          item.storageId = hash(item.path).slice(0, 24);
+          item.group = groupKey(item.path);
+          item.sidecars = sidecarPaths(item.path).map((candidate, i) => paths.get(item.sidecars[i]) || candidate);
+          item.sidecar = item.sidecars[Math.max(0, sidecarIndex)];
+          item.renameSidecars = new Map([...item.renameSidecars].map(([file, stamp]) => [paths.get(file), stamp]));
+          item.contentRev = (item.contentRev || 0) + 1;
+        }
+        reindex();
+        await this.save(s);
+      } catch (error) {
+        for (const [item, original] of before) Object.assign(item, original);
+        reindex();
+        throw error;
+      }
+    });
+    s.renameUndo = undo ? null : reverse;
+    return { items: changed.map(i => this.publicItem(i)), canUndo: !!s.renameUndo };
   }
 
   sidecarItem(s, item) {
@@ -279,6 +347,7 @@ class Library {
           if (!source.isFile() || source.isSymbolicLink() || `${source.dev}:${source.ino}` !== item.fileId || source.size !== item.size || source.mtimeMs !== item.mtimeMs) throw new Error('Photo changed; reopen it before writing XMP.');
           if (owners.get(s.id).get(item.sidecar) > 1) throw new Error('Multiple photos share this sidecar name.');
           await writeXmp(item.sidecar, this.sidecarItem(s, item), this.settings());
+          item.renameSidecars?.set(item.sidecar, rename.stamp(await fs.lstat(item.sidecar)));
           this.stats.sidecarWrites++;
         } catch (e) {
           const warning = `${item.name}: XMP not written: ${e.message}`;
@@ -336,7 +405,7 @@ class Library {
     if (receipt && (receipt.size !== undefined && receipt.size !== stat.size || receipt.ino !== undefined && String(receipt.ino) !== String(stat.ino) || receipt.dev !== undefined && String(receipt.dev) !== String(stat.dev))) throw coded('DEST_CHANGED', `${name} does not match its published receipt.`);
     const f = { path: file, name, size: stat.size, mtimeMs: stat.mtimeMs, fileId: `${stat.dev}:${stat.ino}` };
     const sidecars = [];
-    for (const candidate of sidecarPaths(file)) { const info = await fs.lstat(candidate).catch(() => null); if (info?.isFile()) sidecars.push({ file: candidate, modified: info.mtimeMs }); }
+    for (const candidate of sidecarPaths(file)) { const info = await fs.lstat(candidate).catch(() => null); if (info?.isFile()) sidecars.push({ file: candidate, modified: info.mtimeMs, stamp: rename.stamp(info) }); }
     if (this.sessions.get(sessionId) !== s) throw coded('STALE_SESSION', 'This folder session has closed.');
     // Everything below runs without awaiting, so it sees and leaves a consistent session.
     const delta = this.applyCapture(s, f, p, sidecars), unsaved = s.unsavedCaptures ??= new Map();
@@ -393,25 +462,36 @@ class Library {
       const key = groupKey(f.path, exclude, f.fileId);
       const previous = [...(s.byGroup.get(key) || [])].map(id => s.byId.get(id)).filter(Boolean);
       const files = previous.flatMap(item => [{ path: item.path, name: item.name, size: item.size, mtimeMs: item.mtimeMs, fileId: item.fileId },
-        ...(item.companion ? [{ path: item.companion, name: path.basename(item.companion), size: item.companionSize, mtimeMs: item.companionMtimeMs }] : [])]);
+        ...(item.companion ? [{ path: item.companion, name: path.basename(item.companion), fileId: item.companionFileId, size: item.companionSize, mtimeMs: item.companionMtimeMs }] : [])]);
       const records = groupFiles([...files, f], { exclude });
+      // Keep live references valid when a camera reuses a name freed by a batch rename.
+      for (const record of records) {
+        const known = s.byId.get(s.byPath.get(record.path));
+        const stored = record.id;
+        if (known?.path === record.path) record.id = known.id;
+        else if (s.byId.has(record.id) || s.aliases.has(record.id)) record.id = randomUUID();
+        if (record.id !== stored) record.storageId = stored;
+      }
       const before = new Map(previous.map(item => [item.id, item])), after = new Set(records.map(r => r.id)), replaced = new Set();
       for (const record of records) {
         const old = before.get(record.id);
         if (old) {
           if (old.companion !== record.companion || old.fingerprint !== record.fingerprint) {
             unindexItem(s, old);
-            Object.assign(old, { companion: record.companion, companionSize: record.companionSize, companionMtimeMs: record.companionMtimeMs, fingerprint: record.fingerprint, group: record.group, contentRev: (old.contentRev || 0) + 1 });
+            for (const side of sidecars) old.renameSidecars.set(side.file, side.stamp);
+            Object.assign(old, { companion: record.companion, companionFileId: record.companionFileId, companionSize: record.companionSize, companionMtimeMs: record.companionMtimeMs, fingerprint: record.fingerprint, group: record.group, contentRev: (old.contentRev || 0) + 1 });
             indexItem(s, old); upserts.push(old);
           }
           if (old.path === f.path || old.companion === f.path) { target = old; if (old.exposureId === capture.exposureId && applyDevelop(old) && !upserts.includes(old)) upserts.push(old); }
           continue;
         }
         const item = record;
+        if (item.path === f.path) for (const side of sidecars) item.renameSidecars.set(side.file, side.stamp);
         if (item.path === f.path && sidecars.length) item.sidecar = sidecars.sort((a, b) => b.modified - a.modified)[0].file;
         // JPEG first: the RAW takes over the provisional row with every decision and reference.
         const donor = previous.find(old => !after.has(old.id) && item.companion === old.path);
         if (donor) {
+          for (const [file, stat] of donor.renameSidecars) if (!item.renameSidecars.has(file)) item.renameSidecars.set(file, stat);
           Object.assign(item, decision(donor), { modified: donor.modified, edited: donor.edited, develop: donor.develop ?? null, captureMetadata: donor.captureMetadata,
             exposureId: donor.exposureId ?? capture.exposureId, ordinal: donor.ordinal ?? capture.ordinal, contentRev: (donor.contentRev || 0) + 1, captureDevelop: donor.captureDevelop === true });
           if (!sidecars.length && item.sidecars.includes(donor.sidecar)) item.sidecar = donor.sidecar;
@@ -566,6 +646,7 @@ class Library {
       try {
         if (paths.get(item.sidecar) > 1) throw new Error('Multiple RAWs share this sidecar name; rename them before exporting.');
         await writeXmp(item.sidecar, item, settings);
+        s.byId.get(item.id)?.renameSidecars?.set(item.sidecar, rename.stamp(await fs.lstat(item.sidecar)));
         written++;
       } catch (e) { failures.push({ name: item.name, reason: e.message }); }
     });

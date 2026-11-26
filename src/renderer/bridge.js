@@ -259,6 +259,11 @@
       if (typeof value !== 'boolean') return Promise.reject(new Error('Invalid fullscreen mode.'));
       return host.fullscreen(value);
     },
+    batchRenamePreview: (...args) => backend('batch-rename-preview', ...args),
+    batchRenameApply: (...args) => backend('batch-rename-apply', ...args),
+    batchRenameUndo: session => backend('batch-rename-undo', session),
+    pickWatermarkImage: () => tauri ? shell('pick_watermark_image', {}) : Promise.resolve(null),
+    watermarkPreview: path => shell('watermark_preview', { path }),
     namingPreview: (session, naming, id = null, extension = null) => backend('naming-preview', session, naming, id, extension),
     settings: patch => server ? serverSettings(patch) : backend('settings', patch),
     savePreset: (name, value) => backend('save-preset', name, value),

@@ -6,9 +6,16 @@ const { checkSettings, BUILTIN_RECIPES } = require('./develop.cjs');
 const { atomicWrite } = require('./xmp.cjs');
 const TYPE='photocull-settings', VERSION=1, MAX=4*1024*1024;
 const uuid=id=>typeof id==='string'&&/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(id);
+function watermarkOptions(settings) {
+  return [settings.exportOptions, ...(settings.exportPresets || []).map(p => p.options)].flatMap(o => o?.watermark ? [o.watermark] : []);
+}
 function bundle(settings,recipes,{excludePaths=true}={}) {
   const preferences=structuredClone(settings.value),presets=structuredClone(settings.presets.filter(p=>!BUILTINS.some(b=>b.id===p.id)));
-  if(excludePaths){preferences.handoffFolder='';preferences.manualCards=[];for(const editor of preferences.editors){editor.path='';editor.needsPath=true;}}
+  if (excludePaths) {
+    preferences.handoffFolder = ''; preferences.manualCards = [];
+    for (const editor of preferences.editors) { editor.path = ''; editor.needsPath = true; }
+    for (const mark of watermarkOptions(preferences)) { mark.imagePath = ''; if (mark.type === 'image') mark.enabled = false; }
+  }
   return {type:TYPE,version:VERSION,createdAt:new Date().toISOString(),pathsExcluded:excludePaths,preferences,presets,recipes:structuredClone(recipes.user)};
 }
 async function validate(input,{pathMap={}}={}) {
@@ -24,6 +31,7 @@ async function validate(input,{pathMap={}}={}) {
   };
   const source=structuredClone(input.preferences);
   if(source.shortcuts && typeof source.shortcuts==='object' && !Array.isArray(source.shortcuts)) source.shortcuts=require('./renderer/commands.js').migrateCustom(source.shortcuts);
+  for (const mark of watermarkOptions(source)) mark.imagePath = map(mark.imagePath);
   source.handoffFolder=map(source.handoffFolder);
   source.manualCards=(source.manualCards||[]).map(map);
   source.editors=(source.editors||[]).map(editor=>({...editor,path:map(editor.path)}));

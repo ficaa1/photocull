@@ -147,3 +147,20 @@ test('legacy WebP remains lossless when last options migrate into an export pres
   assert.equal(store.snapshot().exportPresets.find(p=>p.id==='migrated-last-export').options.webpLossless,true);
   assert.equal(options({format:'webp'}).webpLossless,false);
 });
+
+test('watermark presets validate type, placement and dimensions and omit transient raster data', () => {
+  const defaults = { enabled: false, type: 'text', text: '', imagePath: '', anchor: 'bottomRight', scale: 12, padding: 4, opacity: 65 };
+  assert.deepEqual(options().watermark, defaults);
+  for (const fields of [{ enabled: true, text: '© Studio 東京', anchor: 'topCenter', opacity: 100, scale: 50, padding: 0 },
+    { enabled: true, type: 'image', imagePath: 'C:/Studio/mark.PNG', anchor: 'centerLeft', opacity: 5, scale: 2, padding: 20 }]) {
+    const exportOptions = { watermark: { ...fields, textPng: [1,2,3] } };
+    const settings = normalizeSettings({ exportOptions });
+    const expected = { ...defaults, ...fields };
+    assert.deepEqual(settings.exportOptions.watermark, expected);
+    assert.deepEqual(normalizeSettings(JSON.parse(JSON.stringify(settings))).exportPresets.find(p => p.id === 'migrated-last-export').options.watermark, expected);
+  }
+  for (const mark of [{ type: 'logo' }, { anchor: 'diagonal' }, { opacity: 4 }, { scale: 51 }, { padding: -1 }, { scale: 12.5 },
+    { enabled: 'true' }, { enabled: true }, { enabled: true, type: 'image' }, { text: 'x'.repeat(201) }, { imagePath: '/tmp/mark.jpg' }]) {
+    assert.throws(() => options({ watermark: mark }));
+  }
+});

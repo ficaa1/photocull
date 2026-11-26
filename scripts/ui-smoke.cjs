@@ -178,12 +178,37 @@ async function main() {
     await page.locator('#search').fill('nothing-matches-this');
     assert.equal(await page.locator('#no-matches').isVisible(), true);
     await page.locator('#reset-filter').click();
+    const original = await page.locator('#photo-name').textContent();
+    await page.locator('#source-menu-button').click();
+    await page.locator('#batch-rename').click();
+    await page.locator('#rename-template').fill('UI-{filename}');
+    await page.waitForFunction(() => !document.querySelector('#rename-apply').disabled);
+    assert.match(await page.locator('#rename-rows').textContent(), /UI-/);
+    await page.locator('#rename-apply').click();
+    await page.locator('#toast button').waitFor();
+    await fs.access(path.join(photos, 'UI-' + original));
+    await page.locator('#toast button').click();
+    await page.waitForFunction(name => document.querySelector('#photo-name').textContent === name, original);
+    await fs.access(path.join(photos, original));
+    await page.locator('#image-export').click();
+    await page.locator('#image-export-wm-enabled').check();
+    await page.locator('#image-export-wm-text').fill('© Studio');
+    await page.locator('#image-export-wm-anchor').selectOption('topLeft');
+    await page.locator('#image-export-wm-scale').fill('50');
+    const painted = await page.locator('#image-export-wm-preview').evaluate(canvas => {
+      const ctx = canvas.getContext('2d');
+      return ctx.getImageData(0, 0, canvas.width / 2, canvas.height / 2).data.some((v,i) => i % 4 === 0 && v > 100);
+    });
+    assert.ok(painted, 'preview places text in the selected corner');
+    await page.locator('#image-export-wm-type').selectOption('image');
+    assert.ok(await page.locator('#image-export-wm-pick').isDisabled());
+    await page.locator('#image-export-close').click();
     await page.locator('#shortcuts').click();
     assert.equal(await page.locator('#help-dialog').isVisible(), true);
     assert.deepEqual(errors, []);
     const stats = await page.evaluate(() => window.photocull.stats());
     const report = { passed: true, imageCount: Number(await page.locator('#count-all').textContent()), renderedGridCards: cardCount,
-      checks: ['RAW preview display', 'keyboard picks and ratings', 'auto advance', 'undo/redo', 'reject', '100% zoom toggle', 'virtual grid', 'shift-click and batch undo', 'keyboard range, toggle and select all', 'marquee selection', 'batch trash, restore and delete prompt', 'pick filter', 'XMP export', 'reopen persistence', 'delete rejects', 'trash, restore and undo', 'permanent delete prompt', 'search empty state', 'shortcut help', 'preview cache usage and clear'], stats, errors };
+      checks: ['Batch Rename preview, apply and undo', 'Watermark placement preview', 'RAW preview display', 'keyboard picks and ratings', 'auto advance', 'undo/redo', 'reject', '100% zoom toggle', 'virtual grid', 'shift-click and batch undo', 'keyboard range, toggle and select all', 'marquee selection', 'batch trash, restore and delete prompt', 'pick filter', 'XMP export', 'reopen persistence', 'delete rejects', 'trash, restore and undo', 'permanent delete prompt', 'search empty state', 'shortcut help', 'preview cache usage and clear'], stats, errors };
     await fs.writeFile(path.join(screenshots, 'ui-smoke.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report, null, 2));
   } finally {

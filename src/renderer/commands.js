@@ -11,6 +11,8 @@
   add('fullscreen-key', 'Fullscreen (F11)', 'View', ['F11'], ALL, { typing: true, ignoreShift: true, allowModifiers: ['Ctrl','Meta','Alt'] });
   add('switch-view', 'Switch review / contact sheet', 'View', ['Ctrl+Tab'], ALL, { typing: true, ignoreShift: true, allowModifiers: ['Meta','Alt'] });
   add('edit', 'Edit in external editor…', 'Files', ['Mod+E'], ALL, { allowModifiers: ['Alt'] });
+  add('batch-rename', 'Batch Rename…', 'Files', [], ALL, { button: 'batch-rename' });
+  add('batch-rename-undo', 'Undo Last Batch Rename', 'Edit', [], ALL, { button: 'batch-rename-undo' });
   add('copy-picks', 'Copy picks…', 'Files', []);
   add('configure-editors', 'Configure external editors…', 'Application', []);
   add('check-updates', 'Check for updates…', 'Application', [], APP, { desktopOnly: true });

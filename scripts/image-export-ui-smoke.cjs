@@ -42,6 +42,8 @@ PhotoCullExport.init = context => {
     await page.locator('#image-export-space').selectOption('displayP3');
     await page.locator('#image-export-resize').selectOption('widthHeight');
     await page.locator('#image-export-size').fill('1200'); await page.locator('#image-export-height').fill('800');
+    await page.locator('#image-export-wm-enabled').check();
+    await page.locator('#image-export-wm-text').fill('© Studio 東京');
     await page.locator('#image-export-sharpen').selectOption('screen');
     await page.locator('#image-export-location').check();
     await page.waitForFunction(() => document.querySelector('#image-export-name-preview').textContent.endsWith('.jxl'));
@@ -52,6 +54,8 @@ PhotoCullExport.init = context => {
     await page.waitForFunction(()=>!state.busy);assert.equal(await page.locator('#handoff-cleanup').isDisabled(),false);
     const calls = await page.evaluate(() => window.exportCalls);
     assert.equal(calls[0][1].length, 2); assert.equal(calls[0][2].jxlLossless, true); assert.equal(calls[0][2].bitDepth, 16);
+    assert.deepEqual(calls[0][2].watermark.textPng.slice(0,8), [137,80,78,71,13,10,26,10]);
+    assert.equal(await page.evaluate(() => state.settings.exportOptions.watermark.textPng), undefined);
     assert.deepEqual(calls[0][2].resize, { mode: 'widthHeight', value: 1200, height: 800, dontEnlarge: true });
     assert.equal(calls[0][2].sharpen, 'screen'); assert.equal(calls[0][2].removeLocation, true);
     await page.locator('#image-export-reveal').click(); assert.equal(await page.evaluate(() => window.revealed), true);
@@ -80,6 +84,7 @@ PhotoCullExport.init = context => {
     assert.equal(await page.locator('#image-export-size').inputValue(),'2048');assert.equal(await page.locator('#image-export-sharpen').inputValue(),'screen');
     await page.locator('#image-export-preset-reset').click();
     await page.locator('#image-export-preset').selectOption(presetId);
+    assert.equal(await page.locator('#image-export-wm-text').inputValue(),'© Studio 東京');
     assert.equal(await page.locator('#image-export-quality').inputValue(),'76');assert.equal(await page.locator('#image-export-subfolder').inputValue(),'Web');
     assert.equal(await page.locator('#image-export-format').inputValue(),'webp');
     await page.locator('#image-export-subfolder').fill('');

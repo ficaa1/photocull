@@ -25,7 +25,7 @@ const path = require('node:path');
 const os = require('node:os');
 const readline = require('node:readline');
 const { randomBytes } = require('node:crypto');
-const { Library } = require('./library.cjs');
+const { Library, inside } = require('./library.cjs');
 const { RecipeStore, planExport } = require('./develop.cjs');
 const { planTiffs, writableFolder } = require('./develop-plan.cjs');
 const { PreviewService } = require('./previews.cjs');
@@ -55,7 +55,6 @@ const RENDERER_FILES = new Map([['index.html', 'text/html'], ['styles.css', 'tex
   ['commands.js', 'text/javascript'], ['histogram.js', 'text/javascript'], ['develop.js', 'text/javascript'], ['export.js', 'text/javascript'],
   ['naming.js', 'text/javascript'], ['image-view.js', 'text/javascript'], ['loupe.js', 'text/javascript'], ['culling.js', 'text/javascript'], ['survey.js', 'text/javascript'], ['bridge.js', 'text/javascript'], ['server.js', 'text/javascript'],
   ['tether.js', 'text/javascript'], ['overlays.js', 'text/javascript']]);
-const inside = (parent, child) => { const rel = path.relative(parent, child); return rel === '' || !!rel && !rel.startsWith('..') && !path.isAbsolute(rel); };
 
 function defaultDataDir() {
   // Matches Electron's userData folder, which is named after productName
@@ -111,7 +110,7 @@ async function start() {
   // Copying and deleting must not overlap: a copy could read a photo that a
   // deletion is removing. The shell brackets each deletion with
   // deletion-plan (which takes the lock) and deletion-end.
-  let deleting = false;
+  let deleting = false, renaming = null;
   const recipes = new RecipeStore(settings.folder);
   await recipes.init();
   const bundles = new SettingsBundles(settings, recipes);
@@ -119,7 +118,7 @@ async function start() {
     dimensions: (session, id) => previews.dimensions(previewPhoto(library.item(session, id))),
     onDelta: delta => { for (const id of [...delta.upserts.map(i => i.id), ...delta.remap.map(r => r.from)]) previews.invalidatePhoto({ id }); } });
   await tether.init();
-  const requireIdle = () => { if(importing || deleting || transfers.active || backups.active || tether.busy())throw new Error('Wait for the current file operation to finish.'); };
+  const requireIdle = () => { if(importing || renaming || deleting || transfers.active || backups.active || tether.busy())throw new Error('Wait for the current file operation to finish.'); };
   // A bound shoot owns the open Library: another folder, a card or a settings import waits until tethering stops.
   const requireUntethered = message => { if (tether.active()) throw new Error(message); };
   // Opening a folder or card and binding a shoot never overlap: a scan waits for every bind
@@ -142,6 +141,33 @@ async function start() {
   previews.editorName = id => settings.value.editors.find(e=>e.id===id)?.name;
   let importing=false;
   const previewPhoto = photo => photo.develop?.missing ? { ...photo, develop: null } : photo;
+  let fileRequests = 0;
+  const renameBatch = async (action, session, ids, config) => {
+    requireIdle();
+    requireUntethered('Stop tethering before renaming photos.');
+    if (scans.size || fileRequests) throw new Error('Wait for the current file operation to finish.');
+    const applying = action !== 'preview';
+    let finish, items;
+    if (applying) renaming = new Promise(resolve => { finish = resolve; });
+    try {
+      const folder = library.get(session);
+      if (applying && !folder.removable) {
+        const roots = [...new Set([...devices.devices, ...await cards()].map(d => d.root).concat(settings.value.manualCards))];
+        const selected = action === 'undo' ? [...(folder.renameUndo?.keys() || [])] : ids;
+        if (!Array.isArray(selected) || selected.length > 100_000) throw new Error('Select photos to rename.');
+        const photos = selected.map(id => library.item(session, id));
+        if (photos.some(photo => roots.some(root => inside(root, photo.path))))
+          throw new Error('Batch rename is unavailable on camera cards.');
+        items = photos;
+        await previews.suspendHandoffs(items);
+        await Promise.allSettled([...previews.metadataJobs.values(), previews.sources.idle(), previews.renders.queue.idle()]);
+      }
+      return await library.batchRename(session, ids, config, action, item => previews.metadata(item).then(m => m.captured));
+    } finally {
+      if (items) previews.resumeHandoffs(items);
+      if (finish) { renaming = null; finish(); }
+    }
+  };
   const methods = {
     'app-info': async () => ({ name: 'PhotoCull', version: require('../package.json').version, license: 'MIT',
       copyright: 'Copyright (C) 2026 Filip Biljic', notices: await fs.readFile(path.join(__dirname, '..', 'THIRD_PARTY_NOTICES.md'), 'utf8') }),
@@ -261,6 +287,9 @@ async function start() {
     'test-destination': () => smoke ? process.env.PHOTOCULL_TEST_DESTINATION || null : null,
     'copy-picks': (session, destination, options) => deleting || backups.active || tether.busy() ? Promise.reject(new Error('Wait for the current file operation to finish.')) : transfers.copy(library.get(session), destination, { ...options, metadataSettings: settings.value,
       naming: options?.naming || settings.value.naming, folders: options?.folders || settings.value.folders, embedMetadata: options?.embedMetadata ?? settings.value.copyMetadata }),
+    'batch-rename-preview': (...args) => renameBatch('preview', ...args),
+    'batch-rename-apply': (...args) => renameBatch('apply', ...args),
+    'batch-rename-undo': session => renameBatch('undo', session),
     'naming-preview': async (session, naming, id = null, extension = null) => {
       naming = normalizeSettings({ naming }).naming;
       const items = library.get(session).items;
@@ -420,11 +449,21 @@ async function start() {
     'sharpness', 'analysis-source', 'keep-sharpest', 'devices', 'open-device', 'test-destination', 'copy-picks', 'naming-preview', 'cancel-copy', 'decide', 'decide-many',
     'history', 'metadata', 'preview-status', 'settings', 'save-preset', 'delete-preset', 'preview-settings', 'preview-cache', 'retry-preview',
     'focus', 'visible', 'export-xmp', 'forget', 'stats', 'delete-photos', 'recipes', 'handoff-usage', 'develop-get']);
+  const renameConflicts = new Set(['scan', 'open-device', 'copy-picks', 'deletion-plan', 'tether-bind', 'manual-card', 'backup-start',
+    'export-xmp', 'decide', 'decide-many', 'history', 'keep-sharpest', 'develop-set', 'develop-mark', 'handoff-clean',
+    'handoff-exported', 'external-edit-decide', 'forget', 'settings-bundle-apply']);
+  const sourceReads = new Set(['metadata', 'preview-status', 'retry-preview', 'naming-preview', 'analysis-source', 'analysis-store',
+    'export-plan', 'develop-plan', 'develop-context', 'external-edit-proposals', 'batch-rename-preview']);
   const call = async (method, params) => {
+    if (renaming && sourceReads.has(method)) await renaming;
+    const conflicts = renameConflicts.has(method);
+    if (conflicts && renaming) throw new Error('Wait for the batch rename to finish.');
     if (serverMode && !SERVER_METHODS.has(method)) throw new Error(`${method} is not available on the server.`);
     if(importing && ['settings','save-preset','delete-preset','save-recipe','delete-recipe','duplicate-recipe','import-recipes'].includes(method) && params?.[0] !== undefined)throw new Error('Wait for settings import to finish.');
     if (!Object.hasOwn(methods, method)) throw new Error(`Unknown request: ${method}`);
+    if (conflicts) fileRequests++;
     try { return await methods[method](...(Array.isArray(params) ? params : [])); } catch(error) { logger.write('error','%s: %s',method,error.message);throw error; }
+    finally { if (conflicts) fileRequests--; }
   };
 
   const server = http.createServer(async (req, res) => {
@@ -445,6 +484,7 @@ async function start() {
     }
     try {
       if (route === 'image' && authorized) {
+        if (renaming) await renaming;
         const [session, id, kind] = rest;
         const photo = library.item(session, id), proposal = url.searchParams.get('proposal');
         if (proposal && serverMode) throw new Error('External edits need the desktop app.');

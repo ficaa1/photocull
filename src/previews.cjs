@@ -63,7 +63,7 @@ class PreviewService {
     sharp.cache(false); sharp.cache({ memory: 48, files: 24, items: 64 });
   }
   resumeHandoffs(items) { for (const item of items) { this.suspendedHandoffs.delete(item.id); this.invalidatePhoto(item); } }
-  baseKey(item) { return hash(`sources-v2:${item.path}:${item.fingerprint}`); }
+  baseKey(item) { return hash(`sources-v3:${item.fileId || ''}:${item.path}:${item.fingerprint}`); }
   key(item, kind) { return hash(`representation-v4-srgb:${this.baseKey(item)}:${kind}:${this.policy}:${this.itemRevisions.get(item.id) || 0}`); }
   emit(item, status) { this.states.set(item.id, status); this.onState({ id: item.id, ...status }); }
   setInfo(item, kind, info) {
