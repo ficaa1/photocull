@@ -878,7 +878,7 @@ test('an interrupted Keep publishes only into the shot folder it was kept for', 
   await fs.mkdir(blue);
   await ctx.service.setLocation(ctx.shootId, 1, 'Blue');
   const target = await ctx.service.journal(ctx.shootId, 'destination');
-  const kept = await fs.stat(blue);
+  const kept = await fs.stat(blue, { bigint: true });
   assert.deepEqual(target, { relative: 'Blue', dirId: `${kept.dev}:${kept.ino}` });
   const key = 'composition:launch:3', content = Buffer.from('II*\0sample');
   const member = { memberId: sha(key + ':raw'), originalName: 'DSC00003.ARW', bytes: content.length, sha256: sha(content) };
@@ -898,7 +898,7 @@ test('an interrupted Keep publishes only into the shot folder it was kept for', 
   assert.equal((await ctx.state()).counters.next, 1);
   assert.deepEqual([await fs.readdir(blue), (await fs.readdir(ctx.root)).sort()], [[], ['.photocull-tether', 'Blue']]);
   // Kept for the capture folder itself, it goes there even though Blue is active now.
-  const root = await fs.stat(ctx.root);
+  const root = await fs.stat(ctx.root, { bigint: true });
   const accepted = await keep({ relative: '', dirId: `${root.dev}:${root.ino}` });
   const plan = await ctx.service.reserve(ctx.shootId, member.memberId, { bytes: member.bytes, sha256: member.sha256 });
   assert.deepEqual([accepted.counters.capture, plan.finalRelPath], [1, 'Ceramics-0001.ARW']);
@@ -1324,7 +1324,7 @@ test('a staged photo survives a crash before publication and only its own bytes 
   await assert.rejects(ctx.service.reserve(ctx.shootId, unjournaled.memberId, { bytes: 3, sha256: sha('TWO') }), e => e.code === 'INCOMPLETE');
   assert.deepEqual((await ctx.state()).issues.map(i => [i.memberId, i.code]), [[unjournaled.memberId, 'INCOMPLETE'], [partial.memberId, 'INCOMPLETE'], [altered.memberId, 'INCOMPLETE']]);
   const plan = await ctx.service.reserve(ctx.shootId, journaled.memberId, { bytes: 3, sha256: sha('one') });
-  const root = await fs.stat(ctx.root);
+  const root = await fs.stat(ctx.root, { bigint: true });
   assert.deepEqual([plan.finalRelPath, plan.dirId], ['Ceramics-0001.ARW', `${root.dev}:${root.ino}`]);
   await assert.rejects(ctx.service.reserve(ctx.shootId, journaled.memberId, { bytes: 3, sha256: sha('One') }), e => e.code === 'INCOMPLETE');
   assert.equal((await ctx.state()).issues.find(i => i.memberId === journaled.memberId).code, 'INCOMPLETE');
@@ -1342,8 +1342,9 @@ test('a staged photo survives a crash before publication and only its own bytes 
 
 test('filename claims are exclusive across writers and released once their capture settles', async t => {
   const ctx = await setup(t);
+  mockDirectoryIds(t, ['stat', 'lstat'], file => file === ctx.root ? 2n ** 53n + 1n : undefined);
   await ctx.bind();
-  const root = await fs.stat(ctx.root), claims = path.join(ctx.root, '.photocull-tether', 'claims');
+  const root = await fs.stat(ctx.root, { bigint: true }), claims = path.join(ctx.root, '.photocull-tether', 'claims');
   const claimFile = stem => path.join(claims, sha(`${root.dev}:${root.ino}\0${stem.normalize('NFC').toLowerCase()}`) + '.claim');
   // Another PhotoCull writing into the same folder holds the first name.
   await fs.mkdir(claims, { recursive: true });
