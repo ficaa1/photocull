@@ -1210,6 +1210,7 @@ body:not(.tether-active) #tether-dock, body:not(.tether-active) #tether-stage-ba
 .rename-table table { width: 100%; border-collapse: collapse; font-size: var(--fs-m); }
 .rename-table :is(th, td) { text-align: left; padding: 6px 10px; overflow-wrap: anywhere; }
 .rename-table th { position: sticky; top: 0; background: var(--raised); }
+.rename-error, #rename-status { white-space: pre-line; overflow-wrap: anywhere; user-select: text; }
 .rename-table tr.invalid td:last-child, #rename-status, #image-export-wm-status { color: var(--danger); }
 #toast button { margin-inline-start: 10px; }
-#image-export-wm-preview { width: 100%; max-height: 160px; object-fit: contain; display: block; background: var(--surface); }
+#image-export-wm-preview { max-width: 100%; max-height: 160px; margin-inline: auto; display: block; background: var(--surface); }

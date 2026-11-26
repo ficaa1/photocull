@@ -242,6 +242,47 @@ mod tests {
     }
 
     #[test]
+    fn translucent_red_png_over_black_keeps_green_and_blue_zero() {
+        for (format, depth, red) in [
+            (ExportFormat::Png, 8, 64),
+            (ExportFormat::Png, 16, 64),
+            (ExportFormat::Tiff, 32, 137),
+        ] {
+            let options = ExportOptions {
+                format,
+                bit_depth: Some(depth),
+                ..Default::default()
+            };
+            let mark = png_mark("topLeft", [255, 0, 0, 128], &options);
+            let mut image = Rgba8::new(20, 10);
+            image.data.fill([0, 0, 0, 255]);
+            let rendered = Rendered {
+                histogram: lightcraft_raster::Histogram::of_srgb8(&image),
+                image,
+                deep: (depth != 8).then(|| lightcraft_pipeline::DeepImage {
+                    width: 20,
+                    height: 10,
+                    space: options.effective_space(),
+                    samples: if depth == 32 {
+                        DeepSamples::F32(vec![0.; 600])
+                    } else {
+                        DeepSamples::U16(vec![0; 600])
+                    },
+                }),
+            };
+            let extra = ExtraOptions {
+                watermark: Some(mark),
+                ..Default::default()
+            };
+            let bytes = encode_rendered(&rendered, &options, &extra, None).unwrap();
+            let pixels = lightcraft_codecs::decode(&bytes, Default::default())
+                .unwrap()
+                .to_srgb8();
+            assert_eq!(pixels.data[21], [red, 0, 0, 255], "{depth}-bit {format:?}");
+        }
+    }
+
+    #[test]
     fn watermark_blends_at_native_precision_and_preserves_float_headroom() {
         use lightcraft_engine::export::{DeepImage, OutputSpace};
         for float in [false, true] {

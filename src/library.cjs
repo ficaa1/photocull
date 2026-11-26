@@ -274,18 +274,21 @@ class Library {
     const changed = items.filter(item => changedIds.has(item.id));
     const before = new Map();
     for (const item of changed) {
-      const sides = new Map([...item.renameSidecars.keys()].map(file => [paths.get(file), file]));
       const shared = new Map(rename.sideNames(item).filter(key => plan.owners.get(key)?.size > 1).map(key => [key, plan.owners.get(key)]));
-      reverse.set(item.id, { path: item.path, companion: item.companion, sidecars: sides, shared });
+      reverse.set(item.id, { primary: paths.get(item.path), companion: paths.get(item.companion) || null, pairs: new Map(), shared });
       before.set(item, { path: item.path, companion: item.companion, name: item.name, group: item.group, storageId: item.storageId,
-        sidecar: item.sidecar, sidecars: item.sidecars, renameSidecars: item.renameSidecars, contentRev: item.contentRev });
+        sidecar: item.sidecar, sidecars: item.sidecars, renameSidecars: item.renameSidecars, exclusiveSidecar: item.exclusiveSidecar, contentRev: item.contentRev });
+    }
+    for (const { row, from, to, expected } of plan.moves) {
+      const { fileId, size, mtimeMs } = expected;
+      reverse.get(row.id)?.pairs.set(to, { from, expected: { fileId, size, mtimeMs } });
     }
     const reindex = () => {
       s.items.sort(itemOrder);
       s.byGroup.clear(); s.byPath.clear();
       for (const item of s.items) indexItem(s, item);
     };
-    await rename.execute(plan, async () => {
+    const cleanup = await rename.execute(plan, async () => {
       try {
         for (const item of changed) {
           const sidecarIndex = item.sidecars.indexOf(item.sidecar);
@@ -297,6 +300,7 @@ class Library {
           item.sidecars = sidecarPaths(item.path).map((candidate, i) => paths.get(item.sidecars[i]) || candidate);
           item.sidecar = item.sidecars[Math.max(0, sidecarIndex)];
           item.renameSidecars = new Map([...item.renameSidecars].map(([file, stamp]) => [paths.get(file), stamp]));
+          item.exclusiveSidecar = !item.renameSidecars.has(item.sidecar);
           item.contentRev = (item.contentRev || 0) + 1;
         }
         reindex();
@@ -306,14 +310,29 @@ class Library {
         reindex();
         throw error;
       }
+    }).catch(error => {
+      if (error.code === 'RENAME_RECOVERY') this.sessions.delete(sessionId);
+      throw error;
     });
     s.renameUndo = undo ? null : reverse;
+    if (cleanup.length) {
+      const message = 'Renamed files saved. Could not remove staging files:\n' + cleanup.join('\n');
+      s.warnings.push(message); this.onWarning({ session: s.id, message });
+    }
     return { items: changed.map(i => this.publicItem(i)), canUndo: !!s.renameUndo };
   }
 
   sidecarItem(s, item) {
     const develop = item.develop ? { ...item.develop, settings: item.develop.settings ?? this.recipeSettings(item.develop.recipe) ?? null } : null;
     return { ...item, photoRoot: s.folder, develop };
+  }
+
+  async writeSidecar(s, item, settings) {
+    await writeXmp(item.sidecar, item, settings);
+    const receipt = rename.stamp(await fs.lstat(item.sidecar));
+    s.byId.get(item.id)?.renameSidecars.set(item.sidecar, receipt);
+    const renamed = s.renameUndo?.get(item.id)?.pairs.get(item.sidecar);
+    if (renamed) renamed.expected = receipt;
   }
 
   changed(s, items) {
@@ -339,15 +358,14 @@ class Library {
         owners.set(s.id, counts);
       }
       await mapLimit(pending, 3, async ({ s, item }) => {
-        if (!s.byId.has(item.id) || !shouldWriteSidecars(this.settings(), s.removable)) return;
+        if (this.sessions.get(s.id) !== s || !s.byId.has(item.id) || !shouldWriteSidecars(this.settings(), s.removable)) return;
         try {
           const root = await fs.stat(s.folder);
           if (`${root.dev}:${root.ino}` !== s.folderId || await fs.realpath(s.folder) !== s.folder) throw new Error('Photo folder changed; reopen it before writing XMP.');
           const source = await fs.lstat(item.path);
           if (!source.isFile() || source.isSymbolicLink() || `${source.dev}:${source.ino}` !== item.fileId || source.size !== item.size || source.mtimeMs !== item.mtimeMs) throw new Error('Photo changed; reopen it before writing XMP.');
           if (owners.get(s.id).get(item.sidecar) > 1) throw new Error('Multiple photos share this sidecar name.');
-          await writeXmp(item.sidecar, this.sidecarItem(s, item), this.settings());
-          item.renameSidecars?.set(item.sidecar, rename.stamp(await fs.lstat(item.sidecar)));
+          await this.writeSidecar(s, this.sidecarItem(s, item), this.settings());
           this.stats.sidecarWrites++;
         } catch (e) {
           const warning = `${item.name}: XMP not written: ${e.message}`;
@@ -645,8 +663,7 @@ class Library {
     await mapLimit(items, 3, async item => {
       try {
         if (paths.get(item.sidecar) > 1) throw new Error('Multiple RAWs share this sidecar name; rename them before exporting.');
-        await writeXmp(item.sidecar, item, settings);
-        s.byId.get(item.id)?.renameSidecars?.set(item.sidecar, rename.stamp(await fs.lstat(item.sidecar)));
+        await this.writeSidecar(s, item, settings);
         written++;
       } catch (e) { failures.push({ name: item.name, reason: e.message }); }
     });

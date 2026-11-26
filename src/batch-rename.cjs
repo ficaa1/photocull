@@ -1,6 +1,6 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { randomUUID } = require('node:crypto');
+const { publish } = require('./exclusive-move.cjs');
 const vm = require('node:vm');
 const { renderName, validStem, needsCapture } = require('./renderer/naming.js');
 const { sidecarPaths } = require('./xmp.cjs');
@@ -93,21 +93,26 @@ async function plan(session, items, config, captureDate, undo) {
       }
       const entries = directories.get(dir);
       const prior = undo?.get(item.id);
-      const stem = prior ? stemOf(prior.path) : await formatter(item, index, captureDate);
-      const dest = path.join(dir, stem + path.extname(item.path));
+      if (undo && (!prior || prior.primary !== item.path || prior.companion !== item.companion)) throw problem(item.path);
+      const stem = prior ? stemOf(prior.pairs.get(item.path).from) : await formatter(item, index, captureDate);
+      const dest = prior ? prior.pairs.get(item.path).from : path.join(dir, stem + path.extname(item.path));
       row.after = path.basename(dest);
       row.unchanged = dest === item.path;
-      const companions = item.companion ? [{ file: item.companion, to: prior?.companion || (row.unchanged ? item.companion : path.join(dir, stem + path.extname(item.companion))),
+      const target = (file, suffix) => {
+        if (prior) return prior.pairs.get(file).from;
+        return row.unchanged ? file : path.join(dir, stem + suffix);
+      };
+      const companions = item.companion ? [{ file: item.companion, to: target(item.companion, path.extname(item.companion)),
         expected: { fileId: item.companionFileId, size: item.companionSize, mtimeMs: item.companionMtimeMs } }] : [];
       const files = [{ file: item.path, to: dest, expected: item }, ...companions];
       const sides = new Set(sideNames(item).flatMap(key => entries.get(key) || []));
-      if (sides.size !== item.renameSidecars.size) throw problem(item.path);
+      if (sides.size !== item.renameSidecars.size || prior && files.length + sides.size !== prior.pairs.size) throw problem(item.path);
       for (const file of sides) {
-        if (!item.renameSidecars.has(file)) throw problem(file);
+        if (!item.renameSidecars.has(file) || prior && !prior.pairs.has(file)) throw problem(file);
         if (owners.get(fold(file)).size > 1) throw new Error('This XMP is shared by multiple photos.');
         const ext = path.extname(file), base = file.slice(0, -ext.length);
         const suffix = fold(base) === fold(path.join(dir, stemOf(item.path))) ? ext : path.extname(base) + ext;
-        files.push({ file, to: prior?.sidecars.get(file) || (row.unchanged ? file : path.join(dir, stem + suffix)), expected: item.renameSidecars.get(file) });
+        files.push({ file, to: target(file, suffix), expected: item.renameSidecars.get(file) });
       }
       // Reserve absent sidecars too: a rename must never adopt a stranger's XMP.
       for (const file of [dest, ...companions.map(c => c.to)].flatMap(sidecarPaths)) {
@@ -116,7 +121,9 @@ async function plan(session, items, config, captureDate, undo) {
         if (!targets.has(key)) targets.set(key, new Set());
         targets.get(key).add(row);
       }
-      for (const { file, to, expected } of files) {
+      for (const member of files) {
+        const { file, to } = member;
+        const expected = prior ? prior.pairs.get(file).expected : member.expected;
         if (file !== to && (handoffs.has(file.toLowerCase()) || handoffs.has(to.toLowerCase()))) throw new Error('This filename is in use by a Develop hand-off.');
         if (Buffer.byteLength(path.basename(to)) > 255) throw new Error('Filename exceeds the filesystem limit.');
         if (!entries.get(fold(file))?.includes(file) || !matches(await fs.lstat(file), expected)) throw problem(file);
@@ -136,43 +143,120 @@ async function plan(session, items, config, captureDate, undo) {
     const collision = users.size > 1 && (!undo || destinations.has(key)) || existing.get(key)?.some(file => !sources.has(file));
     if (collision) for (const row of users) row.error ||= 'Filename collision.';
   }
-  return { rows, moves, owners, valid: !rows.some(row => row.error) && moves.some(m => m.from !== m.to) };
+  return { rows, moves, owners, targets, valid: !rows.some(row => row.error) && moves.some(m => m.from !== m.to) };
 }
 
-// link() publishes exclusively on POSIX and Windows. rename() could overwrite a file created after preview.
-async function hop(from, to, expected) {
-  if (await fs.realpath(path.dirname(from)) !== path.dirname(from) || !matches(await fs.lstat(from), expected)) throw problem(from);
-  try { await fs.link(from, to); }
-  catch (error) {
-    if (['ENOTSUP', 'EOPNOTSUPP', 'EPERM'].includes(error.code)) throw new Error(`Cannot stage ${path.basename(from)}. Batch rename needs permission to create hard links on this volume.`);
-    throw error;
+async function verify(file, expected) {
+  if (!matches(await fs.lstat(file), expected)) throw problem(file);
+}
+
+async function stage(from, to, expected) {
+  if (await fs.realpath(path.dirname(from)) !== path.dirname(from)) throw problem(from);
+  await verify(from, expected);
+  await fs.rename(from, to);
+}
+
+async function verifyTargets(plan) {
+  const actual = new Map(), physical = new Map(plan.moves.map(m => [fold(m.to), m.to]));
+  for (const dir of new Set(plan.moves.map(m => path.dirname(m.to)))) {
+    for (const [key, files] of await directory(dir)) actual.set(key, files);
   }
-  try {
-    if (!matches(await fs.lstat(to), expected) || !matches(await fs.lstat(from), expected)) throw problem(from);
-    await fs.unlink(from);
-  } catch (error) {
-    if (matches(await fs.lstat(to), expected)) await fs.unlink(to);
-    throw error;
+  for (const key of plan.targets.keys()) {
+    const entries = actual.get(key) || [], file = physical.get(key);
+    const valid = file ? entries.length === 1 && entries[0] === file : entries.length === 0;
+    if (!valid) throw new Error(`Filename collision: ${key}`);
   }
+  for (const m of plan.moves) await verify(m.to, m.expected);
+}
+
+async function rollback(moves) {
+  const problems = [];
+  for (const m of moves.filter(m => m.published)) {
+    try {
+      await stage(m.to, m.recall, m.expected);
+      // An external writer may replace the public entry just before the atomic move.
+      try { await verify(m.recall, m.expected); }
+      catch (error) {
+        m.displaced = true;
+        await publish(m.recall, m.to);
+        m.displaced = false;
+        throw error;
+      }
+      m.held = m.recall;
+    } catch (error) { problems.push(`${m.to}: ${error.message}`); }
+  }
+  for (const m of moves) {
+    if (m.held) {
+      try { await publish(m.held, m.from); }
+      catch (error) { problems.push(`${m.held} → ${m.from}: ${error.message}`); }
+    }
+    try { await verify(m.from, m.expected); m.restored = true; }
+    catch { problems.push(`Original photo missing or changed: ${m.from}`); }
+  }
+  return problems;
 }
 
 async function execute(plan, persist) {
   if (!plan.valid) throw new Error(plan.rows.find(row => row.error)?.error || 'No filenames would change.');
-  const moves = plan.moves.filter(m => m.from !== m.to).map(m => ({ ...m, temp: path.join(path.dirname(m.from), '.photocull-' + randomUUID()) }));
-  const hops = [];
+  const moves = plan.moves.filter(m => m.from !== m.to), dirs = new Map();
+  let failure, recovery = [];
+  const cleanup = [];
   try {
-    for (const [source, dest] of [['from', 'temp'], ['temp', 'to']]) for (const m of moves) {
-      await hop(m[source], m[dest], m.expected);
-      hops.push([m[dest], m[source], m.expected]);
+    for (const [i, m] of moves.entries()) {
+      const parent = path.dirname(m.from);
+      if (!dirs.has(parent)) {
+        const dir = await fs.mkdtemp(path.join(parent, '.photocull-'));
+        dirs.set(parent, dir);
+        // Verify exclusive publication on this volume before touching any original.
+        const probe = path.join(dir, 'probe'), dest = path.join(dir, 'probe-moved');
+        try { await fs.writeFile(probe, '', { flag: 'wx' }); await publish(probe, dest); }
+        finally { await removePrivate(probe); await removePrivate(dest); }
+      }
+      m.temp = path.join(dirs.get(parent), String(i));
+      m.recall = m.temp + '-rollback';
     }
+    for (const m of moves) {
+      await stage(m.from, m.temp, m.expected);
+      m.held = m.temp;
+      await verify(m.temp, m.expected);
+    }
+    for (const m of moves) {
+      await publish(m.temp, m.to);
+      m.published = true;
+    }
+    await verifyTargets(plan);
     await persist();
   } catch (error) {
-    const failed = [];
-    for (const [from, to, expected] of hops.reverse()) {
-      try { await hop(from, to, expected); } catch { failed.push(from); }
-    }
-    if (failed.length) throw new Error(`${error.message}. Recovery required for: ${failed.join(', ')}`);
-    throw error;
+    failure = error;
+    recovery = await rollback(moves);
   }
+  for (const m of moves) {
+    for (const file of [m.temp, m.recall].filter(Boolean)) {
+      if (failure && (!m.restored || m.displaced && file === m.recall)) {
+        if (await fs.lstat(file).then(() => true, error => error.code !== 'ENOENT'))
+          recovery.push(`${file} → ${m.displaced && file === m.recall ? m.to : m.from}`);
+      } else {
+        try { await removePrivate(file); } catch (error) { cleanup.push(error.message); }
+      }
+    }
+  }
+  for (const dir of dirs.values()) {
+    try { await fs.rmdir(dir); }
+    catch (error) { if (!recovery.length || error.code !== 'ENOTEMPTY') cleanup.push(error.message); }
+  }
+  if (recovery.length) {
+    const paths = [...new Set([...recovery, ...cleanup])].join('\n');
+    throw Object.assign(new Error(`${failure.message}. Recovery required. Reopen the folder after checking:\n${paths}`), { code: 'RENAME_RECOVERY' });
+  }
+  if (failure) {
+    if (cleanup.length) failure.message += '\n' + cleanup.join('\n');
+    throw failure;
+  }
+  return cleanup;
 }
+
+async function removePrivate(file) {
+  try { await fs.unlink(file); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+}
+
 module.exports = { plan, execute, stamp, sideNames, fold };

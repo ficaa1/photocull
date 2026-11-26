@@ -1,7 +1,7 @@
 // Shared by the desktop UI, the copy planner and the tether coordinator.
 (function (root) {
   const tokens = new Set(['filename', 'text', 'date', 'capturedate', 'year', 'month', 'day']);
-  const RESERVED = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i;
+  const RESERVED = /^(CON|PRN|AUX|NUL|(?:COM|LPT)[0-9¹²³]) *(?:\.|$)/i;
   const UNSAFE = /[<>:"/\\|?*\x00-\x1f{}]/;
   const pad = (value, width) => (value < 0 ? '-' : '') + String(Math.abs(value)).padStart(width, '0');
   const two = n => String(n).padStart(2, '0');

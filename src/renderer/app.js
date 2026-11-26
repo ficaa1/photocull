@@ -1768,7 +1768,7 @@ function previewRename(message = '') {
       $('rename-rows').replaceChildren(fragment);
       renameSelection.signature = result.signature;
       $('rename-apply').disabled = !result.valid;
-    } catch (error) { if (generation === renameGeneration) $('rename-status').textContent = error.message || String(error); }
+    } catch (error) { if (generation === renameGeneration) $('rename-status').textContent = message || error.message || String(error); }
   }, 100);
 }
 function openBatchRename() {
@@ -1793,8 +1793,14 @@ async function runBatchRename(undo, session) {
     renameDialog.close();
     toast(undo ? 'Original filenames restored.' : 'Batch rename complete.', undo ? null : { label: 'Undo', run: () => runBatchRename(true, session) });
   } catch (error) {
-    if (undo) toast(error.message || String(error));
-    else previewRename(error.message || String(error));
+    const message = error.message || String(error);
+    if (undo) {
+      const report = workspaceNode('dialog', null, { 'aria-label': 'Undo batch rename' });
+      report.append(workspaceNode('h2', 'Undo batch rename'), workspaceNode('p', message, { class: 'rename-error' }),
+        workspaceButton('Close', () => report.close()));
+      report.onclose = () => report.remove();
+      document.body.append(report); report.showModal();
+    } else previewRename(message);
   } finally {
     renameRunning = false; setBusy(false);
     for (const control of renameDialog.querySelectorAll('button, select, input')) control.disabled = false;

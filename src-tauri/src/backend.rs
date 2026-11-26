@@ -88,6 +88,10 @@ impl Backend {
         // Node rejects Windows verbatim (\\?\) paths for its entry script.
         command
             .arg(dunce::simplified(&script))
+            .env(
+                "PHOTOCULL_DESKTOP_EXE",
+                std::env::current_exe().map_err(|e| e.to_string())?,
+            )
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());

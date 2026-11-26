@@ -4,6 +4,7 @@
 
 mod backend;
 mod develop;
+mod exclusive_rename;
 pub mod export_encode;
 mod external;
 mod logs;
@@ -507,6 +508,7 @@ fn create_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
 }
 
 pub fn run() {
+    exclusive_rename::main();
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())

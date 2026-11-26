@@ -1,5 +1,6 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { publish } = require('./exclusive-move.cjs');
 const { randomUUID } = require('node:crypto');
 const { normalizeSettings, text } = require('./preferences.cjs');
 const { DOMParser, XMLSerializer } = require('@xmldom/xmldom');
@@ -258,17 +259,22 @@ function updateXmp(xml, decision, settings) {
   return patchProperties(xml || base, owned, desc);
 }
 
-async function atomicWrite(file, data) {
+async function atomicWrite(file, data, exclusive = false) {
   const temp = `${file}.${randomUUID()}.tmp`;
   try {
     const handle = await fs.open(temp, 'wx');
     try { await handle.writeFile(data); await handle.sync(); } finally { await handle.close(); }
-    await fs.rename(temp, file);
+    if (exclusive) await publish(temp, file);
+    else await fs.rename(temp, file);
   } finally { await fs.rm(temp, { force: true }).catch(() => {}); }
 }
 
 async function writeXmp(file, decision, settings) {
   await writableSidecar(file);
+  if (decision.exclusiveSidecar && !decision.renameSidecars.has(file)) {
+    await atomicWrite(file, updateXmp('', decision, settings), true);
+    return;
+  }
   let old = '';
   try {
     const info = await fs.lstat(file);

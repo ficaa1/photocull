@@ -95,33 +95,54 @@
     setChoices('format', Object.fromEntries(Object.entries(FORMATS).map(([v, spec]) => [v, spec.label])));
     setChoices('space', SPACES); setChoices('resize', MODES);
     setChoices('wm-anchor', ANCHORS);
-    let imagePath = '', loadedPath = null, logo, logoError = '', lastText, lettering;
+    let imagePath = '', logoRequest, logo, logoError = '', lastText, lettering, sizeRequest;
+    function resetLogo() {
+      logoRequest = null; logo?.close(); logo = null; logoError = '';
+    }
+    function sizePreview(items) {
+      const item = items.find(i => i.id === state.selected) || items[0];
+      const original = $('source').value === 'raw';
+      const session = state.session?.id;
+      if (sizeRequest && sizeRequest.item === item && sizeRequest.session === session && sizeRequest.original === original) return;
+      const request = sizeRequest = { item, session, original };
+      const canvas = $('wm-preview');
+      canvas.width = canvas.height = 480;
+      if (item) api.previewStatus(session, item.id, 'preview', original).then(({ size }) => {
+        if (sizeRequest !== request || !(size?.width > 0 && size.height > 0)) return;
+        const factor = 600 / Math.max(size.width, size.height);
+        canvas.width = Math.max(1, Math.round(size.width * factor));
+        canvas.height = Math.max(1, Math.round(size.height * factor));
+        refresh();
+      }).catch(() => {});
+    }
     function readMark() {
       return watermark({ enabled: $('wm-enabled').checked, type: $('wm-type').value, text: $('wm-text').value, imagePath,
         anchor: $('wm-anchor').value, opacity: $('wm-opacity').value, scale: $('wm-scale').value, padding: $('wm-padding').value });
     }
     async function loadLogo(path) {
-      loadedPath = path; logo?.close(); logo = null; logoError = '';
+      resetLogo();
+      const request = logoRequest = { path };
       try {
         const data = await api.watermarkPreview(path);
         const bitmap = await createImageBitmap(new Blob([new Uint8Array(data)], { type: 'image/png' }));
-        if (loadedPath !== path) { bitmap.close(); return; }
+        if (logoRequest !== request) { bitmap.close(); return; }
         logo = bitmap;
-      } catch (error) { if (loadedPath === path) logoError = error.message || String(error); }
+      } catch (error) { if (logoRequest !== request) return; logoError = error.message || String(error); }
       refresh();
     }
-    function drawMark() {
+    function drawMark(items) {
       const enabled = $('wm-enabled').checked, image = $('wm-type').value === 'image';
       $('wm-controls').hidden = !enabled;
       $('wm-text-row').hidden = image; $('wm-image-row').hidden = !image;
       $('wm-pick').disabled = running || !api.desktop;
       $('wm-file').textContent = imagePath.split(/[\\/]/).pop() || (api.desktop ? 'No PNG selected' : 'PNG selection needs the desktop app.');
       if (!enabled) return true;
+      sizePreview(items);
       const canvas = $('wm-preview'), ctx = canvas.getContext('2d'), { width, height } = canvas;
       ctx.globalAlpha = 1; ctx.fillStyle = '#494e51'; ctx.fillRect(0, 0, width, height);
       try {
         const mark = readMark();
-        if (image && loadedPath !== imagePath) void loadLogo(imagePath);
+        if (image && logoRequest?.path !== imagePath) void loadLogo(imagePath);
         if (image && !logo) throw new Error(logoError || 'Loading PNG…');
         if (!image && lastText !== mark.text) { lettering = textImage(mark.text, 512); lastText = mark.text; }
         const source = image ? logo : lettering, edge = Math.min(width, height), pad = Math.round(mark.padding * edge / 100);
@@ -134,7 +155,7 @@
       } catch (error) { $('wm-status').textContent = error.message; return false; }
     }
     $('wm-pick').onclick = async () => {
-      try { const path = await api.pickWatermarkImage(); if (path) { loadedPath = null; imagePath = path; refresh(); } }
+      try { const path = await api.pickWatermarkImage(); if (path) { resetLogo(); imagePath = path; refresh(); } }
       catch (error) { $('wm-status').textContent = error.message || String(error); }
     };
     let presets = [], presetSaving = false;
@@ -237,7 +258,7 @@
       $('destination-path').textContent = destination || 'Choose folder…';
       $('destination-summary-path').textContent = destination || 'No folder chosen';
       if (document.activeElement !== $('folder')) $('folder').value = destination;
-      const markValid = drawMark();
+      const markValid = drawMark(items);
       $('start').disabled = !markValid || running || presetSaving || !items.length || !destination || !api.canDevelop || state.pendingSaves > 0 || state.deleting || state.copy.running;
       $('cancel').hidden = !running; $('close').disabled = running;
       void preview();
@@ -245,6 +266,7 @@
     async function open() {
       if (running || state.busy || state.copy.running || state.deleting || !state.session) return;
       try {
+        resetLogo(); sizeRequest = null;
         state.settings = await api.settings(); lastUsed = state.settings.exportOptions;
         await Promise.all(state.session.items.filter(i => i.externalEdit).map(async item => {
           const develop = await api.developGet(state.session.id, item.id); item.externalEdit = !!(develop.edited && develop.tiff);

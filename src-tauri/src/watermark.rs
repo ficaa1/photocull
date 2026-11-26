@@ -181,12 +181,12 @@ impl Settings {
         let pixels = if let Some(bytes) = bytes {
             let decoded = decode(&bytes, None)?;
             let space = options.effective_space();
-            let matrix = space.from_working();
+            let matrix = decoded.space.to_space(&space.rgb_space()).to_f32();
             let linear = matches!(
                 options.effective_depth(),
                 OutputDepth::F32Linear | OutputDepth::F32Hdr
             );
-            let rgb = decoded.to_working();
+            let rgb = decoded.image;
             let mut pixels = Image::<[f32; 4]>::new(rgb.width, rgb.height);
             for (i, (out, p)) in pixels.data.iter_mut().zip(rgb.data).enumerate() {
                 let alpha = decoded
