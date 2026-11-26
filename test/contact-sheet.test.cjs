@@ -147,39 +147,58 @@ test('desktop sidecar exports scoped PDFs and JPEG siblings and rolls back colli
   await assert.rejects(fs.access(sibling), { code: 'ENOENT' });
 });
 
-for (const fallback of [false, true]) test('cancel during final publication preserves foreign replacements · ' + (fallback ? 'exclusive copy' : 'hard link'), async t => {
+for (const fallback of [false, true]) test('cancel during final publication keeps completed files without deleting foreign replacements · ' + (fallback ? 'atomic rename fallback' : 'hard link'), async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sheet-publish-'));
   t.after(() => fs.rm(root, { recursive: true }));
   const first = path.join(root, 'sheet_p01.jpg'), last = path.join(root, 'sheet_p03.jpg');
-  const controller = new AbortController(), link = fs.link, open = fs.open;
+  const controller = new AbortController(), link = fs.link, rename = fs.rename;
   async function replaceAndCancel() {
     await fs.unlink(first);
     await fs.writeFile(first, 'foreign', { flag: 'wx' });
     controller.abort(new Error('Canceled during publication'));
   }
   t.mock.method(fs, 'link', async (source, target) => {
-    if (fallback) throw Object.assign(new Error('Hard links unavailable'), { code: 'EPERM' });
+    if (fallback) throw Object.assign(new Error('Hard links unavailable'), { code: 'ENOTSUP' });
     await link(source, target);
     if (target === last) await replaceAndCancel();
   });
-  if (fallback) t.mock.method(fs, 'open', async (file, flags) => {
-    const handle = await open(file, flags);
-    if (file === last) {
-      const sync = handle.sync.bind(handle);
-      handle.sync = async () => { await sync(); await replaceAndCancel(); };
-    }
-    return handle;
+  if (fallback) t.mock.method(fs, 'rename', async (source, target) => {
+    const stat = await fs.stat(source);
+    assert.ok(stat.size > 0, 'staged file is complete before atomic rename');
+    await rename(source, target);
+    if (target === last) await replaceAndCancel();
   });
-  const blocked = path.join(root, 'sheet_p02.jpg');
-  if (!fallback) {
-    const unlink = fs.unlink;
-    t.mock.method(fs, 'unlink', file => file === blocked
-      ? Promise.reject(Object.assign(new Error('File is in use'), { code: 'EBUSY' })) : unlink(file));
-  }
   const image = await sharp({ create: { width: 12, height: 12, channels: 3, background: 'blue' } }).jpeg().toBuffer();
   await assert.rejects(exportContactSheet({ photos: ['a', 'b', 'c'].map(name => ({ name })), file: path.join(root, 'sheet.jpg'),
     options: { format: 'jpeg', columns: 1, rows: 1 }, previews: { getForPresentation: async () => image }, signal: controller.signal }),
-    fallback ? /Canceled during publication/ : /Canceled during publication.*Could not remove.*sheet_p02\.jpg/);
-  assert.deepEqual((await fs.readdir(root)).sort(), fallback ? ['sheet_p01.jpg'] : ['sheet_p01.jpg', 'sheet_p02.jpg']);
+    /Canceled during publication.*Completed files kept.*sheet_p01\.jpg.*sheet_p03\.jpg/);
+  assert.deepEqual((await fs.readdir(root)).sort(), ['sheet_p01.jpg', 'sheet_p02.jpg', 'sheet_p03.jpg']);
   assert.equal(await fs.readFile(first, 'utf8'), 'foreign');
+  assert.equal((await sharp(last).metadata()).format, 'jpeg');
+});
+
+test('destination redirected to a camera card before staging is rejected', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sheet-card-swap-'));
+  t.after(() => fs.rm(root, { recursive: true }));
+  const out = path.join(root, 'out'), card = path.join(root, 'card'), moved = path.join(root, 'moved');
+  await fs.mkdir(out); await fs.mkdir(card);
+  const mkdtemp = fs.mkdtemp;
+  let swapped = false;
+  t.mock.method(fs, 'mkdtemp', async prefix => {
+    if (!swapped) {
+      swapped = true;
+      await fs.rename(out, moved);
+      await fs.symlink(card, out);
+    }
+    return mkdtemp(prefix);
+  });
+  const image = await sharp({ create: { width: 12, height: 12, channels: 3, background: 'blue' } }).jpeg().toBuffer();
+  await assert.rejects(exportContactSheet({
+    photos: [{ name: 'a.jpg' }],
+    file: path.join(out, 'sheet.pdf'),
+    options: { format: 'pdf', columns: 1, rows: 1 },
+    previews: { getForPresentation: async () => image },
+    isCard: async folder => (await fs.realpath(folder)) === (await fs.realpath(card)),
+  }), /camera card|changed during export/);
+  assert.deepEqual(await fs.readdir(card), []);
 });

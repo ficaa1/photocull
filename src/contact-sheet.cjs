@@ -1,5 +1,4 @@
 const fs = require('node:fs/promises');
-const { createReadStream } = require('node:fs');
 const { photoPaths } = require('./library.cjs');
 const path = require('node:path');
 const sharp = require('sharp');
@@ -96,6 +95,7 @@ async function writePdf(file, g, pages, render) {
     await write(`xref\n0 ${offsets.length}\n0000000000 65535 f \n`);
     await write(offsets.slice(1).map(n => String(n).padStart(10, '0') + ' 00000 n \n').join(''));
     await write(`trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${start}\n%%EOF\n`);
+    await handle.sync();
   } finally { await handle.close(); }
 }
 
@@ -112,34 +112,41 @@ async function protectSources(targets, protectedPaths) {
   }
 }
 
-async function publish(staged, target, created, signal) {
-  const stamp = await fs.stat(staged, { bigint: true });
+async function verifyFolder(folder, stamp, isCard) {
+  const current = await fs.lstat(folder, { bigint: true });
+  if (!current.isDirectory() || current.isSymbolicLink() || current.dev !== stamp.dev || current.ino !== stamp.ino) {
+    throw new Error('The contact sheet destination folder changed during export.');
+  }
+  const live = await fs.realpath(folder);
+  if (live !== folder || await isCard?.(live)) {
+    throw new Error('Choose a contact sheet destination outside the camera card.');
+  }
+}
+
+async function writeStaged(file, data) {
+  const handle = await fs.open(file, 'wx');
+  try {
+    await handle.writeFile(data);
+    await handle.sync();
+  } finally { await handle.close(); }
+}
+
+async function publish(staged, target, folder, stamp, isCard) {
+  await verifyFolder(folder, stamp, isCard);
   try {
     await fs.link(staged, target);
-    created.set(target, stamp);
     return;
   } catch (error) {
     if (!['EPERM', 'EXDEV', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EINVAL'].includes(error.code)) throw error;
   }
-  // FAT volumes lack hard links. Keep writing through the exclusively opened handle.
-  const output = await fs.open(target, 'wx');
-  try {
-    created.set(target, await output.stat({ bigint: true }));
-    for await (const chunk of createReadStream(staged, { signal })) await output.writeFile(chunk);
-    await output.sync();
-  } finally { await output.close(); }
-}
-
-async function rollback(created) {
-  const failures = [];
-  for (const [file, stamp] of created) {
-    try {
-      const current = await fs.lstat(file, { bigint: true });
-      if (!stamp.ino) failures.push(file);
-      else if (current.isFile() && current.dev === stamp.dev && current.ino === stamp.ino && current.birthtimeNs === stamp.birthtimeNs) await fs.unlink(file);
-    } catch (e) { if (e.code !== 'ENOENT') failures.push(file); }
-  }
-  return failures;
+  // FAT/exFAT lack hard links. Publish the finished staged file atomically only if target is absent.
+  await verifyFolder(folder, stamp, isCard);
+  const exists = await fs.lstat(target).then(() => true, error => {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  });
+  if (exists) throw Object.assign(new Error('File already exists'), { code: 'EEXIST' });
+  await fs.rename(staged, target);
 }
 
 async function exportContactSheet({ photos, options, file, previews, colors = [], metadata = {}, protectedPaths = photoPaths(photos), isCard, signal = new AbortController().signal, onProgress = () => {} }) {
@@ -151,38 +158,66 @@ async function exportContactSheet({ photos, options, file, previews, colors = []
   }));
   if (!items.length) throw new Error('No photos in this scope.');
   const pages = Math.ceil(items.length / g.capacity), folder = await fs.realpath(path.dirname(file));
-  if (await isCard?.(folder)) throw new Error('Choose a contact sheet destination outside the camera card.');
+  const folderStamp = await fs.lstat(folder, { bigint: true });
+  await verifyFolder(folder, folderStamp, isCard);
   file = path.join(folder, path.basename(file));
   const targets = o.format === 'pdf' || pages === 1 ? [file] : Array.from({ length: pages }, (_, i) =>
     path.join(folder, path.parse(file).name + '_p' + String(i + 1).padStart(Math.max(2, String(pages).length), '0') + '.jpg'));
   await protectSources([file, ...targets], protectedPaths);
+  for (const target of targets) {
+    const exists = await fs.lstat(target).then(() => true, error => {
+      if (error.code === 'ENOENT') return false;
+      throw error;
+    });
+    if (exists) throw new Error('A contact sheet filename already exists. Choose another name.');
+  }
   signal.throwIfAborted();
+  await verifyFolder(folder, folderStamp, isCard);
   const stage = await fs.mkdtemp(path.join(folder, '.photocull-sheet-'));
+  let stageOwned = false;
   const staged = i => path.join(stage, String(i));
-  const created = new Map(), warnings = [];
+  const published = [], warnings = [];
   const render = i => renderPage(items.slice(i * g.capacity, (i + 1) * g.capacity), g, i + 1, pages, previews, signal, warnings,
     n => onProgress({ done: i * g.capacity + n, total: items.length, page: i + 1, pages }));
   try {
-    try {
-      onProgress({ done: 0, total: items.length, page: 1, pages });
-      if (o.format === 'pdf') await writePdf(staged(0), g, pages, render);
-      else for (let i = 0; i < pages; i++) await fs.writeFile(staged(i), await render(i));
+    const stageReal = await fs.realpath(stage);
+    const stageParent = path.dirname(stageReal);
+    if (stageParent !== folder || await isCard?.(stageParent)) {
+      await fs.rmdir(stage).catch(() => {});
+      throw new Error('Choose a contact sheet destination outside the camera card.');
+    }
+    stageOwned = true;
+    onProgress({ done: 0, total: items.length, page: 1, pages });
+    if (o.format === 'pdf') await writePdf(staged(0), g, pages, render);
+    else for (let i = 0; i < pages; i++) await writeStaged(staged(i), await render(i));
+    signal.throwIfAborted();
+    const unavailable = warnings.filter(w => w.kind === 'preview');
+    if (unavailable.length === items.length) throw new Error('No previews available: ' + unavailable.map(w => w.filename).join(', '));
+    for (const target of targets) {
+      const exists = await fs.lstat(target).then(() => true, error => {
+        if (error.code === 'ENOENT') return false;
+        throw error;
+      });
+      if (exists) throw Object.assign(new Error('A contact sheet filename already exists. Choose another name.'), { code: 'EEXIST' });
+    }
+    for (const [i, target] of targets.entries()) {
       signal.throwIfAborted();
-      const unavailable = warnings.filter(w => w.kind === 'preview');
-      if (unavailable.length === items.length) throw new Error('No previews available: ' + unavailable.map(w => w.filename).join(', '));
-      for (const [i, target] of targets.entries()) {
-        signal.throwIfAborted();
-        await publish(staged(i), target, created, signal);
-      }
-    } finally { await fs.rm(stage, { recursive: true }); }
+      await publish(staged(i), target, folder, folderStamp, isCard);
+      published.push(target);
+    }
     signal.throwIfAborted();
     return { folder, pages, photos: items.length, files: targets.length, warnings };
   } catch (error) {
-    const failures = await rollback(created);
-    if (failures.length) throw new Error(error.message + '. Could not remove: ' + failures.join(', '));
-    signal.throwIfAborted();
-    if (error.code === 'EEXIST') throw new Error('A contact sheet filename already exists. Choose another name.');
+    const kept = published.length ? ' Completed files kept: ' + published.map(f => path.basename(f)).join(', ') + '.' : '';
+    if (signal.aborted) {
+      const reason = signal.reason instanceof Error ? signal.reason.message : 'Contact sheet export canceled.';
+      throw Object.assign(new Error(reason + kept), { code: 'ABORT_ERR', keptFiles: [...published] });
+    }
+    if (error.code === 'EEXIST') throw new Error('A contact sheet filename already exists. Choose another name.' + kept);
+    if (kept) throw new Error((error.message || String(error)) + kept);
     throw error;
+  } finally {
+    if (stageOwned) await fs.rm(stage, { recursive: true, force: true }).catch(() => {});
   }
 }
 module.exports = { exportContactSheet };

@@ -63,6 +63,8 @@ async function main() {
     assert.equal(await page.locator('#sheet-count').innerText(), '4 photos → 1 page');
     await page.locator('#sheet-exif').check();
     await page.locator('#sheet-preview small').filter({ hasText: 'ISO 320' }).waitFor();
+    const captionPx = await page.locator('#sheet-preview small').first().evaluate(el => parseFloat(getComputedStyle(el).fontSize));
+    assert.ok(captionPx >= 9, `Preview captions must stay readable (got ${captionPx}px)`);
     await page.locator('#sheet-exif').uncheck();
     assert.doesNotMatch(await page.locator('#sheet-preview').textContent(), /ISO 320/);
     await page.locator('#sheet-scope').selectOption('all');

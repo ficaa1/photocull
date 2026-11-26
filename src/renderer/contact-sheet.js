@@ -21,24 +21,26 @@ window.PhotoCullContactSheet = { init({ $, api, session, selection, imageUrl, la
     const pages = Math.ceil(photos.length / g.capacity);
     preview.style.aspectRatio = g.width + '/' + g.height;
     preview.dataset.theme = o.theme;
-    preview.style.setProperty('--sheet-font', (g.font / g.width * 100) + 'cqw');
-    preview.style.width = 'min(100%, ' + (290 * g.width / g.height) + 'px)';
+    preview.style.setProperty('--sheet-font', `max(9px, ${(g.font / g.width * 100).toFixed(3)}cqw)`);
+    preview.style.width = 'min(100%, ' + Math.round(340 * g.width / g.height) + 'px)';
     function place(node, x, y, w, h) {
       Object.assign(node.style, { left: x / g.width * 100 + '%', top: y / g.height * 100 + '%',
         width: w / g.width * 100 + '%', height: h / g.height * 100 + '%' });
       preview.append(node);
     }
     const header = document.createElement('div'), title = document.createElement('span'), counter = document.createElement('span');
+    header.className = 'sheet-preview-header';
     title.textContent = o.headerTitle; counter.textContent = pages ? 'Page 1 of ' + pages : '';
     header.append(title, counter); place(header, g.margin, g.margin, g.width - 2 * g.margin, g.header);
     for (const [index, item] of photos.slice(0, g.capacity).entries()) {
       const { x, y } = PhotoCullSheetLayout.cell(g, index);
+      const tile = document.createElement('div');
+      tile.className = 'sheet-tile';
       const image = new Image(); image.alt = ''; image.src = imageUrl(item);
-      place(image, x, y, g.cellWidth, g.imageHeight);
-      let lineTop = y + g.imageHeight;
+      tile.append(image);
       function line(text) {
         const label = document.createElement('small'); label.textContent = text;
-        place(label, x, lineTop, g.cellWidth, g.line); lineTop += g.line;
+        tile.append(label);
         return label;
       }
       if (o.captions.filename) line(item.name);
@@ -54,6 +56,7 @@ window.PhotoCullContactSheet = { init({ $, api, session, selection, imageUrl, la
         void metadata(item.id).then(m => { if (m && label.isConnected) label.textContent = PhotoCullSheetLayout.exifText(m); })
           .catch(() => { label.textContent = 'EXIF unavailable'; });
       }
+      place(tile, x, y, g.cellWidth, g.cellHeight);
     }
     count.textContent = photos.length + (photos.length === 1 ? ' photo' : ' photos') + ' → ' + pages + (pages === 1 ? ' page' : ' pages');
     save.disabled = !photos.length || !api.desktop || running;
