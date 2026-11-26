@@ -1,7 +1,7 @@
 const fs = require('node:fs/promises');
 const { constants } = require('node:fs');
 const path = require('node:path');
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const { hashFile, safeParent } = require('./backup.cjs');
 const { inside } = require('./library.cjs');
 
@@ -25,16 +25,35 @@ async function readMarker(root) {
 }
 
 async function markRoot(root, folderId) {
-  const stat = await fs.lstat(root);
-  if (!stat.isDirectory() || await fs.realpath(root) !== root || `${stat.dev}:${stat.ino}` !== folderId) throw wrongDrive();
+  const verifyRoot = async () => {
+    const stat = await fs.lstat(root);
+    if (!stat.isDirectory() || await fs.realpath(root) !== root || `${stat.dev}:${stat.ino}` !== folderId) throw wrongDrive();
+  };
+  const reuse = async () => {
+    const id = await readMarker(root);
+    await verifyRoot();
+    return id;
+  };
+  await verifyRoot();
   const file = path.join(root, MARKER);
-  try { return await readMarker(root); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  try { return await reuse(); } catch (error) { if (error.code !== 'ENOENT') throw error; }
   let handle;
-  try { handle = await fs.open(file, 'wx'); }
-  catch (error) { if (error.code === 'EEXIST') return readMarker(root); throw error; }
-  const id = randomUUID();
-  try { await handle.writeFile(id + '\n'); await handle.sync(); } finally { await handle.close(); }
-  return id;
+  try { handle = await fs.open(file, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | (constants.O_NOFOLLOW || 0)); }
+  catch (error) { if (error.code === 'EEXIST') return reuse(); throw error; }
+  try {
+    const opened = await handle.stat();
+    if (!opened.isFile() || !sameFile(opened, await fs.lstat(file))) throw wrongDrive();
+    await verifyRoot();
+    const id = randomUUID();
+    await handle.writeFile(id + '\n');
+    await handle.sync();
+    if (await reuse() !== id) throw wrongDrive();
+    return id;
+  } catch (error) {
+    const stat = await handle.stat();
+    if (!stat.size && sameFile(stat, await namedStat(file))) await fs.unlink(file);
+    throw error;
+  } finally { await handle.close(); }
 }
 
 async function checkRoot({ root, backupVolumeId }) {
@@ -80,7 +99,8 @@ async function publish(temp, file, renameExclusive) {
 }
 
 const collision = () => Object.assign(new Error('The backup filename is occupied.'), { code: 'BACKUP_COLLISION' });
-const namedStat = file => fs.lstat(file).catch(error => { if (error.code !== 'ENOENT') throw error; });
+const precise = { bigint: true };
+const namedStat = (file, options) => fs.lstat(file, options).catch(error => { if (error.code !== 'ENOENT') throw error; });
 const sameFile = (a, b) => a && b && a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs;
 
 async function matches(file, expected) {
@@ -89,11 +109,30 @@ async function matches(file, expected) {
   catch (error) { if (['FILE_CHANGED', 'ENOENT', 'ELOOP'].includes(error.code)) return false; throw error; }
 }
 
-async function backupDirectory(backup, relative, checkCurrent) {
+function identity(stat) {
+  return { dev: String(stat.dev), ino: String(stat.ino), birthtimeNs: String(stat.birthtimeNs), size: String(stat.size), mtimeNs: String(stat.mtimeNs) };
+}
+
+function identifies(id, stat) {
+  return stat?.isFile() && id?.dev === String(stat.dev) && id.ino === String(stat.ino) && id.birthtimeNs === String(stat.birthtimeNs) &&
+    id.size === String(stat.size) && id.mtimeNs === String(stat.mtimeNs);
+}
+
+async function verifiedReceipt(receipt) {
+  if (!receipt?.owned || !receipt.identity) return;
+  const stat = await namedStat(receipt.path, precise);
+  if (!identifies(receipt.identity, stat)) return;
+  const id = identity(stat);
+  if (await matches(receipt.path, receipt.hash) && identifies(id, await namedStat(receipt.path, precise))) {
+    return { path: receipt.path, hash: receipt.hash, owned: true, identity: id };
+  }
+}
+
+async function backupDirectory(backup, relative, checkCurrent, create = true) {
   await checkRoot(backup);
   checkCurrent();
   if (!inside(backup.root, path.resolve(backup.root, relative))) throw new Error('Invalid backup path.');
-  await safeParent(backup.root, relative);
+  if (create) await safeParent(backup.root, relative);
   const dir = path.dirname(path.join(backup.root, relative)), parent = await fs.lstat(dir);
   const verify = async (active = true) => {
     await checkRoot(backup);
@@ -128,8 +167,9 @@ async function availableStem(dir, base, start, images, sidecar, reserved) {
     for (const name of family) {
       const extension = name.normalize('NFC').slice(stem.normalize('NFC').length);
       const file = path.join(dir, stem + extension);
-      const expected = images.get(extension) || (sidecar?.path === file && sidecar.owned && sidecar.hash);
-      if (!expected || !await matches(file, expected)) { usable = false; break; }
+      const expected = images.get(extension);
+      const recognized = expected ? await matches(file, expected) : sidecar?.path === file && await verifiedReceipt(sidecar);
+      if (!recognized) { usable = false; break; }
       // A decomposing filesystem can list a different spelling of the same entry.
       if (name !== stem + extension && !sameFile(await namedStat(file), await namedStat(path.join(dir, name)))) { usable = false; break; }
     }
@@ -140,7 +180,7 @@ async function availableStem(dir, base, start, images, sidecar, reserved) {
 async function cleanPartial(temp, verify, created) {
   if (!/^\.photocull-backup-[a-f0-9-]{36}\.partial$/.test(path.basename(temp))) throw new Error('Invalid backup staging name.');
   await verify(!created);
-  const stat = await namedStat(temp);
+  const stat = await namedStat(temp, precise);
   if (stat) {
     if (created && (stat.ino !== created.ino || stat.dev !== created.dev)) return;
     if (!stat.isFile()) throw new Error('The backup staging path is no longer a regular file.');
@@ -148,37 +188,77 @@ async function cleanPartial(temp, verify, created) {
   }
 }
 
+async function sweepPartial(backup, relative, partial, checkCurrent) {
+  if (path.basename(partial) !== partial) throw new Error('Invalid backup staging name.');
+  try {
+    const { dir, verify } = await backupDirectory(backup, relative, checkCurrent, false);
+    const temp = path.join(dir, partial);
+    await cleanPartial(temp, verify);
+    if (await namedStat(temp)) return false;
+  } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  await checkRoot(backup);
+  return true;
+}
+
+async function updateSidecar({ source, file, hash, previous, verify, remember }) {
+  const flags = (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0);
+  const bytes = await fs.readFile(source, { flag: constants.O_RDONLY | flags });
+  const digest = data => createHash('sha256').update(data).digest('hex');
+  if (digest(bytes) !== hash) throw new Error('The published sidecar changed during backup.');
+  const handle = await fs.open(file, constants.O_RDWR | flags).catch(error => {
+    if (['ENOENT', 'ELOOP'].includes(error.code)) throw collision();
+    throw error;
+  });
+  try {
+    const before = await handle.stat(precise);
+    if (before.nlink !== 1n || !identifies(previous.identity, before) || digest(await handle.readFile()) !== previous.hash) throw collision();
+    await verify();
+    const current = await handle.stat(precise);
+    if (current.nlink !== 1n || !identifies(previous.identity, current) || !identifies(previous.identity, await namedStat(file, precise))) throw collision();
+    for (let offset = 0; offset < bytes.length;) {
+      const { bytesWritten } = await handle.write(bytes, offset, bytes.length - offset, offset);
+      if (!bytesWritten) throw new Error('The backup sidecar write stopped.');
+      offset += bytesWritten;
+    }
+    await handle.truncate(bytes.length);
+    const receipt = { path: file, hash, owned: true, identity: identity(await handle.stat(precise)) };
+    await remember(receipt);
+    await handle.sync();
+    if (!await verifiedReceipt(receipt)) throw collision();
+    return receipt;
+  } finally { await handle.close(); }
+}
+
 async function mirrorFile({ source, file, temp, hash, previous, sidecar, verify, checkCurrent, renameExclusive, remember }) {
   if (await fs.realpath(source) !== source) throw new Error('The capture path changed.');
   hash ||= (await hashFile(source)).hash;
   await verify();
-  const existing = await namedStat(file);
-  const owned = previous?.owned && previous.path === file;
+  const existing = await namedStat(file, precise);
   if (existing) {
-    if ((!sidecar || owned) && await matches(file, hash)) return { path: file, hash, owned: !!owned && previous.ino === existing.ino, ino: existing.ino };
-    if (!sidecar || !owned || !await matches(file, previous.hash)) throw collision();
+    const owned = previous?.owned && previous.path === file && identifies(previous.identity, existing);
+    if (sidecar) {
+      if (!owned) throw collision();
+      if (hash !== previous.hash) return updateSidecar({ source, file, hash, previous, verify, remember });
+    }
+    const receipt = { path: file, hash, owned: !!owned, identity: identity(existing) };
+    if (!await matches(file, hash) || !identifies(receipt.identity, await namedStat(file, precise))) throw collision();
+    return receipt;
   }
   const output = await fs.open(temp, 'wx');
   let staged;
   try {
     try {
-      staged = await output.stat();
+      staged = await output.stat(precise);
       await writeCopy(source, output, checkCurrent);
-      staged = await output.stat();
+      staged = await output.stat(precise);
     } finally { await output.close(); }
     if (!await matches(temp, hash)) throw new Error('Backup verification failed. The copy differs from the published file.');
-    const receipt = { path: file, hash, owned: true, ino: staged.ino, size: staged.size, mtimeMs: staged.mtimeMs };
+    const receipt = { path: file, hash, owned: true, identity: identity(staged) };
     await remember(receipt);
     await verify();
-    if (!sameFile(staged, await namedStat(temp))) throw new Error('The verified backup file changed before publication.');
-    if (existing) {
-      if (!sameFile(existing, await namedStat(file)) || !await matches(file, previous.hash)) throw collision();
-      checkCurrent();
-      await fs.rename(temp, file);
-    } else {
-      try { await publish(temp, file, renameExclusive); }
-      catch (error) { if (error.code === 'EEXIST') throw collision(); throw error; }
-    }
+    if (!identifies(receipt.identity, await namedStat(temp, precise))) throw new Error('The verified backup file changed before publication.');
+    try { await publish(temp, file, renameExclusive); }
+    catch (error) { if (error.code === 'EEXIST') throw collision(); throw error; }
     if (process.platform !== 'win32') {
       const directory = await fs.open(path.dirname(file));
       try { await directory.sync(); }
@@ -193,10 +273,8 @@ async function publishedReceipts(plan, dir) {
   const receipts = new Map();
   for (const receipt of Object.values(plan?.prepared || {})) {
     if (path.dirname(receipt.path) !== dir) continue;
-    const stat = await namedStat(receipt.path);
-    if (stat?.isFile() && stat.ino === receipt.ino && stat.size === receipt.size && stat.mtimeMs === receipt.mtimeMs && await matches(receipt.path, receipt.hash)) {
-      receipts.set(receipt.path, receipt);
-    }
+    const published = await verifiedReceipt(receipt);
+    if (published) receipts.set(published.path, published);
   }
   return receipts;
 }
@@ -205,8 +283,7 @@ async function removeRetired(receipts, dir, verify) {
   for (const receipt of receipts) {
     if (!receipt.owned || path.dirname(receipt.path) !== dir) continue;
     await verify();
-    const stat = await namedStat(receipt.path);
-    if (stat?.ino === receipt.ino && await matches(receipt.path, receipt.hash)) await fs.unlink(receipt.path);
+    if (await verifiedReceipt(receipt)) await fs.unlink(receipt.path);
   }
 }
 
@@ -220,4 +297,4 @@ function backupState({ shoot, members }) {
   return state;
 }
 
-module.exports = { hasAncestor, markRoot, checkRoot, backupDirectory, backupStem, reservedStems, availableStem, cleanPartial, mirrorFile, publishedReceipts, removeRetired, backupState };
+module.exports = { identifies, hasAncestor, markRoot, checkRoot, backupDirectory, backupStem, reservedStems, availableStem, cleanPartial, sweepPartial, mirrorFile, publishedReceipts, removeRetired, backupState };

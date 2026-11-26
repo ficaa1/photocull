@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
+const { constants } = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
@@ -935,22 +936,42 @@ test('RAW-first decisions survive a crash between JPEG publication and the Libra
   assert.deepEqual([item.rating, item.flag, item.exposureId, item.companion], [4, 'pick', e.exposureId, jpeg.final]);
 });
 
-test('a capture whose Library save failed is saved and reported again on retry', async t => {
-  const ctx = await setup(t);
-  await ctx.bind();
-  const e = await ctx.accept({ roles: ['raw'] });
-  const save = ctx.library.save.bind(ctx.library);
-  let saves = 0;
-  ctx.library.save = s => saves++ ? save(s) : Promise.reject(Object.assign(new Error('Disk full.'), { code: 'NO_SPACE' }));
-  const shot = await ctx.deliver(e.exposureId, 'DSC00001.ARW', { ingest: false });
-  const ingest = () => ctx.service.ingest(ctx.shootId, shot.member.memberId, shot.plan.claimId, { finalRelPath: shot.plan.finalRelPath, bytes: (`DSC00001.ARW:${e.exposureId}`).length });
-  await assert.rejects(ingest(), /Disk full/);
-  assert.equal(ctx.deltas().length, 0);
-  const retried = await ingest();
-  assert.equal(saves, 2);
-  assert.deepEqual(ctx.deltas().map(d => [d.itemId, d.upserts.map(u => u.id), d.firstArrival]), [[retried.itemId, [retried.itemId], true]]);
-  assert.equal(ctx.service.ledger(ctx.shootId).members[shot.member.memberId].status, 'ingested');
-});
+for (const timing of ['during backup', 'after backup']) {
+  test(`Library save retry ${timing} publishes the XMP and reports the capture`, { timeout: 15000 }, async t => {
+    const ctx = await setup(t, { settings: { writeSidecars: 'always', tether: { initial: { rating: 3 } } } });
+    await ctx.bind();
+    const drive = path.join(ctx.base, 'Backup');
+    await fs.mkdir(drive); await backupControl(ctx, 'choose', drive);
+    const e = await ctx.accept({ roles: ['raw'] });
+    const save = ctx.library.save.bind(ctx.library);
+    let saves = 0;
+    ctx.library.save = s => saves++ ? save(s) : Promise.reject(Object.assign(new Error('Disk full.'), { code: 'NO_SPACE' }));
+    const shot = await ctx.deliver(e.exposureId, 'DSC00001.ARW', { ingest: false });
+    const ingest = () => ctx.service.ingest(ctx.shootId, shot.member.memberId, shot.plan.claimId, { finalRelPath: shot.plan.finalRelPath, bytes: (`DSC00001.ARW:${e.exposureId}`).length });
+    const copying = Promise.withResolvers(), release = Promise.withResolvers();
+    if (timing === 'during backup') {
+      const link = fs.link;
+      t.mock.method(fs, 'link', async (from, to) => {
+        if (to === path.join(drive, shot.plan.finalRelPath)) { copying.resolve(); await release.promise; }
+        return link(from, to);
+      });
+    }
+    let retried;
+    try {
+      await assert.rejects(ingest(), /Disk full/);
+      assert.equal(ctx.deltas().length, 0);
+      if (timing === 'during backup') await copying.promise;
+      else await waitBackup(ctx, 'synced', 1);
+      await assert.rejects(fs.stat(path.join(drive, 'Ceramics-0001.xmp')), { code: 'ENOENT' });
+      retried = await ingest();
+    } finally { release.resolve(); }
+    await waitBackup(ctx, 'synced', 1);
+    assert.match(await fs.readFile(path.join(drive, 'Ceramics-0001.xmp'), 'utf8'), /Rating="3"/);
+    assert.equal(saves, 2);
+    assert.deepEqual(ctx.deltas().map(d => [d.itemId, d.upserts.map(u => u.id), d.firstArrival]), [[retried.itemId, [retried.itemId], true]]);
+    assert.equal(ctx.service.ledger(ctx.shootId).members[shot.member.memberId].status, 'ingested');
+  });
+}
 
 test('software requests freeze intent once and are never dispatched twice', async t => {
   const ctx = await setup(t);
@@ -1635,14 +1656,19 @@ test('the RAW companion updates the recognized JPEG-first backup sidecar after r
   await ctx.service.journal(ctx.shootId, 'close');
   await ctx.service.close(); await ctx.library.close();
   await ctx.open(); await ctx.bind();
-  const rename = fs.rename;
+  const open = fs.open;
   let interrupted = false;
-  t.mock.method(fs, 'rename', async (from, to) => {
-    await rename(from, to);
-    if (!interrupted && to === sidecar) {
-      interrupted = true;
-      throw new Error('Lost publication acknowledgement.');
+  t.mock.method(fs, 'open', async (file, flags, ...args) => {
+    const handle = await open(file, flags, ...args);
+    if (!interrupted && file === sidecar && (flags & constants.O_RDWR)) {
+      const sync = handle.sync.bind(handle);
+      handle.sync = async () => {
+        await sync();
+        interrupted = true;
+        throw new Error('Lost publication acknowledgement.');
+      };
     }
+    return handle;
   });
   await ctx.deliver(exposureId, 'A.ARW');
   await waitBackup(ctx, 'failed', 1);
@@ -1742,39 +1768,147 @@ test('deduplication checks the destination pathname after hashing the open file'
   await ctx.service.close();
 });
 
-test('retry after an interrupted stage cleans only the journaled partial file', async t => {
+for (const redirect of [false, true]) {
+  test(`an interrupted stage is cleaned ${redirect ? 'when reselected after syncing elsewhere' : 'while resuming the copy'}`, async t => {
+    const ctx = await setup(t);
+    await ctx.bind('session');
+    const drive = path.join(ctx.base, 'Drive'), parked = drive + '-offline';
+    await fs.mkdir(drive); await backupControl(ctx, 'choose', drive);
+    const other = '.photocull-backup-other.partial';
+    await fs.mkdir(path.join(drive, 'Capture'));
+    await fs.writeFile(path.join(drive, 'Capture', other), 'other job');
+    const open = fs.open;
+    let staged;
+    t.mock.method(fs, 'open', async (file, ...args) => {
+      const handle = await open(file, ...args);
+      if (!staged && args[0] === 'wx' && file.endsWith('.partial')) {
+        staged = path.basename(file);
+        const write = handle.writeFile.bind(handle);
+        handle.writeFile = async chunk => {
+          await write(chunk.subarray(0, 1));
+          await handle.close();
+          await fs.rename(drive, parked);
+          throw Object.assign(new Error('Drive disconnected'), { code: 'EIO' });
+        };
+      }
+      return handle;
+    });
+    const { exposureId } = await ctx.accept({ roles: ['raw'] });
+    const shot = await ctx.deliver(exposureId, 'A.ARW', { content: 'complete' });
+    await waitBackup(ctx, 'failed', 1);
+    assert.equal((await fs.stat(path.join(parked, 'Capture', staged))).size, 1);
+    if (redirect) {
+      const replacement = path.join(ctx.base, 'Replacement');
+      await fs.mkdir(replacement); await backupControl(ctx, 'choose', replacement);
+      await waitBackup(ctx, 'synced', 1);
+      assert.equal(await fs.readFile(path.join(replacement, 'Capture', shot.plan.finalRelPath), 'utf8'), 'complete');
+    }
+    await ctx.service.journal(ctx.shootId, 'close');
+    await ctx.service.close(); await ctx.library.close();
+    await fs.rename(parked, drive);
+    await ctx.open(); await ctx.bind('session');
+    if (redirect) {
+      await backupControl(ctx, 'choose', drive);
+      assert.equal((await ctx.state()).backup.pending, 0);
+    } else {
+      await waitBackup(ctx, 'synced', 1);
+      assert.equal(await fs.readFile(path.join(drive, 'Capture', shot.plan.finalRelPath), 'utf8'), 'complete');
+    }
+    const plan = () => ctx.service.ledger(ctx.shootId).exposures[exposureId].backupPlans.find(p => p.root === drive);
+    const deadline = Date.now() + 3000;
+    while (plan().partial && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
+    assert.deepEqual((await fs.readdir(path.join(drive, 'Capture'))).filter(name => name.endsWith('.partial')), [other]);
+    assert.equal(await fs.readFile(path.join(drive, 'Capture', other), 'utf8'), 'other job');
+    assert.ok(!plan().partial);
+    await ctx.service.close();
+  });
+}
+
+test('backup continues while capture recovery waits for republication', async t => {
   const ctx = await setup(t);
   await ctx.bind();
-  const drive = path.join(ctx.base, 'Drive'), parked = drive + '-offline';
+  const drive = path.join(ctx.base, 'Drive');
   await fs.mkdir(drive); await backupControl(ctx, 'choose', drive);
-  const other = '.photocull-backup-other.partial';
-  await fs.writeFile(path.join(drive, other), 'other job');
-  const open = fs.open;
-  let staged;
-  t.mock.method(fs, 'open', async (file, ...args) => {
-    const handle = await open(file, ...args);
-    if (!staged && args[0] === 'wx' && file.endsWith('.partial')) {
-      staged = path.basename(file);
-      const write = handle.writeFile.bind(handle);
-      handle.writeFile = async chunk => {
-        await write(chunk.subarray(0, 1));
-        await handle.close();
-        await fs.rename(drive, parked);
-        throw Object.assign(new Error('Drive disconnected'), { code: 'EIO' });
-      };
-    }
-    return handle;
-  });
-  const shot = await ctx.deliver((await ctx.accept({ roles: ['raw'] })).exposureId, 'A.ARW', { content: 'complete' });
+  await fs.rename(drive, drive + '-offline');
+  const first = await ctx.deliver((await ctx.accept({ roles: ['raw'] })).exposureId, 'A.ARW', { content: 'first' });
   await waitBackup(ctx, 'failed', 1);
-  assert.equal((await fs.stat(path.join(parked, staged))).size, 1);
-  await ctx.service.journal(ctx.shootId, 'close');
-  await ctx.service.close(); await ctx.library.close();
-  await fs.rename(parked, drive);
-  await ctx.open(); await ctx.bind();
+  await ctx.service.journal(ctx.shootId, 'issue', { memberId: first.member.memberId, message: 'Capture missing' });
+  const stage = path.join(ctx.root, first.member.stageRelPath);
+  await fs.rename(first.final, stage);
+  await ctx.service.journal(ctx.shootId, 'recovery', { action: 'retry', memberId: first.member.memberId });
+  await fs.rename(drive + '-offline', drive);
+  await backupControl(ctx, 'retry');
+  const next = await ctx.deliver((await ctx.accept({ roles: ['raw'] })).exposureId, 'B.ARW', { content: 'next' });
   await waitBackup(ctx, 'synced', 1);
-  assert.deepEqual((await fs.readdir(drive)).filter(name => name.endsWith('.partial')), [other]);
-  assert.equal(await fs.readFile(path.join(drive, other), 'utf8'), 'other job');
-  assert.equal(await fs.readFile(path.join(drive, shot.plan.finalRelPath), 'utf8'), 'complete');
-  await ctx.service.close();
+  assert.equal(await fs.readFile(path.join(drive, next.plan.finalRelPath), 'utf8'), 'next');
+
+  const plan = await ctx.service.reserve(ctx.shootId, first.member.memberId, { bytes: 5, sha256: sha('first') });
+  await fs.link(stage, path.join(ctx.root, plan.finalRelPath));
+  await ctx.service.ingest(ctx.shootId, first.member.memberId, plan.claimId, { bytes: 5, finalRelPath: plan.finalRelPath });
+  await waitBackup(ctx, 'synced', 2);
+  assert.equal(await fs.readFile(path.join(drive, plan.finalRelPath), 'utf8'), 'first');
 });
+
+test('backup enrollment rejects a drive swapped while creating its marker', async t => {
+  const ctx = await setup(t);
+  await ctx.bind();
+  const drive = path.join(ctx.base, 'Drive'), marker = path.join(drive, '.photocull-backup-id');
+  await fs.mkdir(drive);
+  const open = fs.open;
+  let swapped = false;
+  t.mock.method(fs, 'open', async (file, ...args) => {
+    if (file === marker && !swapped) {
+      await fs.rename(drive, drive + '-original');
+      await fs.mkdir(drive);
+      swapped = true;
+    }
+    return open(file, ...args);
+  });
+  await assert.rejects(backupControl(ctx, 'choose', drive), /wrong backup drive/i);
+  assert.ok(swapped);
+  assert.deepEqual(await fs.readdir(drive), []);
+  assert.equal((await ctx.state()).backup.root, null);
+});
+
+for (const timing of ['before the RAW arrives', 'during the XMP write']) {
+  test(`backup preserves a sidecar replaced ${timing}`, async t => {
+    const ctx = await setup(t, { settings: { writeSidecars: 'always', tether: { initial: { rating: 1 } } } });
+    await ctx.bind();
+    const drive = path.join(ctx.base, 'Drive'), stem = path.join(drive, 'Ceramics-0001');
+    await fs.mkdir(drive); await backupControl(ctx, 'choose', drive);
+    const { exposureId } = await ctx.accept();
+    const jpeg = await ctx.deliver(exposureId, 'A.JPG');
+    await waitBackup(ctx, 'synced', 1);
+    const sidecar = stem + '.xmp', foreign = path.join(drive, 'editor.tmp');
+    const bytes = await fs.readFile(sidecar);
+    await fs.writeFile(foreign, bytes);
+    const editor = await fs.stat(foreign);
+    await ctx.library.decide(ctx.session, jpeg.result.itemId, { rating: 4 });
+    if (timing === 'before the RAW arrives') {
+      await fs.rename(foreign, sidecar);
+    } else {
+      const open = fs.open, rename = fs.rename;
+      t.mock.method(fs, 'rename', async (from, to) => {
+        if (to === sidecar) await rename(foreign, sidecar);
+        return rename(from, to);
+      });
+      t.mock.method(fs, 'open', async (file, flags, ...args) => {
+        const handle = await open(file, flags, ...args);
+        if (file === sidecar && (flags & constants.O_RDWR)) {
+          const write = handle.write.bind(handle);
+          handle.write = async (...args) => {
+            await rename(foreign, sidecar);
+            return write(...args);
+          };
+        }
+        return handle;
+      });
+    }
+    await ctx.deliver(exposureId, 'A.ARW');
+    await waitBackup(ctx, 'synced', 2);
+    assert.equal((await fs.stat(sidecar)).ino, editor.ino);
+    assert.deepEqual(await fs.readFile(sidecar), bytes);
+    assert.match(await fs.readFile(stem + '_1.xmp', 'utf8'), /Rating="4"/);
+    for (const ext of ['.JPG', '.ARW']) await fs.access(stem + '_1' + ext);
+  });
+}
