@@ -63,8 +63,12 @@ async function main() {
     assert.equal(await page.locator('#sheet-count').innerText(), '4 photos → 1 page');
     await page.locator('#sheet-exif').check();
     await page.locator('#sheet-preview small').filter({ hasText: 'ISO 320' }).waitFor();
-    const captionPx = await page.locator('#sheet-preview small').first().evaluate(el => parseFloat(getComputedStyle(el).fontSize));
-    assert.ok(captionPx >= 9, `Preview captions must stay readable (got ${captionPx}px)`);
+    const captionPx = await page.locator('#sheet-caption-sample small').first().evaluate(el => parseFloat(getComputedStyle(el).fontSize));
+    assert.ok(captionPx >= 11, `Caption sample must stay readable (got ${captionPx}px)`);
+    await page.locator('#sheet-rows').fill('10');
+    const denseImgH = await page.locator('#sheet-preview img').first().evaluate(el => el.getBoundingClientRect().height);
+    assert.ok(denseImgH > 0, `Dense 10-row thumbnails must stay visible (got ${denseImgH}px)`);
+    await page.locator('#sheet-rows').fill('5');
     await page.locator('#sheet-exif').uncheck();
     assert.doesNotMatch(await page.locator('#sheet-preview').textContent(), /ISO 320/);
     await page.locator('#sheet-scope').selectOption('all');

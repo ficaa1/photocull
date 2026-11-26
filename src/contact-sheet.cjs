@@ -63,8 +63,9 @@ async function renderPage(items, g, page, pages, previews, signal, warnings, pro
     .withDensity(o.dpi).jpeg({ quality: o.jpegQuality, chromaSubsampling: '4:4:4' }).toBuffer();
 }
 
-async function writePdf(file, g, pages, render) {
+async function writePdf(file, g, pages, render, onCreate) {
   const handle = await fs.open(file, 'wx');
+  onCreate?.(file, await handle.stat({ bigint: true }));
   const offsets = [0];
   let position = 0;
   async function write(data) {
@@ -123,8 +124,9 @@ async function verifyFolder(folder, stamp, isCard) {
   }
 }
 
-async function writeStaged(file, data) {
+async function writeStaged(file, data, onCreate) {
   const handle = await fs.open(file, 'wx');
+  onCreate?.(file, await handle.stat({ bigint: true }));
   try {
     await handle.writeFile(data);
     await handle.sync();
@@ -135,18 +137,29 @@ async function publish(staged, target, folder, stamp, isCard) {
   await verifyFolder(folder, stamp, isCard);
   try {
     await fs.link(staged, target);
-    return;
   } catch (error) {
-    if (!['EPERM', 'EXDEV', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EINVAL'].includes(error.code)) throw error;
-  }
-  // FAT/exFAT lack hard links. Publish the finished staged file atomically only if target is absent.
-  await verifyFolder(folder, stamp, isCard);
-  const exists = await fs.lstat(target).then(() => true, error => {
-    if (error.code === 'ENOENT') return false;
+    if (['EPERM', 'EXDEV', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EINVAL'].includes(error.code)) {
+      throw new Error('This volume does not support atomic non-overwriting saves. Choose a destination on a local drive.');
+    }
     throw error;
-  });
-  if (exists) throw Object.assign(new Error('File already exists'), { code: 'EEXIST' });
-  await fs.rename(staged, target);
+  }
+}
+
+async function cleanupStage(folder, folderStamp, isCard, stage, stageStamp, stagedFiles) {
+  try {
+    await verifyFolder(folder, folderStamp, isCard);
+    const current = await fs.lstat(stage, { bigint: true });
+    if (!current.isDirectory() || current.isSymbolicLink() || current.dev !== stageStamp.dev || current.ino !== stageStamp.ino) return;
+    for (const [file, stamp] of stagedFiles) {
+      try {
+        const stat = await fs.lstat(file, { bigint: true });
+        if (stat.isFile() && !stat.isSymbolicLink() && stat.dev === stamp.dev && stat.ino === stamp.ino) {
+          await fs.unlink(file);
+        }
+      } catch {}
+    }
+    await fs.rmdir(stage).catch(() => {});
+  } catch {}
 }
 
 async function exportContactSheet({ photos, options, file, previews, colors = [], metadata = {}, protectedPaths = photoPaths(photos), isCard, signal = new AbortController().signal, onProgress = () => {} }) {
@@ -174,22 +187,30 @@ async function exportContactSheet({ photos, options, file, previews, colors = []
   signal.throwIfAborted();
   await verifyFolder(folder, folderStamp, isCard);
   const stage = await fs.mkdtemp(path.join(folder, '.photocull-sheet-'));
-  let stageOwned = false;
+  let stageStamp = null;
+  const stagedFiles = [];
   const staged = i => path.join(stage, String(i));
   const published = [], warnings = [];
   const render = i => renderPage(items.slice(i * g.capacity, (i + 1) * g.capacity), g, i + 1, pages, previews, signal, warnings,
     n => onProgress({ done: i * g.capacity + n, total: items.length, page: i + 1, pages }));
   try {
+    await verifyFolder(folder, folderStamp, isCard);
     const stageReal = await fs.realpath(stage);
     const stageParent = path.dirname(stageReal);
     if (stageParent !== folder || await isCard?.(stageParent)) {
       await fs.rmdir(stage).catch(() => {});
       throw new Error('Choose a contact sheet destination outside the camera card.');
     }
-    stageOwned = true;
+    stageStamp = await fs.lstat(stage, { bigint: true });
     onProgress({ done: 0, total: items.length, page: 1, pages });
-    if (o.format === 'pdf') await writePdf(staged(0), g, pages, render);
-    else for (let i = 0; i < pages; i++) await writeStaged(staged(i), await render(i));
+    const trackStaged = (stagedPath, stamp) => stagedFiles.push([stagedPath, stamp]);
+    if (o.format === 'pdf') {
+      await writePdf(staged(0), g, pages, render, trackStaged);
+    } else {
+      for (let i = 0; i < pages; i++) {
+        await writeStaged(staged(i), await render(i), trackStaged);
+      }
+    }
     signal.throwIfAborted();
     const unavailable = warnings.filter(w => w.kind === 'preview');
     if (unavailable.length === items.length) throw new Error('No previews available: ' + unavailable.map(w => w.filename).join(', '));
@@ -217,7 +238,8 @@ async function exportContactSheet({ photos, options, file, previews, colors = []
     if (kept) throw new Error((error.message || String(error)) + kept);
     throw error;
   } finally {
-    if (stageOwned) await fs.rm(stage, { recursive: true, force: true }).catch(() => {});
+    if (stageStamp) await cleanupStage(folder, folderStamp, isCard, stage, stageStamp, stagedFiles);
+    else await fs.rmdir(stage).catch(() => {});
   }
 }
 module.exports = { exportContactSheet };

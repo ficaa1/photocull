@@ -147,26 +147,18 @@ test('desktop sidecar exports scoped PDFs and JPEG siblings and rolls back colli
   await assert.rejects(fs.access(sibling), { code: 'ENOENT' });
 });
 
-for (const fallback of [false, true]) test('cancel during final publication keeps completed files without deleting foreign replacements · ' + (fallback ? 'atomic rename fallback' : 'hard link'), async t => {
+test('cancel during final publication keeps completed files without deleting foreign replacements', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sheet-publish-'));
   t.after(() => fs.rm(root, { recursive: true }));
   const first = path.join(root, 'sheet_p01.jpg'), last = path.join(root, 'sheet_p03.jpg');
-  const controller = new AbortController(), link = fs.link, rename = fs.rename;
-  async function replaceAndCancel() {
-    await fs.unlink(first);
-    await fs.writeFile(first, 'foreign', { flag: 'wx' });
-    controller.abort(new Error('Canceled during publication'));
-  }
+  const controller = new AbortController(), link = fs.link;
   t.mock.method(fs, 'link', async (source, target) => {
-    if (fallback) throw Object.assign(new Error('Hard links unavailable'), { code: 'ENOTSUP' });
     await link(source, target);
-    if (target === last) await replaceAndCancel();
-  });
-  if (fallback) t.mock.method(fs, 'rename', async (source, target) => {
-    const stat = await fs.stat(source);
-    assert.ok(stat.size > 0, 'staged file is complete before atomic rename');
-    await rename(source, target);
-    if (target === last) await replaceAndCancel();
+    if (target === last) {
+      await fs.unlink(first);
+      await fs.writeFile(first, 'foreign', { flag: 'wx' });
+      controller.abort(new Error('Canceled during publication'));
+    }
   });
   const image = await sharp({ create: { width: 12, height: 12, channels: 3, background: 'blue' } }).jpeg().toBuffer();
   await assert.rejects(exportContactSheet({ photos: ['a', 'b', 'c'].map(name => ({ name })), file: path.join(root, 'sheet.jpg'),
@@ -177,7 +169,20 @@ for (const fallback of [false, true]) test('cancel during final publication keep
   assert.equal((await sharp(last).metadata()).format, 'jpeg');
 });
 
-test('destination redirected to a camera card before staging is rejected', async t => {
+test('volumes without hard links fail cleanly without overwriting or leaving partial files', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sheet-nolink-'));
+  t.after(() => fs.rm(root, { recursive: true }));
+  t.mock.method(fs, 'link', async () => {
+    throw Object.assign(new Error('Hard links unavailable'), { code: 'ENOTSUP' });
+  });
+  const image = await sharp({ create: { width: 12, height: 12, channels: 3, background: 'blue' } }).jpeg().toBuffer();
+  await assert.rejects(exportContactSheet({ photos: [{ name: 'a.jpg' }], file: path.join(root, 'sheet.pdf'),
+    options: { format: 'pdf', columns: 1, rows: 1 }, previews: { getForPresentation: async () => image } }),
+    /atomic non-overwriting saves/);
+  assert.deepEqual(await fs.readdir(root), []);
+});
+
+test('destination replaced before staging or redirected before cleanup never writes or deletes foreign files', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sheet-card-swap-'));
   t.after(() => fs.rm(root, { recursive: true }));
   const out = path.join(root, 'out'), card = path.join(root, 'card'), moved = path.join(root, 'moved');
@@ -201,4 +206,54 @@ test('destination redirected to a camera card before staging is rejected', async
     isCard: async folder => (await fs.realpath(folder)) === (await fs.realpath(card)),
   }), /camera card|changed during export/);
   assert.deepEqual(await fs.readdir(card), []);
+
+  // Same-path replacement before mkdtemp must abort before rendering begins.
+  const out2 = path.join(root, 'out2'), moved2 = path.join(root, 'moved2');
+  await fs.mkdir(out2);
+  let replaced = false, rendered = false;
+  t.mock.method(fs, 'mkdtemp', async prefix => {
+    if (!replaced) {
+      replaced = true;
+      await fs.rename(out2, moved2);
+      await fs.mkdir(out2);
+    }
+    return mkdtemp(prefix);
+  });
+  await assert.rejects(exportContactSheet({
+    photos: [{ name: 'a.jpg' }],
+    file: path.join(out2, 'sheet.pdf'),
+    options: { format: 'pdf', columns: 1, rows: 1 },
+    previews: { getForPresentation: async () => { rendered = true; return image; } },
+  }), /changed during export/);
+  assert.equal(rendered, false);
+  assert.deepEqual(await fs.readdir(out2), []);
+
+  // Destination redirected before cancellation cleanup must never delete a same-named foreign directory.
+  const out3 = path.join(root, 'out3'), moved3 = path.join(root, 'moved3'), other = path.join(root, 'other');
+  await fs.mkdir(out3); await fs.mkdir(other);
+  const controller = new AbortController();
+  let stageName = null;
+  t.mock.method(fs, 'mkdtemp', async prefix => {
+    const dir = await mkdtemp(prefix);
+    stageName = path.basename(dir);
+    return dir;
+  });
+  await assert.rejects(exportContactSheet({
+    photos: [{ name: 'a.jpg' }],
+    file: path.join(out3, 'sheet.pdf'),
+    options: { format: 'pdf', columns: 1, rows: 1 },
+    signal: controller.signal,
+    previews: {
+      getForPresentation: async () => {
+        const foreignStage = path.join(other, stageName);
+        await fs.mkdir(foreignStage);
+        await fs.writeFile(path.join(foreignStage, 'sentinel.txt'), 'keep');
+        await fs.rename(out3, moved3);
+        await fs.symlink(other, out3);
+        controller.abort(new Error('Canceled after redirect'));
+        return image;
+      },
+    },
+  }), /Canceled after redirect/);
+  assert.equal(await fs.readFile(path.join(other, stageName, 'sentinel.txt'), 'utf8'), 'keep');
 });

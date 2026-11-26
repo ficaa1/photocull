@@ -21,26 +21,17 @@ window.PhotoCullContactSheet = { init({ $, api, session, selection, imageUrl, la
     const pages = Math.ceil(photos.length / g.capacity);
     preview.style.aspectRatio = g.width + '/' + g.height;
     preview.dataset.theme = o.theme;
-    preview.style.setProperty('--sheet-font', `max(9px, ${(g.font / g.width * 100).toFixed(3)}cqw)`);
+    preview.style.setProperty('--sheet-font', (g.font / g.width * 100).toFixed(3) + 'cqw');
     preview.style.width = 'min(100%, ' + Math.round(340 * g.width / g.height) + 'px)';
     function place(node, x, y, w, h) {
       Object.assign(node.style, { left: x / g.width * 100 + '%', top: y / g.height * 100 + '%',
         width: w / g.width * 100 + '%', height: h / g.height * 100 + '%' });
       preview.append(node);
     }
-    const header = document.createElement('div'), title = document.createElement('span'), counter = document.createElement('span');
-    header.className = 'sheet-preview-header';
-    title.textContent = o.headerTitle; counter.textContent = pages ? 'Page 1 of ' + pages : '';
-    header.append(title, counter); place(header, g.margin, g.margin, g.width - 2 * g.margin, g.header);
-    for (const [index, item] of photos.slice(0, g.capacity).entries()) {
-      const { x, y } = PhotoCullSheetLayout.cell(g, index);
-      const tile = document.createElement('div');
-      tile.className = 'sheet-tile';
-      const image = new Image(); image.alt = ''; image.src = imageUrl(item);
-      tile.append(image);
+    function appendCaptions(container, item) {
       function line(text) {
         const label = document.createElement('small'); label.textContent = text;
-        tile.append(label);
+        container.append(label);
         return label;
       }
       if (o.captions.filename) line(item.name);
@@ -56,8 +47,35 @@ window.PhotoCullContactSheet = { init({ $, api, session, selection, imageUrl, la
         void metadata(item.id).then(m => { if (m && label.isConnected) label.textContent = PhotoCullSheetLayout.exifText(m); })
           .catch(() => { label.textContent = 'EXIF unavailable'; });
       }
+    }
+    const header = document.createElement('div'), title = document.createElement('span'), counter = document.createElement('span');
+    header.className = 'sheet-preview-header';
+    title.textContent = o.headerTitle; counter.textContent = pages ? 'Page 1 of ' + pages : '';
+    header.append(title, counter); place(header, g.margin, g.margin, g.width - 2 * g.margin, g.header);
+    const imgShare = (g.imageHeight / g.cellHeight * 100).toFixed(2) + '%';
+    for (const [index, item] of photos.slice(0, g.capacity).entries()) {
+      const { x, y } = PhotoCullSheetLayout.cell(g, index);
+      const tile = document.createElement('div');
+      tile.className = 'sheet-tile';
+      const image = new Image(); image.alt = ''; image.src = imageUrl(item);
+      image.style.height = imgShare;
+      tile.append(image);
+      const captionBox = document.createElement('div');
+      captionBox.className = 'sheet-tile-captions';
+      appendCaptions(captionBox, item);
+      tile.append(captionBox);
       place(tile, x, y, g.cellWidth, g.cellHeight);
     }
+    let sample = $('sheet-caption-sample');
+    if (!sample) {
+      sample = document.createElement('div');
+      sample.id = 'sheet-caption-sample';
+      preview.insertAdjacentElement('afterend', sample);
+    }
+    sample.replaceChildren();
+    const hasCaptions = o.captions.filename || o.captions.rating || o.captions.exif;
+    sample.hidden = !photos.length || !hasCaptions;
+    if (!sample.hidden) appendCaptions(sample, photos[0]);
     count.textContent = photos.length + (photos.length === 1 ? ' photo' : ' photos') + ' → ' + pages + (pages === 1 ? ' page' : ' pages');
     save.disabled = !photos.length || !api.desktop || running;
     status.textContent = api.desktop ? '' : 'Save contact sheets in the PhotoCull desktop app.';
