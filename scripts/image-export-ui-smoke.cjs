@@ -6,7 +6,13 @@ async function main() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'photocull-image-export-ui-'));
   const photos = path.join(root, 'photos'), out = path.join(root, 'out'), reports = path.resolve(process.argv[2] || 'artifacts/image-export');
   await fs.mkdir(photos); await fs.mkdir(out); await fs.mkdir(reports, { recursive: true });
-  for (const name of ['a.jpg', 'b.jpg']) await sharp({ create: { width: 64, height: 96, channels: 3, background: '#456789' } }).jpeg().toFile(path.join(photos, name));
+  const header = path.join(photos, 'a.jpg'), embedded = path.join(photos, 'b.jpg');
+  const jpeg = (width, height, file) => sharp({ create: { width, height, channels: 3, background: '#456789' } }).jpeg().toFile(file);
+  await jpeg(16, 16, header); await jpeg(96, 64, embedded);
+  const exif = new (require('exiftool-vendored').ExifTool)();
+  try { await exif.write(header, { 'Orientation#': 6 }, { writeArgs: ['-overwrite_original', '-ThumbnailImage<=' + embedded] }); }
+  finally { await exif.end(); }
+  await fs.rename(header, path.join(photos, 'a.ARW'));
   const app = await launch({ env: { ...process.env, PHOTOCULL_DATA_DIR: path.join(root, 'state') } });
   const page = await app.firstWindow(), errors = [];
   page.on('pageerror', e => errors.push(e.message));
@@ -34,9 +40,13 @@ PhotoCullExport.init = context => {
     const writeLogo = color => sharp({ create: { width: 2, height: 2, channels: 4, background: color } }).png().toFile(logo);
     await page.exposeFunction('readLogo', async () => Array.from(await fs.readFile(logo)));
     await page.reload();
+    await page.evaluate(() => photocull.settings({ rawRendering: 'off' }));
     await page.evaluate(folder => window.loadTestFolder(folder, false), photos);
     await page.keyboard.press('Control+a'); await page.keyboard.press('p');
     await page.waitForFunction(() => document.querySelector('#count-pick').textContent === '2');
+    await page.locator('.film-card[aria-label="a.ARW"]').click();
+    const size = await page.evaluate(async () => (await photocull.previewStatus(state.session.id, state.selected, 'preview')).size);
+    assert.equal(size, null);
     await page.keyboard.press('Control+Shift+E');
     await page.locator('#image-export-dialog').waitFor({ state: 'visible' });
     assert.match(await page.locator('#image-export-counts').innerText(), /2 photos/);
@@ -125,6 +135,9 @@ PhotoCullExport.init = context => {
     await writeLogo('#0000ff');
     await page.locator('#image-export-wm-pick').click();
     await waitForLogo([0, 0, 255]);
+    await writeLogo('#ff00ff');
+    await page.locator('#image-export-wm-scale').fill('25');
+    await waitForLogo([255, 0, 255]);
     await page.evaluate(() => { window.stringError = false; window.failSecond = false; });
     await page.locator('#image-export-start').click();
     await page.waitForFunction(() => document.querySelector('#image-export-status').textContent.startsWith('2 exported'));
@@ -132,9 +145,8 @@ PhotoCullExport.init = context => {
     await writeLogo('#00ff00');
     await page.locator('#image-export').click();
     await waitForLogo([0, 255, 0]);
-    await page.locator('#image-export-close').click();
     await fs.unlink(logo);
-    await page.locator('#image-export').click();
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await page.waitForFunction(() => document.querySelector('#image-export-wm-status').textContent.includes('ENOENT'));
     await waitForLogo([73, 78, 81]);
     assert.ok(await page.locator('#image-export-start').isDisabled());

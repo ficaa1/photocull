@@ -1,16 +1,13 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { publish } = require('./exclusive-move.cjs');
+const { publish, checkedMove, matches, stamp, problem } = require('./exclusive-move.cjs');
 const vm = require('node:vm');
 const { renderName, validStem, needsCapture } = require('./renderer/naming.js');
 const { sidecarPaths } = require('./xmp.cjs');
 
 const fold = file => path.join(path.dirname(file), path.basename(file).normalize('NFC').toLowerCase());
 const stemOf = file => path.basename(file, path.extname(file));
-const stamp = s => ({ fileId: `${s.dev}:${s.ino}`, size: s.size, mtimeMs: s.mtimeMs });
-const matches = (s, expected) => s.isFile() && s.size === expected.size && s.mtimeMs === expected.mtimeMs && expected.fileId === `${s.dev}:${s.ino}`;
 const sideNames = item => [...new Set([item.path, item.companion].filter(Boolean).flatMap(sidecarPaths).map(fold))];
-const problem = file => new Error(`${path.basename(file)} changed since scan. Reopen the folder.`);
 
 function format(config) {
   const { mode = 'template', template = '{filename}', text = '', start = 1, padding = 4, find = '', replace = '' } = config;
@@ -108,7 +105,7 @@ async function plan(session, items, config, captureDate, undo) {
       const sides = new Set(sideNames(item).flatMap(key => entries.get(key) || []));
       if (sides.size !== item.renameSidecars.size || prior && files.length + sides.size !== prior.pairs.size) throw problem(item.path);
       for (const file of sides) {
-        if (!item.renameSidecars.has(file) || prior && !prior.pairs.has(file)) throw problem(file);
+        if (!item.renameSidecars.has(file) || prior && (!prior.pairs.has(file) || prior.pairs.get(file).invalid)) throw problem(file);
         if (owners.get(fold(file)).size > 1) throw new Error('This XMP is shared by multiple photos.');
         const ext = path.extname(file), base = file.slice(0, -ext.length);
         const suffix = fold(base) === fold(path.join(dir, stemOf(item.path))) ? ext : path.extname(base) + ext;
@@ -127,7 +124,8 @@ async function plan(session, items, config, captureDate, undo) {
         if (file !== to && (handoffs.has(file.toLowerCase()) || handoffs.has(to.toLowerCase()))) throw new Error('This filename is in use by a Develop hand-off.');
         if (Buffer.byteLength(path.basename(to)) > 255) throw new Error('Filename exceeds the filesystem limit.');
         if (!entries.get(fold(file))?.includes(file) || !matches(await fs.lstat(file), expected)) throw problem(file);
-        moves.push({ from: file, to, expected, row });
+        const { fileId, size, mtimeMs } = expected;
+        moves.push({ from: file, to, expected: { fileId, size, mtimeMs }, row });
         if (!targets.has(fold(to))) targets.set(fold(to), new Set());
         targets.get(fold(to)).add(row);
       }
@@ -150,12 +148,6 @@ async function verify(file, expected) {
   if (!matches(await fs.lstat(file), expected)) throw problem(file);
 }
 
-async function stage(from, to, expected) {
-  if (await fs.realpath(path.dirname(from)) !== path.dirname(from)) throw problem(from);
-  await verify(from, expected);
-  await fs.rename(from, to);
-}
-
 async function verifyTargets(plan) {
   const actual = new Map(), physical = new Map(plan.moves.map(m => [fold(m.to), m.to]));
   for (const dir of new Set(plan.moves.map(m => path.dirname(m.to)))) {
@@ -166,32 +158,37 @@ async function verifyTargets(plan) {
     const valid = file ? entries.length === 1 && entries[0] === file : entries.length === 0;
     if (!valid) throw new Error(`Filename collision: ${key}`);
   }
-  for (const m of plan.moves) await verify(m.to, m.expected);
+  for (const m of plan.moves) await verify(m.to, m.current || m.expected);
 }
 
 async function rollback(moves) {
   const problems = [];
   for (const m of moves.filter(m => m.published)) {
     try {
-      await stage(m.to, m.recall, m.expected);
-      // An external writer may replace the public entry just before the atomic move.
-      try { await verify(m.recall, m.expected); }
-      catch (error) {
+      m.current = await checkedMove(m.to, m.recall, m.current, async (from, to) => {
+        await fs.rename(from, to);
         m.displaced = true;
-        await publish(m.recall, m.to);
-        m.displaced = false;
-        throw error;
-      }
+        return m.variableFileIds;
+      });
+      m.displaced = false;
       m.held = m.recall;
-    } catch (error) { problems.push(`${m.to}: ${error.message}`); }
+    } catch (error) {
+      problems.push(`${m.to}: ${error.message}`);
+      if (m.displaced) {
+        try { await publish(m.recall, m.to); m.displaced = false; }
+        catch (restoreError) { problems.push(`${m.recall} → ${m.to}: ${restoreError.message}`); }
+      }
+    }
   }
   for (const m of moves) {
-    if (m.held) {
-      try { await publish(m.held, m.from); }
-      catch (error) { problems.push(`${m.held} → ${m.from}: ${error.message}`); }
-    }
-    try { await verify(m.from, m.expected); m.restored = true; }
-    catch { problems.push(`Original photo missing or changed: ${m.from}`); }
+    try {
+      if (m.held) {
+        if (m.stageVerified) m.current = await checkedMove(m.held, m.from, m.current, publish);
+        else await publish(m.held, m.from);
+      }
+      await verify(m.from, m.current || m.expected);
+      m.restored = true;
+    } catch (error) { problems.push(`${m.held || m.from} → ${m.from}: ${error.message}`); }
   }
   return problems;
 }
@@ -206,23 +203,31 @@ async function execute(plan, persist) {
       const parent = path.dirname(m.from);
       if (!dirs.has(parent)) {
         const dir = await fs.mkdtemp(path.join(parent, '.photocull-'));
-        dirs.set(parent, dir);
+        const staging = { dir };
+        dirs.set(parent, staging);
         // Verify exclusive publication on this volume before touching any original.
         const probe = path.join(dir, 'probe'), dest = path.join(dir, 'probe-moved');
-        try { await fs.writeFile(probe, '', { flag: 'wx' }); await publish(probe, dest); }
+        try { await fs.writeFile(probe, '', { flag: 'wx' }); staging.variableFileIds = await publish(probe, dest); }
         finally { await removePrivate(probe); await removePrivate(dest); }
       }
-      m.temp = path.join(dirs.get(parent), String(i));
+      m.variableFileIds = dirs.get(parent).variableFileIds;
+      m.temp = path.join(dirs.get(parent).dir, String(i));
       m.recall = m.temp + '-rollback';
     }
     for (const m of moves) {
-      await stage(m.from, m.temp, m.expected);
-      m.held = m.temp;
-      await verify(m.temp, m.expected);
+      m.current = await checkedMove(m.from, m.temp, m.expected, async (from, to) => {
+        await fs.rename(from, to);
+        m.held = to;
+        return m.variableFileIds;
+      });
+      m.stageVerified = true;
     }
     for (const m of moves) {
-      await publish(m.temp, m.to);
-      m.published = true;
+      m.current = await checkedMove(m.temp, m.to, m.current, async (from, to) => {
+        const mayChangeId = await publish(from, to);
+        m.published = true;
+        return mayChangeId;
+      });
     }
     await verifyTargets(plan);
     await persist();
@@ -240,7 +245,7 @@ async function execute(plan, persist) {
       }
     }
   }
-  for (const dir of dirs.values()) {
+  for (const { dir } of dirs.values()) {
     try { await fs.rmdir(dir); }
     catch (error) { if (!recovery.length || error.code !== 'ENOTEMPTY') cleanup.push(error.message); }
   }

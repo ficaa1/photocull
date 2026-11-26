@@ -143,6 +143,7 @@ async function start() {
   const previewPhoto = photo => photo.develop?.missing ? { ...photo, develop: null } : photo;
   let fileRequests = 0;
   const renameBatch = async (action, session, ids, config) => {
+    if (closing) throw new Error('PhotoCull is closing.');
     requireIdle();
     requireUntethered('Stop tethering before renaming photos.');
     if (scans.size || fileRequests) throw new Error('Wait for the current file operation to finish.');
@@ -535,6 +536,7 @@ async function start() {
   let closing = null;
   const shutdown = () => closing ??= (async () => {
     server.close(); prepare.close();
+    await renaming;
     await Promise.allSettled([externalEdits.decisions, externalEdits.writes, tether.close()]);
     await Promise.allSettled([library.close(), settings.writes, previews.close(), transfers.close(), backups.close(), devices.close()]);
     process.exit(0);

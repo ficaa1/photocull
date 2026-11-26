@@ -2,6 +2,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const rename = require('./batch-rename.cjs');
+const { problem } = require('./exclusive-move.cjs');
 const { mapLimit } = require('./queue.cjs');
 const { DEFAULTS } = require('./preferences.cjs');
 const { readXmp, writeXmp, atomicWrite, sidecarPaths, portableDevelop, resolveDevelop, shouldWriteSidecars, normalizeCaptureMetadata } = require('./xmp.cjs');
@@ -256,6 +257,14 @@ class Library {
   }
 
   async batchRename(sessionId, ids, config, action, captureDate) {
+    if (this.closing || this.activeRename) throw new Error('Wait for the current file operation to finish.');
+    const work = this.renameItems(sessionId, ids, config, action, captureDate);
+    if (action === 'preview') return work;
+    this.activeRename = work;
+    try { return await work; } finally { this.activeRename = null; }
+  }
+
+  async renameItems(sessionId, ids, config, action, captureDate) {
     const s = this.get(sessionId), undo = action === 'undo' ? s.renameUndo : null;
     if (s.removable) throw new Error('Batch rename is unavailable on camera cards.');
     if (action === 'undo') {
@@ -279,10 +288,22 @@ class Library {
       before.set(item, { path: item.path, companion: item.companion, name: item.name, group: item.group, storageId: item.storageId,
         sidecar: item.sidecar, sidecars: item.sidecars, renameSidecars: item.renameSidecars, exclusiveSidecar: item.exclusiveSidecar, contentRev: item.contentRev });
     }
-    for (const { row, from, to, expected } of plan.moves) {
-      const { fileId, size, mtimeMs } = expected;
-      reverse.get(row.id)?.pairs.set(to, { from, expected: { fileId, size, mtimeMs } });
-    }
+    const recordIdentities = (committed) => {
+      for (const { row, from, to, current, expected, restored, variableFileIds } of plan.moves) {
+        if (!committed && !restored) continue;
+        const receipt = current || expected, file = committed ? to : from;
+        const item = s.byId.get(row.id);
+        if (file === item.path) item.fileId = receipt.fileId;
+        else if (file === item.companion) item.companionFileId = receipt.fileId;
+        else item.renameSidecars.set(file, receipt);
+        if (committed) reverse.get(row.id)?.pairs.set(to, { from, expected: receipt, variableFileIds });
+        else {
+          const prior = s.renameUndo?.get(row.id)?.pairs.get(from);
+          if (prior && prior.expected.fileId === expected.fileId && prior.expected.mtimeMs === expected.mtimeMs && prior.expected.size === expected.size)
+            prior.expected = receipt;
+        }
+      }
+    };
     const reindex = () => {
       s.items.sort(itemOrder);
       s.byGroup.clear(); s.byPath.clear();
@@ -303,6 +324,7 @@ class Library {
           item.exclusiveSidecar = !item.renameSidecars.has(item.sidecar);
           item.contentRev = (item.contentRev || 0) + 1;
         }
+        recordIdentities(true);
         reindex();
         await this.save(s);
       } catch (error) {
@@ -311,7 +333,11 @@ class Library {
         throw error;
       }
     }).catch(error => {
-      if (error.code === 'RENAME_RECOVERY') this.sessions.delete(sessionId);
+      if (error.code === 'RENAME_RECOVERY') {
+        this.sessions.delete(sessionId);
+        throw coded(error.code, error.message, { sessionClosed: true });
+      }
+      recordIdentities(false);
       throw error;
     });
     s.renameUndo = undo ? null : reverse;
@@ -328,11 +354,16 @@ class Library {
   }
 
   async writeSidecar(s, item, settings) {
-    await writeXmp(item.sidecar, item, settings);
-    const receipt = rename.stamp(await fs.lstat(item.sidecar));
-    s.byId.get(item.id)?.renameSidecars.set(item.sidecar, receipt);
     const renamed = s.renameUndo?.get(item.id)?.pairs.get(item.sidecar);
-    if (renamed) renamed.expected = receipt;
+    if (renamed?.invalid) throw problem(item.sidecar);
+    try {
+      const receipt = await writeXmp(item.sidecar, item, settings, renamed);
+      s.byId.get(item.id)?.renameSidecars.set(item.sidecar, receipt);
+      if (renamed) renamed.expected = receipt;
+    } catch (error) {
+      if (renamed && ['ENOENT', 'FILE_CHANGED'].includes(error.code)) renamed.invalid = true;
+      throw error;
+    }
   }
 
   changed(s, items) {
@@ -376,7 +407,11 @@ class Library {
     return this.sidecarWrites;
   }
 
-  async close() { await this.flushSidecars(); await this.writes; }
+  async close() {
+    this.closing = true;
+    await this.activeRename?.catch(() => {});
+    await this.flushSidecars(); await this.writes;
+  }
 
   // Opens a folder for tethering without rescanning a session that already covers it. Widening a
   // nonrecursive session to recursive carries its decisions by verified path and fingerprint,

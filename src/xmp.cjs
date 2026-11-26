@@ -1,6 +1,6 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { publish } = require('./exclusive-move.cjs');
+const { publish, checkedMove, stamp } = require('./exclusive-move.cjs');
 const { randomUUID } = require('node:crypto');
 const { normalizeSettings, text } = require('./preferences.cjs');
 const { DOMParser, XMLSerializer } = require('@xmldom/xmldom');
@@ -269,25 +269,55 @@ async function atomicWrite(file, data, exclusive = false) {
   } finally { await fs.rm(temp, { force: true }).catch(() => {}); }
 }
 
-async function writeXmp(file, decision, settings) {
-  await writableSidecar(file);
-  if (decision.exclusiveSidecar && !decision.renameSidecars.has(file)) {
-    await atomicWrite(file, updateXmp('', decision, settings), true);
-    return;
-  }
+async function editedXmp(source, destination, decision, settings) {
   let old = '';
   try {
-    const info = await fs.lstat(file);
+    const info = await fs.lstat(source);
     if (!info.isFile() || info.isSymbolicLink()) throw new Error('The XMP destination must be a regular file.');
     if (info.size > 2 * 1024 * 1024) throw new Error('Existing sidecar exceeds the 2 MB editing limit; it was left intact.');
-    old = await fs.readFile(file, 'utf8');
+    old = await fs.readFile(source, 'utf8');
   } catch (error) { if (error.code !== 'ENOENT') throw error; }
   const next = updateXmp(old, decision, settings);
-  // Keep a recoverable original, without overwriting a previous backup.
-  if (old) await fs.copyFile(file, `${file}.photocull-backup`, fs.constants.COPYFILE_EXCL).catch(error => {
+  if (old) await fs.copyFile(source, destination + '.photocull-backup', fs.constants.COPYFILE_EXCL).catch(error => {
     if (error.code !== 'EEXIST') throw error;
   });
-  await atomicWrite(file, next);
+  return next;
+}
+
+async function writeXmp(file, decision, settings, renamed) {
+  await writableSidecar(file);
+  if (!renamed) {
+    const exclusive = decision.exclusiveSidecar && !decision.renameSidecars.has(file);
+    const data = exclusive ? updateXmp('', decision, settings) : await editedXmp(file, file, decision, settings);
+    await atomicWrite(file, data, exclusive);
+    return stamp(await fs.lstat(file));
+  }
+  // Take ownership of the recorded entry before editing it. A replacement can then only block publication.
+  const dir = await fs.mkdtemp(path.join(path.dirname(file), '.photocull-xmp-'));
+  const old = path.join(dir, 'original.xmp'), next = path.join(dir, 'updated.xmp');
+  let staged = false, keepOriginal = false;
+  try {
+    await checkedMove(file, old, renamed.expected, async (from, to) => {
+      await fs.rename(from, to); staged = true; return renamed.variableFileIds;
+    });
+    await atomicWrite(next, await editedXmp(old, file, decision, settings));
+    return await checkedMove(next, file, stamp(await fs.lstat(next)), publish);
+  } catch (error) {
+    if (staged) {
+      try { await publish(old, file); }
+      catch (restoreError) {
+        keepOriginal = true;
+        throw Object.assign(new Error(`${error.message}. Recover ${old} to ${file}: ${restoreError.message}`), { code: 'FILE_CHANGED' });
+      }
+    }
+    throw error;
+  } finally {
+    await fs.rm(next, { force: true });
+    if (!keepOriginal) {
+      await fs.rm(old, { force: true });
+      await fs.rmdir(dir);
+    }
+  }
 }
 
 // Sidecars use slash-separated relative paths on every platform. Absolute paths

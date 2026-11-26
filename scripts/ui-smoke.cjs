@@ -209,6 +209,26 @@ async function main() {
     const stats = await page.evaluate(() => window.photocull.stats());
     const report = { passed: true, imageCount: Number(await page.locator('#count-all').textContent()), renderedGridCards: cardCount,
       checks: ['Batch Rename preview, apply and undo', 'Watermark placement preview', 'RAW preview display', 'keyboard picks and ratings', 'auto advance', 'undo/redo', 'reject', '100% zoom toggle', 'virtual grid', 'shift-click and batch undo', 'keyboard range, toggle and select all', 'marquee selection', 'batch trash, restore and delete prompt', 'pick filter', 'XMP export', 'reopen persistence', 'delete rejects', 'trash, restore and undo', 'permanent delete prompt', 'search empty state', 'shortcut help', 'preview cache usage and clear'], stats, errors };
+    await page.keyboard.press('Escape');
+    await page.route('**/rpc?*', route => {
+      if (route.request().postDataJSON()?.method !== 'batch-rename-apply') return route.continue();
+      return route.fulfill({ json: { ok: false, error: 'Recover the staged photo at .photocull-test/0',
+        errorDetail: { code: 'RENAME_RECOVERY', sessionClosed: true } } });
+    });
+    await page.locator('#source-menu-button').click(); await page.locator('#batch-rename').click();
+    await page.locator('#rename-template').fill('Closed-{filename}');
+    await page.locator('#rename-apply').click();
+    const recovery = page.getByRole('dialog', { name: 'Batch rename recovery' });
+    await recovery.waitFor();
+    assert.match(await recovery.innerText(), /photocull-test/);
+    await recovery.getByText('Close', { exact: true }).click();
+    await page.locator('#empty-open').waitFor();
+    assert.equal(await page.evaluate(() => state.session), null);
+    assert.equal(await page.locator('.grid-card,.film-card,#review-image[src]').count(), 0);
+    await page.evaluate(folder => window.loadTestFolder(folder, false), photos);
+    await page.waitForFunction(() => !!state.session?.items.length);
+    assert.deepEqual(errors, []);
+    report.checks.push('Batch rename recovery clears the workspace and allows reopening');
     await fs.writeFile(path.join(screenshots, 'ui-smoke.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report, null, 2));
   } finally {

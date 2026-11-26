@@ -131,9 +131,16 @@ pub fn approve(dir: &Path, file: &Path) -> Result<String, String> {
 }
 
 fn approved_bytes(dir: &Path, path: &str) -> Result<Vec<u8>, String> {
-    if fs::read_to_string(grant_path(dir, path)).ok().as_deref() != Some(path)
-        || dunce::canonicalize(path).ok().as_deref() != Some(Path::new(path))
-    {
+    if fs::read_to_string(grant_path(dir, path)).ok().as_deref() != Some(path) {
+        return Err("Choose the watermark PNG with the file picker.".into());
+    }
+    let resolved = dunce::canonicalize(path).map_err(|error| match error.kind() {
+        std::io::ErrorKind::NotFound => {
+            "The selected watermark PNG is missing. Choose it again.".to_owned()
+        }
+        _ => format!("Could not open the selected watermark PNG: {error}"),
+    })?;
+    if resolved != Path::new(path) {
         return Err("Choose the watermark PNG with the file picker.".into());
     }
     png_file(Path::new(path))

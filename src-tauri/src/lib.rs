@@ -102,9 +102,9 @@ async fn backend(
     state: State<'_, Backend>,
     method: String,
     params: Vec<Value>,
-) -> Result<Value, String> {
+) -> Result<Value, Value> {
     if !RENDERER_METHODS.contains(&method.as_str()) {
-        return Err(format!("Unknown request: {method}"));
+        return Err(format!("Unknown request: {method}").into());
     }
     let renaming = matches!(method.as_str(), "batch-rename-apply" | "batch-rename-undo");
     let _busy = if renaming {
@@ -120,8 +120,11 @@ async fn backend(
         logs::write(&format!("{method}: {}", failure.message));
         // Tether panels read the stable error code from the JSON detail.
         match failure.detail {
-            Some(detail) if method.starts_with("tether-") => json!({ "error": detail }).to_string(),
-            _ => failure.message,
+            Some(detail) if renaming => json!({ "message": failure.message, "detail": detail }),
+            Some(detail) if method.starts_with("tether-") => {
+                json!({ "error": detail }).to_string().into()
+            }
+            _ => failure.message.into(),
         }
     })
 }

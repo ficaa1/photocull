@@ -107,7 +107,14 @@
       const request = sizeRequest = { item, session, original };
       const canvas = $('wm-preview');
       canvas.width = canvas.height = 480;
-      if (item) api.previewStatus(session, item.id, 'preview', original).then(({ size }) => {
+      if (item) api.previewStatus(session, item.id, 'preview', original).then(async ({ size }) => {
+        if (sizeRequest !== request) return;
+        if (!size && item.raw) {
+          const preview = new Image();
+          preview.src = api.imageUrl(session, item.id, 'preview', `&original=${Number(original)}&cr=${item.contentRev || 0}&d=${item.developRevision || 0}`);
+          await preview.decode();
+          size = { width: preview.naturalWidth, height: preview.naturalHeight };
+        }
         if (sizeRequest !== request || !(size?.width > 0 && size.height > 0)) return;
         const factor = 600 / Math.max(size.width, size.height);
         canvas.width = Math.max(1, Math.round(size.width * factor));
@@ -120,14 +127,17 @@
         anchor: $('wm-anchor').value, opacity: $('wm-opacity').value, scale: $('wm-scale').value, padding: $('wm-padding').value });
     }
     async function loadLogo(path) {
-      resetLogo();
+      if (logoRequest?.path !== path) resetLogo();
       const request = logoRequest = { path };
       try {
         const data = await api.watermarkPreview(path);
         const bitmap = await createImageBitmap(new Blob([new Uint8Array(data)], { type: 'image/png' }));
         if (logoRequest !== request) { bitmap.close(); return; }
-        logo = bitmap;
-      } catch (error) { if (logoRequest !== request) return; logoError = error.message || String(error); }
+        logo?.close(); logo = bitmap; logoError = '';
+      } catch (error) {
+        if (logoRequest !== request) return;
+        logo?.close(); logo = null; logoError = error.message || String(error);
+      }
       refresh();
     }
     function drawMark(items) {
@@ -285,7 +295,19 @@
       buildNaming('image-export', preset?.naming || state.settings.naming, preview);
     };
     $('format').onchange = () => { depths(); refresh(); };
-    dialog.addEventListener('input', refresh); dialog.addEventListener('change', refresh);
+    let logoTimer;
+    function revalidateLogo() {
+      clearTimeout(logoTimer);
+      if (dialog.open && !running && $('wm-enabled').checked && $('wm-type').value === 'image' && imagePath) void loadLogo(imagePath);
+    }
+    function controlsChanged(event) {
+      if (event.target.id.startsWith('image-export-wm-')) {
+        clearTimeout(logoTimer); logoTimer = setTimeout(revalidateLogo, 150);
+      }
+      refresh();
+    }
+    window.addEventListener('focus', revalidateLogo);
+    dialog.addEventListener('input', controlsChanged); dialog.addEventListener('change', controlsChanged);
     $('destination').onclick = async () => { try { destination = await api.pickFolder('Export finished images to…') || destination; refresh(); } catch (e) { $('status').textContent = (e.message || String(e)); } };
     $('folder').oninput = () => { destination = $('folder').value.trim(); refresh(); };
     $('close').onclick = () => { if (!running) dialog.close(); };

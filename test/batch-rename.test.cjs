@@ -117,6 +117,35 @@ test('a link-less volume can swap and undo files and refuses a racing destinatio
   assert.deepEqual((await fs.readdir(dir)).sort(), ['1.jpg', '2.jpg', 'new.jpg']);
 });
 
+test('a link-less volume can change file IDs on staging, publication and rollback', async t => {
+  const names = ['one.ARW', 'one.JPG', 'one.xmp'];
+  const { lib, dir } = await fixture(t, names);
+  const time = new Date('2026-04-01T00:00:00Z');
+  for (const name of names) await fs.utimes(path.join(dir, name), time, time);
+  const session = await lib.scan(dir), ids = session.items.map(item => item.id);
+  const batch = (action, template) => lib.batchRename(session.id, ids, { template }, action);
+  const rename = fs.rename;
+  const reidentify = async file => {
+    const copy = file + '.copy';
+    await fs.copyFile(file, copy); await fs.utimes(copy, time, time); await rename(copy, file);
+  };
+  t.mock.method(fs, 'rename', async (from, to) => {
+    await rename(from, to);
+    if (path.basename(path.dirname(to)).startsWith('.photocull-')) await reidentify(to);
+  });
+  t.mock.method(fs, 'link', async (from, to) => {
+    if (to === path.join(dir, 'taken.JPG')) await fs.writeFile(to, 'foreign', { flag: 'wx' });
+    else if (path.basename(from) !== 'probe') await reidentify(from);
+    throw Object.assign(new Error('Hard links unsupported'), { code: 'ENOTSUP' });
+  });
+  await batch('apply', 'two');
+  await assert.rejects(batch('apply', 'taken'), /collision/i);
+  await batch('undo');
+  for (const name of names) assert.equal(await fs.readFile(path.join(dir, name), 'utf8'), name);
+  assert.equal(await fs.readFile(path.join(dir, 'taken.JPG'), 'utf8'), 'foreign');
+  assert.ok((await batch('preview', 'three')).valid);
+});
+
 test('staging leaves a replacement at the public source intact', async t => {
   const { run, dir } = await fixture(t, ['one.jpg']);
   const source = path.join(dir, 'one.jpg'), replacement = path.join(dir, 'incoming');
@@ -153,6 +182,45 @@ test('a replacement arriving just before staging is returned to its owner', asyn
   await assert.rejects(fs.access(path.join(dir, 'picked.jpg')), { code: 'ENOENT' });
 });
 
+test('rollback preserves the staged replacement when the exact original reappears', async t => {
+  const { run, dir } = await fixture(t, ['one.jpg']);
+  const original = path.join(dir, 'one.jpg'), old = path.join(dir, 'old');
+  const rename = fs.rename;
+  let staged;
+  t.mock.method(fs, 'rename', async (from, to) => {
+    if (from !== original) return rename(from, to);
+    await rename(from, old);
+    await fs.writeFile(from, 'incoming photo', { flag: 'wx' });
+    await rename(from, to);
+    staged = to;
+    await rename(old, from);
+  });
+  await assert.rejects(run('apply', { template: 'new' }), error =>
+    error.message.includes('Recovery required') && error.message.includes(staged));
+  assert.equal(await fs.readFile(staged, 'utf8'), 'incoming photo');
+  assert.equal(await fs.readFile(original, 'utf8'), 'one.jpg');
+});
+
+test('closing the library waits until staged originals are published', async t => {
+  const { run, lib, dir } = await fixture(t, ['one.jpg']);
+  const staged = Promise.withResolvers(), resume = Promise.withResolvers();
+  const rename = fs.rename;
+  t.mock.method(fs, 'rename', async (from, to) => {
+    await rename(from, to);
+    if (from === path.join(dir, 'one.jpg')) { staged.resolve(); await resume.promise; }
+  });
+  const apply = run('apply', { template: 'new' });
+  await staged.promise;
+  let closed = false;
+  const closing = lib.close().then(() => { closed = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  const closedDuringRename = closed;
+  resume.resolve();
+  await Promise.all([apply, closing]);
+  assert.equal(closedDuringRename, false);
+  assert.deepEqual(await fs.readdir(dir), ['new.jpg']);
+});
+
 test('an occupied original during rollback closes the session and locates the recoverable photo', async t => {
   const { run, dir, session, ids, lib } = await fixture(t, ['one.ARW', 'one.JPG']);
   const original = path.join(dir, 'one.ARW'), target = path.join(dir, 'new.JPG');
@@ -166,6 +234,7 @@ test('an occupied original during rollback closes the session and locates the re
   });
   const error = await run('apply', { template: 'new' }).catch(e => e);
   assert.match(error.message, /Recovery required/);
+  assert.equal(error.detail?.sessionClosed, true);
   assert.throws(() => lib.item(session.id, ids[0]), /session has closed/);
   const recoverable = (await fs.readdir(dir, { recursive: true })).map(p => path.join(dir, p));
   const raw = (await Promise.all(recoverable.map(async p => await fs.readFile(p, 'utf8').catch(() => null) === 'one.ARW' ? p : null))).find(Boolean);
@@ -230,6 +299,49 @@ test('undo keeps edits written to a recorded sidecar', async t => {
   assert.equal(await fs.readFile(path.join(dir, 'one.JPG'), 'utf8'), 'one.JPG');
 });
 
+test('autosave refuses a replacement for an XMP recorded by Undo', async t => {
+  const { dir, lib, run, ids, session } = await fixture(t, ['one.JPG', 'one.xmp']);
+  await run('apply', { template: 'new' });
+  const file = path.join(dir, 'new.xmp');
+  await fs.rename(file, file + '.original');
+  const foreign = require('../src/xmp.cjs').updateXmp('', { rating: 2, flag: 'pick' });
+  await fs.writeFile(file, foreign);
+  lib.settings = () => DEFAULTS;
+  await lib.decide(session.id, ids[0], { rating: 5 });
+  await lib.flushSidecars();
+  await assert.rejects(run('undo'), /changed/);
+  assert.equal(await fs.readFile(file, 'utf8'), foreign);
+  await assert.rejects(fs.access(path.join(dir, 'one.xmp')), { code: 'ENOENT' });
+  await fs.rename(file, file + '.foreign'); await fs.rename(file + '.original', file);
+  await assert.rejects(run('undo'), /changed/);
+});
+
+test('a sidecar arriving during autosave leaves the original recoverable', async t => {
+  const { dir, lib } = await fixture(t, ['one.JPG']);
+  const original = require('../src/xmp.cjs').updateXmp('', { rating: 1 });
+  await fs.writeFile(path.join(dir, 'one.xmp'), original);
+  const fresh = await lib.scan(dir);
+  const id = fresh.items[0].id;
+  const batch = action => lib.batchRename(fresh.id, [id], { template: 'new' }, action);
+  await batch('apply');
+  const file = path.join(dir, 'new.xmp'), link = fs.link;
+  let held;
+  t.mock.method(fs, 'link', async (from, to) => {
+    if (to === file && !held) {
+      held = path.join(path.dirname(from), 'original.xmp');
+      await fs.writeFile(to, 'external sidecar', { flag: 'wx' });
+    }
+    return link(from, to);
+  });
+  lib.settings = () => DEFAULTS;
+  await lib.decide(fresh.id, id, { rating: 5 });
+  await lib.flushSidecars();
+  assert.ok(held && lib.get(fresh.id).warnings.some(warning => warning.includes(held)));
+  assert.equal(await fs.readFile(held, 'utf8'), original);
+  assert.equal(await fs.readFile(file, 'utf8'), 'external sidecar');
+  await assert.rejects(batch('undo'), /changed/);
+});
+
 test('rename refuses camera cards, changed members, and unsafe undo', async t => {
   const card = await fixture(t, ['photo.jpg'], true);
   await assert.rejects(card.run('apply', { template: 'new' }), /camera card/);
@@ -248,7 +360,7 @@ test('rename refuses camera cards, changed members, and unsafe undo', async t =>
   assert.equal(await fs.readFile(path.join(dir, 'new.ARW'), 'utf8'), 'one.ARW');
 });
 
-test('the sidecar serializes rename against deletion, copying, tethering and newly inserted cards', async t => {
+async function openSidecar(t) {
   const { spawn } = require('node:child_process');
   const readline = require('node:readline');
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'photocull-rename-jobs-')));
@@ -272,6 +384,22 @@ test('the sidecar serializes rename against deletion, copying, tethering and new
     }
     return pending.get(id);
   };
+  return { send, reply, photos, list, root, child, exited };
+}
+
+test('closing the sidecar stdin drains an accepted rename before the process exits', async t => {
+  const { send, reply, photos, child, exited } = await openSidecar(t);
+  const { value: session } = await reply(send('scan', photos, false));
+  const apply = send('batch-rename-apply', session.id, [session.items[0].id], { template: 'finished' });
+  child.stdin.end();
+  assert.ok((await reply(apply)).ok);
+  assert.equal(await exited, 0);
+  assert.deepEqual(await fs.readdir(photos), ['finished.jpg']);
+  assert.equal(await fs.readFile(path.join(photos, 'finished.jpg'), 'utf8'), 'original');
+});
+
+test('the sidecar serializes rename against deletion, copying, tethering and newly inserted cards', async t => {
+  const { send, reply, photos, list, root } = await openSidecar(t);
   const { value: session } = await reply(send('scan', photos, false)), ids = session.items.map(i => i.id);
   const rename = () => send('batch-rename-apply', session.id, ids, { template: 'new' });
   assert.ok((await reply(send('deletion-plan', session.id, ids))).ok);

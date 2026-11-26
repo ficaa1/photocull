@@ -419,6 +419,10 @@ mod tests {
             .starts_with(b"\x89PNG"));
         fs::write(&file, b"invalid").unwrap();
         assert!(settings().prepare(&dir, &Default::default()).is_err());
+        fs::remove_file(&file).unwrap();
+        assert!(crate::watermark::preview(&dir, &path)
+            .unwrap_err()
+            .contains("missing"));
         fs::remove_dir_all(dir).unwrap();
     }
 

@@ -279,20 +279,24 @@ async function openFolder() {
 
 function loadSession(session) {
   if(state.mode==='compare')state.mode=stageMode();
+  clearTimeout(metadataTimer);
   cancelCulling();culling.metadata.clear();culling.jobs.clear();culling.scores.clear();culling.expanded.clear();culling.bursts=[];culling.byId.clear();
-  state.session = session; state.selected = session.items[0]?.id ?? null;
-  state.proposals = []; state.proposalsBusy = false; state.proposalsLoading = !api.server; state.proposalWarning = ''; proposalSignature = '';
+  state.session = session; state.selected = session?.items[0]?.id ?? null;
+  state.proposals = []; state.proposalsBusy = false; state.proposalsLoading = !!session && !api.server; state.proposalWarning = ''; proposalSignature = '';
   resetSelection();
   state.showOriginal = false; state.filter = 'all'; state.colorFilter = ''; $('color-filter').value = ''; state.query = ''; state.saveError = false; loupe.reset();
   $('search').value = ''; $('grid').scrollTop = 0;
-  const folderName = session.folder.split(/[\\/]/).filter(Boolean).pop();
-  $('folder-name').textContent = folderName; $('folder-name').title = session.folder;
-  $('folder-detail').textContent = `${session.items.length} photos`;
-  $('breadcrumb').textContent = session.folder;
-  $('breadcrumb').title = session.folder;
-  $('export').disabled = !session.items.length;
-  gridNodes.clear(); filmNodes.clear(); $('grid-content').replaceChildren();
+  const folder = session?.folder || '';
+  $('folder-name').textContent = folder.split(/[\\/]/).filter(Boolean).pop() || folder || 'No folder open';
+  $('folder-name').title = folder;
+  $('folder-detail').textContent = session ? `${session.items.length} photos` : '';
+  $('breadcrumb').textContent = folder; $('breadcrumb').title = folder;
+  gridNodes.clear(); filmNodes.clear(); $('grid-content').replaceChildren(); $('filmstrip').replaceChildren();
+  if (!session) {
+    $('review-image').removeAttribute('src'); $('navigator-image').removeAttribute('src');
+  }
   survey?.unpin(); render(); renderDevices(); tether?.sessionLoaded(session);
+  if (!session) { setStatus('Ready'); return; }
   setStatus('Saved');void analyzeCulling();
   if (session.warnings.length) toast(`${session.warnings.length} file or sidecar warning(s): ${session.warnings[0]}`);
   const missingHandoffs = session.items.filter(i => i.handoffMissing).length;
@@ -1794,9 +1798,15 @@ async function runBatchRename(undo, session) {
     toast(undo ? 'Original filenames restored.' : 'Batch rename complete.', undo ? null : { label: 'Undo', run: () => runBatchRename(true, session) });
   } catch (error) {
     const message = error.message || String(error);
-    if (undo) {
-      const report = workspaceNode('dialog', null, { 'aria-label': 'Undo batch rename' });
-      report.append(workspaceNode('h2', 'Undo batch rename'), workspaceNode('p', message, { class: 'rename-error' }),
+    const closed = error.detail?.sessionClosed === true;
+    if (closed && state.session?.id === session) {
+      renameDialog.close(); clearTimeout(renameTimer); renameGeneration++; renameSelection = null;
+      loadSession(null);
+    }
+    if (undo || closed) {
+      const title = closed ? 'Batch rename recovery' : 'Undo batch rename';
+      const report = workspaceNode('dialog', null, { 'aria-label': title });
+      report.append(workspaceNode('h2', title), workspaceNode('p', message, { class: 'rename-error' }),
         workspaceButton('Close', () => report.close()));
       report.onclose = () => report.remove();
       document.body.append(report); report.showModal();
