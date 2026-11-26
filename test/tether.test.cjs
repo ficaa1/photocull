@@ -1554,13 +1554,24 @@ test('next capture backup mirrors published members and XMP into shot folders wi
   await ctx.service.close();
 });
 
+async function disconnectDrive(drive, parked) {
+  // Windows briefly holds the marker open during a background volume check.
+  for (let attempt = 0; ; attempt++) {
+    try { return await fs.rename(drive, parked); }
+    catch (error) {
+      if (process.platform !== 'win32' || error.code !== 'EPERM' || attempt >= 50) throw error;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+  }
+}
+
 test('backup survives a stopped shoot and retries a disconnected drive manually and on reconnect', async t => {
   const ctx = await setup(t);
   await ctx.bind();
   const drive = path.join(ctx.base, 'Drive'), parked = drive + '-offline';
   await fs.mkdir(drive);
   await backupControl(ctx, 'choose', drive);
-  await fs.rename(drive, parked);
+  await disconnectDrive(drive, parked);
   const capture = async () => ctx.deliver((await ctx.accept({ roles: ['raw'] })).exposureId, 'DSC.ARW', { content: 'primary' });
   const first = await capture();
   assert.equal(await fs.readFile(first.final, 'utf8'), 'primary');
@@ -1580,7 +1591,7 @@ test('backup survives a stopped shoot and retries a disconnected drive manually 
   const firstBackup = ctx.service.ledger(ctx.shootId).members[first.member.memberId].backup;
   assert.equal(firstBackup.attempts, 3);
   assert.equal(await fs.readFile(firstBackup.path, 'utf8'), 'primary');
-  await fs.rename(drive, parked);
+  await disconnectDrive(drive, parked);
   const second = await capture();
   await waitBackup(ctx, 'failed', 1);
   await fs.rename(parked, drive);
@@ -1703,17 +1714,6 @@ test('the RAW companion updates the recognized JPEG-first backup sidecar after r
   await ctx.service.close();
 });
 
-async function disconnectDrive(drive, parked) {
-  // Windows briefly holds the marker open during a background volume check.
-  for (let attempt = 0; ; attempt++) {
-    try { return await fs.rename(drive, parked); }
-    catch (error) {
-      if (process.platform !== 'win32' || error.code !== 'EPERM' || attempt >= 50) throw error;
-      await new Promise(resolve => setTimeout(resolve, 20));
-    }
-  }
-}
-
 test('a backup with an empty queue detects removal, a wrong volume, and the marked folder on a new mount', async t => {
   const ctx = await setup(t);
   await ctx.bind();
@@ -1806,7 +1806,7 @@ for (const redirect of [false, true]) {
         handle.writeFile = async chunk => {
           await write(chunk.subarray(0, 1));
           await handle.close();
-          await fs.rename(drive, parked);
+          await disconnectDrive(drive, parked);
           throw Object.assign(new Error('Drive disconnected'), { code: 'EIO' });
         };
       }
