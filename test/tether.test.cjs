@@ -1703,6 +1703,17 @@ test('the RAW companion updates the recognized JPEG-first backup sidecar after r
   await ctx.service.close();
 });
 
+async function disconnectDrive(drive, parked) {
+  // Windows briefly holds the marker open during a background volume check.
+  for (let attempt = 0; ; attempt++) {
+    try { return await fs.rename(drive, parked); }
+    catch (error) {
+      if (process.platform !== 'win32' || error.code !== 'EPERM' || attempt >= 50) throw error;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+  }
+}
+
 test('a backup with an empty queue detects removal, a wrong volume, and the marked folder on a new mount', async t => {
   const ctx = await setup(t);
   await ctx.bind();
@@ -1710,7 +1721,7 @@ test('a backup with an empty queue detects removal, a wrong volume, and the mark
   await fs.mkdir(drive); await backupControl(ctx, 'choose', drive);
   const marker = '.photocull-backup-id', saved = await fs.readFile(path.join(drive, marker), 'utf8');
   assert.equal(ctx.service.ledger(ctx.shootId).shoot.backup.backupVolumeId, saved.trim());
-  await fs.rename(drive, parked);
+  await disconnectDrive(drive, parked);
   const deadline = Date.now() + 8000;
   while (!ctx.events.some(e => e.event === 'tether-backup-changed' && e.payload.backup.availability === 'offline') && Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 25));
@@ -1837,7 +1848,7 @@ test('backup continues while capture recovery waits for republication', async t 
   await ctx.bind();
   const drive = path.join(ctx.base, 'Drive');
   await fs.mkdir(drive); await backupControl(ctx, 'choose', drive);
-  await fs.rename(drive, drive + '-offline');
+  await disconnectDrive(drive, drive + '-offline');
   const first = await ctx.deliver((await ctx.accept({ roles: ['raw'] })).exposureId, 'A.ARW', { content: 'first' });
   await waitBackup(ctx, 'failed', 1);
   await ctx.service.journal(ctx.shootId, 'issue', { memberId: first.member.memberId, message: 'Capture missing' });
@@ -1877,19 +1888,14 @@ test('backup enrollment rejects a drive swapped while creating its marker', asyn
   assert.deepEqual(await fs.readdir(drive), []);
   assert.equal((await ctx.state()).backup.root, null);
 
-  // Temporarily swapping a replacement drive during open and restoring the original before write must never write a UUID to the replacement.
+  // The mount can change during open and point back to the selected drive before write.
   const drive2 = path.join(ctx.base, 'Drive2'), replacement2 = path.join(ctx.base, 'Replacement2'), marker2 = path.join(drive2, '.photocull-backup-id');
   await fs.mkdir(drive2); await fs.mkdir(replacement2);
   let tempSwapped = false;
   t.mock.method(fs, 'open', async (file, ...args) => {
     if (file === marker2 && !tempSwapped) {
       tempSwapped = true;
-      await fs.rename(drive2, drive2 + '-parked');
-      await fs.rename(replacement2, drive2);
-      const handle = await open(file, ...args);
-      await fs.rename(drive2, replacement2);
-      await fs.rename(drive2 + '-parked', drive2);
-      return handle;
+      return open(path.join(replacement2, '.photocull-backup-id'), ...args);
     }
     return open(file, ...args);
   });
@@ -1927,6 +1933,7 @@ for (const timing of ['before the RAW arrives', 'during the XMP write']) {
         if (file === sidecar && (flags & constants.O_RDWR)) {
           const write = handle.write.bind(handle);
           handle.write = async (...args) => {
+            await rename(sidecar, sidecar + '.old');
             await rename(foreign, sidecar);
             return write(...args);
           };

@@ -48,7 +48,7 @@ test('JPEG sheets preserve rotated image proportions and confine escaped text to
 });
 
 test('desktop sidecar exports scoped PDFs and JPEG siblings and rolls back collisions and cancellations', { timeout: 60000 }, async t => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sheet-sidecar-')), photos = path.join(root, 'photos'), destination = path.join(root, 'sheets');
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sheet-sidecar-'))), photos = path.join(root, 'photos'), destination = path.join(root, 'sheets');
   await fs.mkdir(photos); await fs.mkdir(destination);
   const jpg = await sharp({ create: { width: 60, height: 90, channels: 3, background: 'red' } }).jpeg().toBuffer();
   for (const name of ['a&b.jpg', 'c.jpg', 'd.jpg']) await fs.writeFile(path.join(photos, name), jpg);
@@ -148,7 +148,7 @@ test('desktop sidecar exports scoped PDFs and JPEG siblings and rolls back colli
 });
 
 test('cancel during final publication keeps completed files without deleting foreign replacements', async t => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sheet-publish-'));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sheet-publish-')));
   t.after(() => fs.rm(root, { recursive: true }));
   const first = path.join(root, 'sheet_p01.jpg'), last = path.join(root, 'sheet_p03.jpg');
   const controller = new AbortController(), link = fs.link;
@@ -183,7 +183,7 @@ test('volumes without hard links fail cleanly without overwriting or leaving par
 });
 
 test('destination replaced before staging or redirected before cleanup never writes or deletes foreign files', async t => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sheet-card-swap-'));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sheet-card-swap-')));
   t.after(() => fs.rm(root, { recursive: true }));
   const out = path.join(root, 'out'), card = path.join(root, 'card'), moved = path.join(root, 'moved');
   await fs.mkdir(out); await fs.mkdir(card);
@@ -199,7 +199,7 @@ test('destination replaced before staging or redirected before cleanup never wri
     if (checkedCard && target === out) {
       checkedCard = false;
       await fs.rename(out, moved);
-      await fs.symlink(card, out);
+      await fs.symlink(card, out, 'junction');
     }
     return realpath(target);
   });
@@ -253,7 +253,7 @@ test('destination replaced before staging or redirected before cleanup never wri
     previews: {
       getForPresentation: async () => {
         const stagedPath = path.join(stagedDir4, '0');
-        await fs.unlink(stagedPath);
+        await fs.rename(stagedPath, stagedPath + '.old');
         await fs.writeFile(stagedPath, 'replaced bytes', { flag: 'wx' });
         return image;
       },
@@ -273,8 +273,8 @@ test('destination replaced before staging or redirected before cleanup never wri
   });
   await assert.rejects(exportContactSheet({
     photos: [{ name: 'a.jpg' }],
-    file: path.join(out3, 'sheet.pdf'),
-    options: { format: 'pdf', columns: 1, rows: 1 },
+    file: path.join(out3, 'sheet.jpg'),
+    options: { format: 'jpeg', columns: 1, rows: 1 },
     signal: controller.signal,
     previews: {
       getForPresentation: async () => {
@@ -282,7 +282,7 @@ test('destination replaced before staging or redirected before cleanup never wri
         await fs.mkdir(foreignStage);
         await fs.writeFile(path.join(foreignStage, 'sentinel.txt'), 'keep');
         await fs.rename(out3, moved3);
-        await fs.symlink(other, out3);
+        await fs.symlink(other, out3, 'junction');
         controller.abort(new Error('Canceled after redirect'));
         return image;
       },

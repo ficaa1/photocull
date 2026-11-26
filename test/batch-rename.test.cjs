@@ -117,6 +117,14 @@ test('a link-less volume can swap and undo files and refuses a racing destinatio
   assert.deepEqual((await fs.readdir(dir)).sort(), ['1.jpg', '2.jpg', 'new.jpg']);
 });
 
+async function changeFileId(file, time, rename) {
+  const original = file + '.original';
+  await rename(file, original);
+  await fs.copyFile(original, file);
+  await fs.utimes(file, time, time);
+  await fs.unlink(original);
+}
+
 test('a link-less volume can change file IDs on staging, publication and rollback', async t => {
   const names = ['one.ARW', 'one.JPG', 'one.xmp'];
   const { lib, dir } = await fixture(t, names);
@@ -125,17 +133,13 @@ test('a link-less volume can change file IDs on staging, publication and rollbac
   const session = await lib.scan(dir), ids = session.items.map(item => item.id);
   const batch = (action, template) => lib.batchRename(session.id, ids, { template }, action);
   const rename = fs.rename;
-  const reidentify = async file => {
-    const copy = file + '.copy';
-    await fs.copyFile(file, copy); await fs.utimes(copy, time, time); await rename(copy, file);
-  };
   t.mock.method(fs, 'rename', async (from, to) => {
     await rename(from, to);
-    if (path.basename(path.dirname(to)).startsWith('.photocull-')) await reidentify(to);
+    if (path.basename(path.dirname(to)).startsWith('.photocull-')) await changeFileId(to, time, rename);
   });
   t.mock.method(fs, 'link', async (from, to) => {
     if (to === path.join(dir, 'taken.JPG')) await fs.writeFile(to, 'foreign', { flag: 'wx' });
-    else if (path.basename(from) !== 'probe') await reidentify(from);
+    else if (path.basename(from) !== 'probe') await changeFileId(from, time, rename);
     throw Object.assign(new Error('Hard links unsupported'), { code: 'ENOTSUP' });
   });
   await batch('apply', 'two');
@@ -469,10 +473,7 @@ test('case-only rename on a link-less volume preserves XMP autosave and undo for
   const rename = fs.rename;
   t.mock.method(fs, 'rename', async (from, to) => {
     await rename(from, to);
-    if (from === sidecar) {
-      const copy = to + '.copy';
-      await fs.copyFile(to, copy); await fs.utimes(copy, time, time); await rename(copy, to);
-    }
+    if (from === sidecar) await changeFileId(to, time, rename);
   });
   lib.settings = () => DEFAULTS;
   await lib.decide(session.id, ids[0], { rating: 5 });
