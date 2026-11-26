@@ -1203,3 +1203,36 @@ body:not(.tether-active) #tether-dock, body:not(.tether-active) #tether-stage-ba
 .tether-inspector-histogram { display: block; width: 100%; height: 72px; background: var(--canvas); border-radius: var(--r1); }
 .tether-histogram-clip { margin: 6px 0 0; color: var(--text-2); }
 .tether-histogram-clip:empty { display: none; }
+
+#contact-sheet-dialog { max-width: 720px; max-height: calc(100dvh - 32px); overflow: auto; }
+.sheet-body { display: grid; grid-template-columns: minmax(150px, .85fr) minmax(0, 1.15fr); gap: var(--s5); align-items: center; }
+.sheet-proof { min-width: 0; text-align: center; }
+#sheet-preview { position: relative; margin: auto; overflow: hidden; background: white; color: #242424; box-shadow: 0 2px 10px #0004; }
+#sheet-preview[data-theme=dark] { background: #292929; color: #f4f4f4; }
+#sheet-preview > * { position: absolute; overflow: hidden; }
+#sheet-preview img { object-fit: contain; }
+#sheet-preview div { display: flex; justify-content: space-between; gap: 3px; }
+#sheet-preview span, #sheet-preview small { overflow: hidden; white-space: nowrap; text-align: left; font: 6px sans-serif; }
+#sheet-preview span:last-child { flex: none; }
+#sheet-fields { border: 0; margin: 0; padding: 0; min-width: 0; }
+#sheet-fields input:not([type=checkbox]), #sheet-fields select { width: 100%; min-width: 0; }
+.sheet-captions { grid-column: 1 / -1; margin-bottom: 0; }
+#sheet-progress { width: 100%; }
+#slide-frame, #slide-frame img { width: 100%; height: 100%; }
+#slide-frame img { display: block; object-fit: contain; }
+#slideshow { inset: 0; margin: 0; padding: 0; width: 100%; height: 100%; max-width: none; max-height: none; border: 0; border-radius: 0; background: #101010; color: #fafafa; overflow: hidden; animation: none; }
+#slide-frame { outline: none; }
+#slide-caption, #slide-hud, #slide-status { position: absolute; background: #171717e8; border-radius: var(--r2); }
+#slide-caption { top: 18px; left: 18px; max-width: calc(100% - 36px); padding: 5px 10px; display: flex; align-items: center; gap: 8px; }
+#slide-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#slide-index, #slide-rating { flex: none; }
+#slide-status { top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 8px 12px; }
+#slide-status:empty { display: none; }
+#slide-hud { left: 50%; bottom: max(18px, env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; padding: 10px; width: max-content; max-width: calc(100% - 24px); transition: opacity .15s ease-out; }
+#slide-hud label { display: flex; align-items: center; gap: 4px; }
+#slide-hud button, #slide-hud select { color: #fafafa; background: #303030; border: 1px solid #555; border-radius: var(--r1); padding: 4px 8px; }
+#slide-hud button:disabled { opacity: .45; }
+#slideshow.slide-idle { cursor: none; }
+.slide-idle #slide-hud:not(:has(:focus-visible)) { opacity: 0; pointer-events: none; }
+@media (max-width: 560px) { .sheet-body { grid-template-columns: 1fr; } .sheet-proof { width: 130px; justify-self: center; } }
+@media (prefers-reduced-motion: reduce) { #slide-hud { transition: none; } #contact-sheet-dialog { animation: none; } }

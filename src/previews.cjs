@@ -360,11 +360,11 @@ class PreviewService {
     const key = this.baseKey(item);
     if (!this.metadataJobs.has(key)) {
       const job = (async () => {
-        const file=path.join(this.cacheDir,key+'.metadata-v3.json');
+        const file=path.join(this.cacheDir,key+'.metadata-v4.json');
         try { return JSON.parse(await fs.readFile(file,'utf8')); } catch {}
-        const tags=await this.exif.readRaw(item.path, { readArgs: ['-fast', '-Make', '-Model', '-SerialNumber', '-InternalSerialNumber', '-LensModel', '-FNumber', '-ExposureTime', '-ISO', '-Flash', '-FlashExposureComp', '-DateTimeOriginal', '-SubSecTimeOriginal', '-OffsetTimeOriginal', '-ImageWidth', '-ImageHeight', '-ExifImageWidth', '-ExifImageHeight', '-Orientation#', '-DefaultCropOrigin', '-DefaultCropSize', '-FocusLocation', '-FocusLocation2', '-FocusFrameSize#', '-FocalPlaneAFPoint*', '-AFPointsUsed', '-AFCoordinatesAvailable#', '-AFImageWidth', '-AFImageHeight', '-AFAreaXPosition*', '-AFAreaYPosition*', '-AFAreaWidth*', '-AFAreaHeight*', '-AFPointsInFocus', '-FocusPixel', '-AFPointSelected#', '-AFPointPosition#'] });
+        const tags=await this.exif.readRaw(item.path, { readArgs: ['-fast', '-Make', '-Model', '-SerialNumber', '-InternalSerialNumber', '-LensModel', '-FocalLength', '-FNumber', '-ExposureTime', '-ISO', '-Flash', '-FlashExposureComp', '-DateTimeOriginal', '-SubSecTimeOriginal', '-OffsetTimeOriginal', '-ImageWidth', '-ImageHeight', '-ExifImageWidth', '-ExifImageHeight', '-Orientation#', '-DefaultCropOrigin', '-DefaultCropSize', '-FocusLocation', '-FocusLocation2', '-FocusFrameSize#', '-FocalPlaneAFPoint*', '-AFPointsUsed', '-AFCoordinatesAvailable#', '-AFImageWidth', '-AFImageHeight', '-AFAreaXPosition*', '-AFAreaYPosition*', '-AFAreaWidth*', '-AFAreaHeight*', '-AFPointsInFocus', '-FocusPixel', '-AFPointSelected#', '-AFPointPosition#'] });
         const data={camera:[tags.Make,tags.Model].filter(Boolean).join(' '),cameraKey:[tags.Make,tags.Model,tags.SerialNumber || tags.InternalSerialNumber].filter(Boolean).join(':'),lens:tags.LensModel || '',
-          aperture:tags.FNumber ? `f/${tags.FNumber}` : '',shutter:String(tags.ExposureTime || ''),iso:tags.ISO || '',
+          focalLength:String(tags.FocalLength || ''),aperture:tags.FNumber ? `f/${tags.FNumber}` : '',shutter:String(tags.ExposureTime || ''),iso:tags.ISO || '',
           flash:String(tags.Flash || ''),
           flashFired:tags.Flash ? (/\bfired\b/i.test(String(tags.Flash)) && !/\bdid not fire\b/i.test(String(tags.Flash))) : null,
           flashComp:tags.FlashExposureComp === undefined || tags.FlashExposureComp === null ? '' : String(tags.FlashExposureComp),

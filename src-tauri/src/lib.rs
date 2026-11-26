@@ -44,6 +44,7 @@ const RENDERER_METHODS: &[&str] = &[
     "copy-picks",
     "naming-preview",
     "cancel-copy",
+    "contact-sheet-cancel",
     "decide",
     "decide-many",
     "app-info",
@@ -251,6 +252,37 @@ async fn save_manifest(
     Ok(value.as_str().map(String::from))
 }
 
+#[tauri::command]
+async fn save_contact_sheet(
+    window: WebviewWindow,
+    state: State<'_, Backend>,
+    session: String,
+    ids: Vec<String>,
+    options: Value,
+) -> Result<Option<Value>, String> {
+    let (label, extension) = match options.get("format").and_then(Value::as_str) {
+        Some("pdf") => ("PDF document", "pdf"),
+        Some("jpeg") => ("JPEG image", "jpg"),
+        _ => return Err("Choose a PDF or JPEG contact sheet.".into()),
+    };
+    let file = window
+        .dialog()
+        .file()
+        .set_parent(&window)
+        .set_file_name(format!("Contact Sheet.{extension}"))
+        .add_filter(label, &[extension])
+        .blocking_save_file()
+        .and_then(|path| path.into_path().ok());
+    let Some(file) = file else { return Ok(None) };
+    state
+        .call(
+            "export-contact-sheet",
+            json!([session, ids, options, file.to_string_lossy()]),
+        )
+        .await
+        .map(Some)
+}
+
 #[derive(Serialize, serde::Deserialize)]
 struct Failure {
     name: String,
@@ -430,6 +462,7 @@ fn mac_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
         .item(&PredefinedMenuItem::select_all(app, None)?)
         .build()?;
     let view = SubmenuBuilder::new(app, "View")
+        .item(&item("slideshow", "Play slideshow", "")?)
         .item(&item("fullscreen", "Fullscreen", "Ctrl+Cmd+F")?)
         .build()?;
     let window = SubmenuBuilder::new(app, "Window")
@@ -482,6 +515,7 @@ pub fn run() {
             display_color_status,
             delete_photos,
             save_manifest,
+            save_contact_sheet,
             sharpness::sharpness_score,
             sharpness::sharpness_cancel,
             develop::develop_result,
@@ -555,6 +589,7 @@ pub fn run() {
                         "settings" => app.emit("settings-shortcut", ()),
                         "undo" => app.emit("edit-shortcut", "undo"),
                         "redo" => app.emit("edit-shortcut", "redo"),
+                        "slideshow" => app.emit("slideshow-shortcut", ()),
                         "fullscreen" => app.emit("fullscreen-toggle", ()),
                         _ => Ok(()),
                     };
