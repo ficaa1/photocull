@@ -1638,7 +1638,7 @@ test('a late companion relocates the whole backup group and preserves foreign RA
   }
   assert.equal(await fs.readFile(stem + '.xmp', 'utf8'), 'foreign metadata');
   assert.equal(await fs.readFile(stem + '.ARW', 'utf8'), 'foreign RAW');
-  await assert.rejects(fs.stat(stem + '.JPG'), { code: 'ENOENT' });
+  assert.equal(await fs.readFile(stem + '.JPG', 'utf8'), 'original JPEG');
   await ctx.service.close();
 });
 
@@ -1867,6 +1867,28 @@ test('backup enrollment rejects a drive swapped while creating its marker', asyn
   await assert.rejects(backupControl(ctx, 'choose', drive), /wrong backup drive/i);
   assert.ok(swapped);
   assert.deepEqual(await fs.readdir(drive), []);
+  assert.equal((await ctx.state()).backup.root, null);
+
+  // Temporarily swapping a replacement drive during open and restoring the original before write must never write a UUID to the replacement.
+  const drive2 = path.join(ctx.base, 'Drive2'), replacement2 = path.join(ctx.base, 'Replacement2'), marker2 = path.join(drive2, '.photocull-backup-id');
+  await fs.mkdir(drive2); await fs.mkdir(replacement2);
+  let tempSwapped = false;
+  t.mock.method(fs, 'open', async (file, ...args) => {
+    if (file === marker2 && !tempSwapped) {
+      tempSwapped = true;
+      await fs.rename(drive2, drive2 + '-parked');
+      await fs.rename(replacement2, drive2);
+      const handle = await open(file, ...args);
+      await fs.rename(drive2, replacement2);
+      await fs.rename(drive2 + '-parked', drive2);
+      return handle;
+    }
+    return open(file, ...args);
+  });
+  await assert.rejects(backupControl(ctx, 'choose', drive2), /wrong backup drive/i);
+  assert.ok(tempSwapped);
+  const replacementMarker = await fs.readFile(path.join(replacement2, '.photocull-backup-id'), 'utf8').catch(() => '');
+  assert.equal(replacementMarker, '', 'replacement drive must never receive a UUID marker');
   assert.equal((await ctx.state()).backup.root, null);
 });
 

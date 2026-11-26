@@ -5,7 +5,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const { hashFile } = require('./backup.cjs');
-const { backupState, identifies, hasAncestor, markRoot, checkRoot, backupDirectory, backupStem, reservedStems, availableStem, cleanPartial, sweepPartial, mirrorFile, publishedReceipts, removeRetired } = require('./tether-backup.cjs');
+const { backupState, identifies, hasAncestor, markRoot, checkRoot, backupDirectory, backupStem, reservedStems, availableStem, cleanPartial, sweepPartial, mirrorFile, publishedReceipts } = require('./tether-backup.cjs');
 const { atomicWrite, normalizeCaptureMetadata, sidecarPaths } = require('./xmp.cjs');
 const { checkSettings } = require('./develop.cjs');
 const { TETHER, normalizeTether } = require('./preferences.cjs');
@@ -673,7 +673,6 @@ class TetherService {
         const stat = await fs.lstat(receipt.path, { bigint: true });
         if (!identifies(receipt.identity, stat)) throw new Error('The verified backup changed before the exposure was recorded.');
       }
-      await removeRetired(plan.retired, dir, verify);
       await commit(draft => {
         Object.assign(draft.exposures[member.exposureId].backupPlans[index], { sidecar, partial: null, retired: [], prepared: {} });
         for (const m of family) {

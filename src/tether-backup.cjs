@@ -25,6 +25,7 @@ async function readMarker(root) {
 }
 
 async function markRoot(root, folderId) {
+  const expectedDev = folderId.split(':')[0];
   const verifyRoot = async () => {
     const stat = await fs.lstat(root);
     if (!stat.isDirectory() || await fs.realpath(root) !== root || `${stat.dev}:${stat.ino}` !== folderId) throw wrongDrive();
@@ -41,8 +42,9 @@ async function markRoot(root, folderId) {
   try { handle = await fs.open(file, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | (constants.O_NOFOLLOW || 0)); }
   catch (error) { if (error.code === 'EEXIST') return reuse(); throw error; }
   try {
+    await verifyRoot();
     const opened = await handle.stat();
-    if (!opened.isFile() || !sameFile(opened, await fs.lstat(file))) throw wrongDrive();
+    if (!opened.isFile() || String(opened.dev) !== expectedDev || !sameFile(opened, await namedStat(file))) throw wrongDrive();
     await verifyRoot();
     const id = randomUUID();
     await handle.writeFile(id + '\n');
@@ -50,8 +52,10 @@ async function markRoot(root, folderId) {
     if (await reuse() !== id) throw wrongDrive();
     return id;
   } catch (error) {
-    const stat = await handle.stat();
-    if (!stat.size && sameFile(stat, await namedStat(file))) await fs.unlink(file);
+    try {
+      const stat = await handle.stat();
+      if (!stat.size && sameFile(stat, await namedStat(file))) await fs.unlink(file);
+    } catch {}
     throw error;
   } finally { await handle.close(); }
 }
@@ -279,14 +283,6 @@ async function publishedReceipts(plan, dir) {
   return receipts;
 }
 
-async function removeRetired(receipts, dir, verify) {
-  for (const receipt of receipts) {
-    if (!receipt.owned || path.dirname(receipt.path) !== dir) continue;
-    await verify();
-    if (await verifiedReceipt(receipt)) await fs.unlink(receipt.path);
-  }
-}
-
 function backupState({ shoot, members }) {
   const state = { rev: shoot.backupRev || 0, root: shoot.backup?.root ?? null, enabled: !!shoot.backup?.enabled, availability: shoot.backup?.availability ?? 'checking', pending: 0, synced: 0, failed: 0, error: null };
   for (const { backup } of Object.values(members)) {
@@ -297,4 +293,4 @@ function backupState({ shoot, members }) {
   return state;
 }
 
-module.exports = { identifies, hasAncestor, markRoot, checkRoot, backupDirectory, backupStem, reservedStems, availableStem, cleanPartial, sweepPartial, mirrorFile, publishedReceipts, removeRetired, backupState };
+module.exports = { identifies, hasAncestor, markRoot, checkRoot, backupDirectory, backupStem, reservedStems, availableStem, cleanPartial, sweepPartial, mirrorFile, publishedReceipts, backupState };
