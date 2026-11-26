@@ -82,7 +82,7 @@
       }
       if (token.startsWith('-') && token.length > 1) { negate = !negate; token = token.slice(1); }
       const match = term(token);
-      group.push(negate ? row => !match(row) : match);
+      group.push(negate ? row => !row.metadataPending && !match(row) : match);
       negate = false;
     }
     if (group.length) groups.push(group);

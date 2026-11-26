@@ -68,6 +68,32 @@ test('editing a title keeps localized text, foreign qualifiers and other RDF sub
   }
 });
 
+test('qualified x-default text reads and writes only its RDF value', () => {
+  const qualifier = "<custom:source code='01'>Keep &amp; preserve</custom:source>";
+  const entry = `<r:li xml:lang="x-default" r:parseType="Resource"><r:value>Before</r:value>${qualifier}</r:li>`;
+  for (const [key, name] of [['title', 'title'], ['caption', 'description'], ['copyright', 'rights']]) {
+    const xml = `<x:xmpmeta xmlns:x="adobe:ns:meta/"><r:RDF xmlns:r="${RDF}"><r:Description xmlns:custom="urn:test" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:${name}><r:Alt>${entry}</r:Alt></dc:${name}></r:Description></r:RDF></x:xmpmeta>`;
+    const edited = updateXmp(xml, { flag: 'none', rating: 0, metadataOverrides: { [key]: 'After & <' } });
+    assert.ok(edited.includes(entry.replace('Before', 'After &amp; &lt;')), key);
+    assert.equal(state(xml).metadata[key], 'Before');
+    assert.equal(state(edited).metadata[key], 'After & <');
+  }
+});
+
+test('undoing a creator edit restores every creator in sequence order', async t => {
+  const { photos, library } = await setup(t);
+  const file = path.join(photos, 'photo.xmp');
+  const seq = '<r:Seq><r:li>Ana</r:li><r:li>Bo</r:li></r:Seq>';
+  await fs.writeFile(file, `<x:xmpmeta xmlns:x="adobe:ns:meta/"><r:RDF xmlns:r="${RDF}"><r:Description xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:creator>${seq}</dc:creator></r:Description></r:RDF></x:xmpmeta>`);
+  const session = await library.scan(photos);
+  await library.editMetadata(session.id, [session.items[0].id], { creator: 'Cleo' });
+  await library.flushSidecars();
+  assert.equal(state(await fs.readFile(file, 'utf8')).metadata.creator, 'Cleo');
+  await library.history(session.id, 'undo'); await library.flushSidecars();
+  const creator = parse(await fs.readFile(file, 'utf8')).getElementsByTagNameNS('http://purl.org/dc/elements/1.1/', 'creator')[0];
+  assert.deepEqual(Array.from(creator.getElementsByTagNameNS(RDF, 'li'), li => li.textContent), ['Ana', 'Bo']);
+});
+
 test('new packets and self-closing descriptions keep a single photo Description', () => {
   let xml = '';
   for (let n = 0; n < 5; n++) {
@@ -235,8 +261,8 @@ test('card default avoids source XMP and copies portable decisions automatically
   const optedOut = await copies.copy(library.get(s.id), out2, { metadataSettings: normalizeSettings({ writeSidecars: 'never' }) });
   assert.equal(optedOut.copiedFiles, 1);
   setSettings({ writeSidecars: 'always' }); await library.decide(s.id, id, { rating: 3 }); await library.flushSidecars();
-  assert.equal(state(await fs.readFile(path.join(photos, 'photo.xmp'), 'utf8')).rating, 3);
-  for (const policy of ['always', 'except-cards', 'never']) for (const card of [false, true]) assert.equal(shouldWriteSidecars({ writeSidecars: policy }, card), policy === 'always' || policy === 'except-cards' && !card);
+  assert.deepEqual(await fs.readdir(photos), ['photo.ARW']);
+  for (const policy of ['always', 'except-cards', 'never']) for (const card of [false, true]) assert.equal(shouldWriteSidecars({ writeSidecars: policy }, card), policy !== 'never' && !card);
   assert.throws(() => normalizeSettings({ writeSidecars: 'sometimes' }));
 });
 
@@ -314,13 +340,12 @@ test('inline edits on cards survive a restart and reach XMP through explicit exp
   await library.editMetadata(session.id, [id], { caption: 'A portrait' }); await library.flushSidecars();
   assert.deepEqual(await fs.readdir(photos), ['photo.ARW']);
   await library.decide(session.id, id, { rating: 3 }); await library.flushSidecars();
-  assert.equal(state(await fs.readFile(path.join(photos, 'photo.xmp'), 'utf8')).metadata, undefined);
-  const file = path.join(photos, 'photo.xmp'), before = await fs.readFile(file, 'utf8');
+  assert.deepEqual(await fs.readdir(photos), ['photo.ARW']);
   await library.editMetadata(session.id, [id], { title: 'Golden hour' });
   const fresh = new Library(data, { settings: () => normalizeSettings({ writeSidecars: 'always' }) });
   const reopened = await fresh.scan(photos, false, { removable: true });
   await fresh.flushSidecars();
-  assert.equal(await fs.readFile(file, 'utf8'), before);
+  assert.deepEqual(await fs.readdir(photos), ['photo.ARW']);
   assert.equal(fresh.stats.sidecarWrites, 0);
   const expected = { creator: 'Ana', keywords: ['Studio'], caption: 'A portrait', title: 'Golden hour' };
   assert.equal(reopened.items[0].rating, 3);
@@ -328,4 +353,30 @@ test('inline edits on cards survive a restart and reach XMP through explicit exp
   assert.deepEqual(await fresh.exportXmp(reopened.id), { written: 1, failures: [] });
   assert.deepEqual(state(await fs.readFile(path.join(photos, 'photo.xmp'), 'utf8')).metadata, expected);
   assert.equal(await fs.readFile(path.join(photos, 'photo.ARW'), 'utf8'), 'synthetic photo');
+});
+
+for (const removable of [false, true]) test(`external XMP changes merge field by field with session edits on ${removable ? 'cards' : 'folders'}`, async t => {
+  const { photos, library, data } = await setup(t, { writeSidecars: 'never' });
+  const file = path.join(photos, 'photo.xmp');
+  const xml = updateXmp('', { rating: 1, flag: 'none' }, { metadata: { creator: 'Camera', title: 'Original' } });
+  await fs.writeFile(file, xml);
+  const opened = await library.scan(photos, false, { removable });
+  await library.editMetadata(opened.id, [opened.items[0].id], { title: 'Local title', caption: 'Local caption', creator: 'Local credit' });
+  await library.close();
+  await fs.writeFile(file, xml.replace('xmp:Rating="1"', 'xmp:Rating="5"').replace('>Camera<', '>External credit<'));
+  const later = (Date.now() + 10000) / 1000;
+  await fs.utimes(file, later, later);
+  const settings = () => normalizeSettings({ writeSidecars: 'never' });
+  const fresh = new Library(data, { settings }), session = await fresh.scan(photos, false, { removable });
+  assert.equal(session.items[0].rating, 5);
+  await fresh.exportXmp(session.id);
+  assert.deepEqual(state(await fs.readFile(file, 'utf8')).metadata, { creator: 'External credit', title: 'Local title', caption: 'Local caption' });
+  const exported = await fs.readFile(file, 'utf8');
+  await fresh.editMetadata(session.id, [session.items[0].id], { title: 'Revised title', caption: 'Revised caption' });
+  await fresh.close();
+  await fs.writeFile(file, exported.replace('>Local caption<', '>External caption<'));
+  await fs.utimes(file, later + 10, later + 10);
+  const next = new Library(data, { settings }), reopened = await next.scan(photos, false, { removable });
+  await next.exportXmp(reopened.id);
+  assert.deepEqual(state(await fs.readFile(file, 'utf8')).metadata, { creator: 'External credit', title: 'Revised title', caption: 'External caption' });
 });

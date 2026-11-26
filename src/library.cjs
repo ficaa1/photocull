@@ -82,9 +82,28 @@ const captureState = c => ({ exposureId: typeof c.exposureId === 'string' ? c.ex
 const metadataState = item => Object.hasOwn(item, 'metadataOverrides') ? { metadataOverrides: item.metadataOverrides } : {};
 const restore = (item, cached, folder) => Object.assign(item, decision(cached), captureState(cached), metadataState(cached), {
   modified: cached.modified || 0, edited: cached.edited ?? (cached.flag !== 'none' || cached.rating > 0),
-  develop: developState(resolveDevelop(cached.develop, item.path, folder)), cardDecisionTime: cached.cardDecisionTime,
+  develop: developState(resolveDevelop(cached.develop, item.path, folder)), observedMetadata: cached.observedMetadata,
   sidecarMetadata: Object.hasOwn(cached, 'metadataOverrides') ? cached.sidecarMetadata : item.sidecarMetadata
 });
+function mergeXmpMetadata(item, cached, incoming) {
+  const remote = incoming.metadata || {}, overrides = { ...incoming.metadataOverrides };
+  const baseline = cached?.observedMetadata || cached?.sidecarMetadata || {};
+  let unsynced = false;
+  for (const [key, local] of Object.entries(cached?.metadataOverrides || {})) {
+    const previous = key === 'creator' ? baseline.creators || baseline.creator : baseline[key];
+    const current = key === 'creator' ? remote.creators || remote.creator : remote[key];
+    if (JSON.stringify(current) === JSON.stringify(previous) || JSON.stringify(current) === JSON.stringify(local)) {
+      overrides[key] = local;
+      if (JSON.stringify(local) !== JSON.stringify(remote[key])) unsynced = true;
+    }
+  }
+  item.sidecarMetadata = remote;
+  item.observedMetadata = remote;
+  if (Object.keys(overrides).length) item.metadataOverrides = overrides;
+  else delete item.metadataOverrides;
+  return unsynced;
+}
+
 // Session JSON fields that tie a photo to a tethered exposure.
 const captureFields = i => ({ ...(i.exposureId ? { exposureId: i.exposureId, ordinal: i.ordinal } : {}), ...(i.contentRev ? { contentRev: i.contentRev } : {}),
   ...(i.captureMetadata ? { captureMetadata: i.captureMetadata } : {}), ...(i.captureDevelop ? { captureDevelop: true } : {}) });
@@ -103,10 +122,10 @@ function unindexItem(s, item) {
 const developSummary = develop => ({ developed: !!develop?.tiff && !develop?.missing, externalEdit: !!develop?.editedBy && !develop?.missing, editedBy: develop?.editedBy ?? null, tiff: develop?.tiff ?? null, handoffLinked: !!develop?.handoffs.some(r => r.path === develop.tiff && r.linked), handoffMissing: !!develop?.missing, developRevision: develop?.revision ?? 0, recipe: develop?.recipe ?? null, adjusted: !!develop?.settings });
 
 class Library {
-  constructor(dataDir, { settings = () => DEFAULTS, recipeSettings = () => null, onWarning = () => {}, keepSessions = 1, linkedHandoffs = () => new Set(), pairingExclusions = () => [], captureExposure = () => null, embeddedMetadata = async () => ({}) } = {}) {
+  constructor(dataDir, { settings = () => DEFAULTS, recipeSettings = () => null, onWarning = () => {}, keepSessions = 1, linkedHandoffs = () => new Set(), pairingExclusions = () => [], captureExposure = () => null, embeddedMetadata = async () => ({}), cardRoots = async () => [] } = {}) {
     // The desktop app has one open folder. The server keeps several, one per
     // folder, with a stable id so every browser shares it.
-    this.keepSessions = keepSessions; this.embeddedMetadata = embeddedMetadata;
+    this.keepSessions = keepSessions; this.embeddedMetadata = embeddedMetadata; this.cardRoots = cardRoots;
     this.settings = settings; this.recipeSettings = recipeSettings; this.onWarning = onWarning; this.linkedHandoffs = linkedHandoffs; this.pairingExclusions = pairingExclusions; this.captureExposure = captureExposure;
     this.ingests = Promise.resolve();
     this.dataDir = dataDir;
@@ -124,6 +143,10 @@ class Library {
     folder = await fs.realpath(folder);
     if (!(await fs.stat(folder)).isDirectory()) throw new Error('Choose a folder of images.');
     const files = [], warnings = [];
+    let protectedRoots = [];
+    try { protectedRoots = await this.cardRoots(); }
+    catch { warnings.push('Camera card detection unavailable. Source XMP autosave waits for card detection.'); }
+    removable ||= protectedRoots.some(root => inside(root, folder));
     const visit = async dir => {
       if (superseded()) throw new Error('Folder scan was superseded.');
       const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -153,6 +176,8 @@ class Library {
     try { saved = JSON.parse(await fs.readFile(store, 'utf8')).decisions ?? {}; }
     catch (e) { if (e.code !== 'ENOENT') warnings.push('Saved session could not be read; existing XMP will be used.'); }
     await mapLimit(items, 8, async item => {
+      item.removable = removable || protectedRoots.some(root => inside(root, item.path));
+      let needsMetadataSync = false;
       let cached = saved[item.id], valid = cached?.fingerprint === item.fingerprint;
       // A RAW published after its JPEG but before the session save still owns the JPEG's capture decisions.
       const provisional = !valid && item.companion ? saved[hash(item.companion).slice(0, 24)] : null;
@@ -184,26 +209,20 @@ class Library {
       if (existingSidecars.length) item.sidecar = existingSidecars[0].file;
       if (sidecars.length) {
         const winner = sidecars[0];
-        if (!valid || winner.modified > item.modified || !Object.hasOwn(cached, 'metadataOverrides')) item.sidecarMetadata = winner.state.metadata;
         if (!valid || winner.modified > item.modified) {
           const state = winner.state;
           Object.assign(item, decision({ ...item, ...state }), { modified: winner.modified });
-          // A card's automatic rating write can be newer than session-only IPTC edits.
-          const localCardEdit = removable && valid && Object.hasOwn(cached, 'metadataOverrides') && state.modified === (cached.cardDecisionTime ?? cached.modified);
-          if (!localCardEdit) {
-            if (state.metadataOverrides) item.metadataOverrides = state.metadataOverrides;
-            else delete item.metadataOverrides;
-          }
+          needsMetadataSync = mergeXmpMetadata(item, valid ? cached : null, state);
           if (state.captureMetadata) item.captureMetadata = state.captureMetadata;
           imported = true;
           if (Object.hasOwn(state, 'develop')) {
             const resolved = resolveDevelop(state.develop, item.path, folder);
             item.develop = developState(resolved);
           }
-        }
+        } else if (!Object.hasOwn(cached, 'metadataOverrides')) item.sidecarMetadata = winner.state.metadata;
       }
-      const syncTime = removable ? item.cardDecisionTime ?? item.modified : item.modified;
-      if (valid && syncTime > (sidecars[0]?.modified || 0) && (item.edited || item.develop || item.captureMetadata || !removable && Object.hasOwn(item, 'metadataOverrides'))) unsynced.push(item);
+      const ahead = valid && item.modified > (sidecars[0]?.modified || 0);
+      if (!item.removable && (needsMetadataSync || ahead && (item.edited || item.develop || item.captureMetadata || Object.hasOwn(item, 'metadataOverrides')))) unsynced.push(item);
       if (item.develop?.tiff) item.develop.missing = !await fs.stat(item.develop.tiff).then(s => s.isFile(), () => false);
     });
     if (superseded()) throw new Error('Folder scan was superseded.');
@@ -253,7 +272,7 @@ class Library {
       const data = JSON.stringify({ version: 1, folder: s.folder, decisions: Object.fromEntries(s.items.map(i =>
         [i.id, {
           ...decision(i), path: path.relative(s.folder, i.path), fingerprint: i.fingerprint, modified: i.modified,
-          edited: i.edited, cardDecisionTime: i.cardDecisionTime, ...captureFields(i), ...metadataState(i),
+          edited: i.edited, observedMetadata: Object.hasOwn(i, 'metadataOverrides') ? i.observedMetadata : undefined, ...captureFields(i), ...metadataState(i),
           sidecarMetadata: Object.hasOwn(i, 'metadataOverrides') ? i.sidecarMetadata : undefined,
           ...(i.develop ? { develop: portableDevelop(i.develop, i.path, s.folder) } : {})
         }])) });
@@ -269,17 +288,13 @@ class Library {
     return { ...item, photoRoot: s.folder, develop };
   }
 
-  changed(s, items, metadataOnly = false) {
-    for (const item of items) {
-      if (metadataOnly && s.removable) item.cardDecisionTime ??= item.modified || 0;
-      else delete item.cardDecisionTime;
-      item.modified = Math.max(Date.now(), (item.modified || 0) + 1);
-    }
-    if (!metadataOnly || !s.removable) this.queueSidecars(s, items);
+  changed(s, items) {
+    for (const item of items) item.modified = Math.max(Date.now(), (item.modified || 0) + 1);
+    this.queueSidecars(s, items);
   }
 
   queueSidecars(s, items) {
-    for (const item of items) this.pendingSidecars.set(s.id + ':' + item.id, { s, item });
+    for (const item of items) if (!s.removable && !item.removable) this.pendingSidecars.set(s.id + ':' + item.id, { s, item });
     clearTimeout(this.sidecarTimer);
     this.sidecarTimer = setTimeout(() => { void this.flushSidecars(); }, 250);
     this.sidecarTimer.unref?.();
@@ -289,32 +304,42 @@ class Library {
     clearTimeout(this.sidecarTimer);
     const pending = [...this.pendingSidecars.values()]; this.pendingSidecars.clear();
     this.sidecarWrites = this.sidecarWrites.catch(() => {}).then(async () => {
-      const owners = new Map();
+      if (!pending.length || !shouldWriteSidecars(this.settings(), false)) return;
+      let protectedRoots;
+      try { protectedRoots = await this.cardRoots(); }
+      catch {
+        for (const s of new Set(pending.map(job => job.s))) this.onWarning({ session: s.id, message: 'Could not check camera cards. Source XMP autosave skipped.' });
+        return;
+      }
+      const owners = new Map(), updated = new Set();
       for (const { s } of pending) if (!owners.has(s.id)) {
         const counts = new Map();
         for (const item of s.items) counts.set(item.sidecar, (counts.get(item.sidecar) || 0) + 1);
         owners.set(s.id, counts);
       }
       await mapLimit(pending, 3, async ({ s, item }) => {
-        if (!s.byId.has(item.id) || !shouldWriteSidecars(this.settings(), s.removable)) return;
+        const onCard = s.removable || item.removable || protectedRoots.some(root => inside(root, item.path));
+        if (!s.byId.has(item.id) || !shouldWriteSidecars(this.settings(), onCard)) return;
         try {
           const root = await fs.stat(s.folder);
           if (`${root.dev}:${root.ino}` !== s.folderId || await fs.realpath(s.folder) !== s.folder) throw new Error('Photo folder changed; reopen it before writing XMP.');
           const source = await fs.lstat(item.path);
-          if (!source.isFile() || source.isSymbolicLink() || `${source.dev}:${source.ino}` !== item.fileId || source.size !== item.size || source.mtimeMs !== item.mtimeMs) throw new Error('Photo changed; reopen it before writing XMP.');
+          if (!source.isFile() || await fs.realpath(item.path) !== item.path || `${source.dev}:${source.ino}` !== item.fileId || source.size !== item.size || source.mtimeMs !== item.mtimeMs) throw new Error('Photo changed; reopen it before writing XMP.');
           if (owners.get(s.id).get(item.sidecar) > 1) throw new Error('Multiple photos share this sidecar name.');
           const snapshot = this.sidecarItem(s, item);
-          if (s.removable) {
-            snapshot.modified = item.cardDecisionTime ?? item.modified;
-            delete snapshot.metadataOverrides;
-          }
-          await writeXmp(item.sidecar, snapshot, this.settings());
+          item.observedMetadata = await writeXmp(item.sidecar, snapshot, this.settings());
+          if (Object.hasOwn(item, 'metadataOverrides')) updated.add(s);
+          else item.sidecarMetadata = item.observedMetadata;
           this.stats.sidecarWrites++;
         } catch (e) {
           const warning = `${item.name}: XMP not written: ${e.message}`;
           if (!s.warnings.includes(warning)) { s.warnings.push(warning); this.onWarning({ session: s.id, message: warning }); }
         }
       });
+      for (const session of updated) {
+        try { await this.save(session); }
+        catch (error) { this.onWarning({ session: session.id, message: `Could not save synchronized metadata: ${error.message}` }); }
+      }
     });
     return this.sidecarWrites;
   }
@@ -401,7 +426,7 @@ class Library {
       Object.assign(item, decision({ ...item, ...patch }), { edited: Object.keys(patch).length > 0, ...capture, captureMetadata: metadata });
       applyDevelop(item);
     };
-    const relevant = item => item.edited || item.captureMetadata || item.develop || !s.removable && Object.hasOwn(item, 'metadataOverrides');
+    const relevant = item => item.edited || item.captureMetadata || item.develop || Object.hasOwn(item, 'metadataOverrides');
     let target;
     const knownId = s.byPath.get(f.path);
     if (knownId) {
@@ -442,7 +467,7 @@ class Library {
         // JPEG first: the RAW takes over the provisional row with every decision and reference.
         const donor = previous.find(old => !after.has(old.id) && item.companion === old.path);
         if (donor) {
-          Object.assign(item, decision(donor), metadataState(donor), { sidecarMetadata: donor.sidecarMetadata, cardDecisionTime: donor.cardDecisionTime, modified: donor.modified, edited: donor.edited, develop: donor.develop ?? null, captureMetadata: donor.captureMetadata,
+          Object.assign(item, decision(donor), metadataState(donor), { sidecarMetadata: donor.sidecarMetadata, observedMetadata: donor.observedMetadata, modified: donor.modified, edited: donor.edited, develop: donor.develop ?? null, captureMetadata: donor.captureMetadata,
             exposureId: donor.exposureId ?? capture.exposureId, ordinal: donor.ordinal ?? capture.ordinal, contentRev: (donor.contentRev || 0) + 1, captureDevelop: donor.captureDevelop === true });
           if (!sidecars.length && item.sidecars.includes(donor.sidecar)) item.sidecar = donor.sidecar;
           if (item.exposureId === capture.exposureId) applyDevelop(item);
@@ -603,7 +628,7 @@ class Library {
     s.undo.push({ batch });
     if (s.undo.length > 500) s.undo.shift();
     s.redo = [];
-    this.changed(s, items, true);
+    this.changed(s, items);
     await this.save(s);
     return { items: batch.map(entry => ({ id: entry.id, ...entry.after })) };
   }
@@ -625,7 +650,7 @@ class Library {
       Object.assign(item, patch, { edited: true });
       return { id: item.id, ...decision(item), edited: true };
     });
-    this.changed(s, items.map(i => this.item(sessionId, i.id)), Object.hasOwn(items[0], 'metadataOverrides'));
+    this.changed(s, items.map(i => this.item(sessionId, i.id)));
     await this.save(s);
     return action.batch ? { items } : items[0];
   }
@@ -641,14 +666,21 @@ class Library {
       const count = (paths.get(item.sidecar) ?? 0) + 1;
       paths.set(item.sidecar, count);
     }
-    let written = 0;
+    let written = 0, saveBaseline = false;
     await mapLimit(items, 3, async item => {
       try {
         if (paths.get(item.sidecar) > 1) throw new Error('Multiple RAWs share this sidecar name; rename them before exporting.');
-        await writeXmp(item.sidecar, item, settings);
+        const observed = await writeXmp(item.sidecar, item, settings);
+        const current = s.byId.get(item.id);
+        if (current) {
+          current.observedMetadata = observed;
+          if (Object.hasOwn(current, 'metadataOverrides')) saveBaseline = true;
+          else current.sidecarMetadata = observed;
+        }
         written++;
       } catch (e) { failures.push({ name: item.name, reason: e.message }); }
     });
+    if (saveBaseline) await this.save(s);
     return { written, failures };
   }
 

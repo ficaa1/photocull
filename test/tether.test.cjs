@@ -592,7 +592,7 @@ test('next capture metadata snapshots a preset, latches None and honors the XMP 
   assert.equal(reopened.items.find(i => i.name === 'Ceramics-0001.ARW').captureMetadata.creator, 'Client Studio');
 });
 
-test('autosave follows never, except-cards and always while decisions survive reopen', async t => {
+test('tether decisions survive reopen with card autosave excluded for every stored policy', async t => {
   for (const policy of ['never', 'always', 'except-cards']) {
     const ctx = await setup(t, { settings: { writeSidecars: policy, tether: { initial: { rating: 4 } } } });
     await ctx.bind();
@@ -600,12 +600,11 @@ test('autosave follows never, except-cards and always while decisions survive re
     await ctx.library.flushSidecars();
     const exists = await fs.stat(path.join(ctx.root, 'Ceramics-0001.xmp')).then(() => true, () => false);
     assert.equal(exists, policy !== 'never', policy);
-    // The same policy applied to a removable session: only "always" writes there.
     const s = ctx.library.get(ctx.session); s.removable = true;
     await fs.rm(path.join(ctx.root, 'Ceramics-0001.xmp'), { force: true });
     await ctx.library.decide(ctx.session, shot.result.itemId, { rating: 4 });
     await ctx.library.flushSidecars();
-    assert.equal(await fs.stat(path.join(ctx.root, 'Ceramics-0001.xmp')).then(() => true, () => false), policy === 'always', policy + ' removable');
+    assert.equal(await fs.stat(path.join(ctx.root, 'Ceramics-0001.xmp')).then(() => true, () => false), false, policy + ' removable');
     const reopened = await new Library(ctx.dataDir, { settings: () => ctx.store.value }).scan(ctx.root);
     assert.deepEqual([reopened.items[0].rating, reopened.items[0].exposureId, reopened.items[0].captureMetadata.presetId], [4, e.exposureId, null], policy);
   }
@@ -1322,7 +1321,7 @@ test('choosing a camera card as the destination is refused before anything is wr
   await assert.rejects(ctx.service.checkDestination('relative'), e => e.code === 'DEST_CHANGED');
 });
 
-test('a card inserted since the last device poll is still refused as a destination', async t => {
+test('a newly discovered card is protected as a tether destination and within a recursive library', async t => {
   const { spawn } = require('node:child_process');
   const readline = require('node:readline');
   const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'photocull-card-')));
@@ -1345,6 +1344,15 @@ test('a card inserted since the last device poll is still refused as a destinati
   await fs.writeFile(list, JSON.stringify([{ root: card, name: 'CARD', identity: 'card-1' }]));
   const reply = await call('tether-check-destination', [card]);
   assert.deepEqual([reply.ok, reply.errorDetail?.code], [false, 'UNSUPPORTED']);
+  await fs.writeFile(path.join(card, 'DCIM', 'card.jpg'), 'card photo');
+  await fs.writeFile(path.join(base, 'local.jpg'), 'local photo');
+  const session = (await call('scan', [base, true])).value;
+  assert.equal(session.removable, false);
+  const edited = await call('edit-metadata', [session.id, session.items.map(item => item.id), { title: 'Portrait' }]);
+  assert.ok(edited.ok, edited.error);
+  await call('scan', [base, true]);
+  assert.match(await fs.readFile(path.join(base, 'local.xmp'), 'utf8'), /Portrait/);
+  assert.deepEqual(await fs.readdir(path.join(card, 'DCIM')), ['card.jpg']);
   child.stdin.end();
 });
 

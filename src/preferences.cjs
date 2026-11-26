@@ -125,7 +125,7 @@ function normalizeSettings(value = {}, base = DEFAULTS) {
   }
   if ('writeSidecars' in value) {
     if (!['always', 'except-cards', 'never'].includes(value.writeSidecars)) throw new Error('Invalid XMP sidecar policy.');
-    result.writeSidecars = value.writeSidecars;
+    result.writeSidecars = value.writeSidecars === 'always' ? 'except-cards' : value.writeSidecars;
   }
   if ('burstGap' in value) {
     if (!Number.isFinite(value.burstGap) || value.burstGap < .1 || value.burstGap > 10) throw new Error('Burst gap must be between 0.1 and 10 seconds.');

@@ -93,6 +93,7 @@ async function start() {
   let externalEdits, tether, previews;
   const library = new Library(dataDir, {
     keepSessions: serverMode ? 8 : 1, settings: () => settings.value, recipeSettings: id => recipes.get(id)?.settings,
+    cardRoots: async () => [...new Set([...devices.devices, ...await cards()].map(device => device.root).concat(settings.value.manualCards))],
     embeddedMetadata: item => previews.metadata(item).then(data => data.index.embedded),
     linkedHandoffs: () => externalEdits?.linkedPaths || new Set(), pairingExclusions: () => tether?.exclusions() || [],
     captureExposure: file => tether?.captureExposure(file) ?? null, onWarning: warning => send('sidecar-warning', warning)
@@ -253,7 +254,7 @@ async function start() {
     'develop-mark': async (session, id, mark) => { const result=await library.developMark(session, id, mark || {}); previews.invalidatePhoto(library.item(session,id)); return result; },
     'scan': async (folder, recursive) => {
       if (typeof folder !== 'string' || !folder) throw new Error('Choose a photo folder.');
-      return scanning('Stop tethering before opening another folder.', async () => library.scan(folder, !!recursive, { removable: await onCard(folder) }));
+      return scanning('Stop tethering before opening another folder.', async () => library.scan(folder, !!recursive));
     },
     'devices': () => devices.refresh(),
     'open-device': id => scanning('Card auto-open is paused while tethering.', async () => {

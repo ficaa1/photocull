@@ -58,6 +58,11 @@ function captureSettings(settings, item) {
 }
 
 const dcFields = { title: ['title', 'Alt'], caption: ['description', 'Alt'], creator: ['creator', 'Seq'], copyright: ['rights', 'Alt'], keywords: ['subject', 'Bag'] };
+function rdfValue(entry) {
+  if (entry.getAttributeNS(RDF, 'parseType') !== 'Resource') return entry;
+  return Array.from(entry.childNodes).find(n => n.namespaceURI === RDF && n.localName === 'value');
+}
+
 function descriptive(doc) {
   const result = {};
   for (const desc of photoDescriptions(doc)) for (const [key, [name]] of Object.entries(dcFields)) {
@@ -68,10 +73,13 @@ function descriptive(doc) {
       if (!el) continue;
       const entries = Array.from(el.getElementsByTagNameNS(RDF, 'li'));
       const preferred = entries.find(li => li.getAttributeNS(XML, 'lang') === 'x-default');
-      values = preferred ? [preferred.textContent] : entries.length ? entries.map(li => li.textContent) : [el.textContent];
+      values = (preferred ? [preferred] : entries.length ? entries : [el]).map(entry => rdfValue(entry)?.textContent ?? '');
     }
     if (key === 'keywords') result[key] = [...new Set([...(result[key] || []), ...values.filter(Boolean)])];
-    else result[key] ??= values[0];
+    else if (!Object.hasOwn(result, key)) {
+      result[key] = values[0];
+      if (key === 'creator' && values.length > 1) result.creators = values;
+    }
   }
   return result;
 }
@@ -198,7 +206,12 @@ function patchProperties(xml, owned, description, localized) {
     }
     if (parent?.alt && ns === RDF && local === 'li' && attrs.some(a => a[1] === 'xml:lang' && decode(a[2].slice(1, -1)) === 'x-default')) {
       parent.alt.foundDefault = true;
-      node.defaultText = parent.alt.text; node.contentStart = end;
+      const resource = attrs.some(a => a[1].split(':').at(-1) === 'parseType' && scopes[a[1].split(':')[0]] === RDF && decode(a[2].slice(1, -1)) === 'Resource');
+      if (resource) node.qualifiedText = parent.alt.text;
+      else { node.defaultText = parent.alt.text; node.contentStart = end; }
+    }
+    if (parent?.qualifiedText !== undefined && ns === RDF && local === 'value') {
+      node.defaultText = parent.qualifiedText; node.contentStart = end;
     }
     if (desc && !target) { target = node; node.generated = generatedProperties(description, scopes); }
     if (desc && !stack.some(n => n.remove) && !remove) for (const attr of attrs) {
@@ -251,6 +264,10 @@ function updateXmp(xml, decision, settings) {
       const properties = photoDescriptions(original).flatMap(d => Array.from(d.childNodes).filter(n => n.namespaceURI === DC && n.localName === name));
       const alt = properties.length === 1 && Array.from(properties[0].childNodes).find(n => n.namespaceURI === RDF && n.localName === 'Alt');
       if (alt && alt.getElementsByTagNameNS(RDF, 'li').length) {
+        for (const entry of Array.from(alt.childNodes).filter(n => n.namespaceURI === RDF && n.localName === 'li' && n.getAttributeNS(XML, 'lang') === 'x-default')) {
+          const value = rdfValue(entry);
+          if (!value || Array.from(value.childNodes).some(n => n.nodeType !== 3 && n.nodeType !== 4)) throw new Error('Unsupported qualified XMP text; existing sidecar left intact.');
+        }
         // Edit the default language in place so localized values and their qualifiers keep their XML.
         localized.set(name, new XMLSerializer().serializeToString(doc.createTextNode(values[0])));
         return;
@@ -288,6 +305,8 @@ function updateXmp(xml, decision, settings) {
         if (words.length) collection(name, type, words);
         else remove(DC, name);
       }
+    } else if (restoring && key === 'creator' && !metadata.creator && decision.sidecarMetadata?.creators) {
+      collection(name, type, decision.sidecarMetadata.creators);
     } else {
       const value = metadata[key] || (restoring && decision.sidecarMetadata?.[key]);
       if (value || Object.hasOwn(overrides, key)) collection(name, type, [value || '']);
@@ -327,12 +346,13 @@ async function writeXmp(file, decision, settings) {
     if (info.size > 2 * 1024 * 1024) throw new Error('Existing sidecar exceeds the 2 MB editing limit; it was left intact.');
     old = await fs.readFile(file, 'utf8');
   } catch (error) { if (error.code !== 'ENOENT') throw error; }
-  const next = updateXmp(old, decision, settings);
+  const next = updateXmp(old, decision, settings), metadata = descriptive(parse(next));
   // Keep a recoverable original, without overwriting a previous backup.
   if (old) await fs.copyFile(file, `${file}.photocull-backup`, fs.constants.COPYFILE_EXCL).catch(error => {
     if (error.code !== 'EEXIST') throw error;
   });
   await atomicWrite(file, next);
+  return metadata;
 }
 
 // Sidecars use slash-separated relative paths on every platform. Absolute paths
@@ -370,5 +390,5 @@ async function writableSidecar(file) {
   await fs.access(path.dirname(file), fs.constants.W_OK);
   if (stat) await fs.access(file, fs.constants.W_OK);
 }
-const shouldWriteSidecars = (settings, removable) => settings.writeSidecars !== 'never' && (settings.writeSidecars === 'always' || !removable);
+const shouldWriteSidecars = (settings, removable) => settings.writeSidecars !== 'never' && !removable;
 module.exports = { normalizeCaptureMetadata, captureSettings, readXmp, updateXmp, writeXmp, atomicWrite, sidecarPaths, portableDevelop, resolveDevelop, portablePath, shouldWriteSidecars, PHOTOCULL };

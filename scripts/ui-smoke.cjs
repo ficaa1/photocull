@@ -28,9 +28,25 @@ async function main() {
     page.on('pageerror', e => errors.push(e.message));
     await page.locator('#empty-open').waitFor();
     await page.screenshot({ path: path.join(screenshots, 'photocull-empty.png') });
+    let releaseMetadata;
+    const hold = new Promise(resolve => { releaseMetadata = resolve; });
+    await page.route('**/rpc*', async route => {
+      if (route.request().postDataJSON()?.method === 'metadata') await hold;
+      await route.continue();
+    });
     await page.evaluate(folder => window.loadTestFolder(folder), photos);
     await page.waitForFunction(() => document.querySelector('#review-image').dataset.complete === 'yes', { timeout: 60000 });
     assert.ok(Number(await page.locator('#count-all').textContent()) >= 36);
+    await page.locator('#analysis-pause').click();
+    const totalPhotos = Number(await page.locator('#count-all').textContent());
+    await page.locator('#search').fill('NOT tag:dancers');
+    try {
+      assert.equal(await page.locator('#view-count').textContent(), '0', 'unknown keywords cannot satisfy a negated query');
+      assert.match(await page.locator('#metadata-index-status').textContent(), /Indexing metadata/);
+    } finally { releaseMetadata(); }
+    await page.waitForFunction(count => document.querySelector('#view-count').textContent === String(count - 1), totalPhotos);
+    assert.equal(await page.locator('#analysis-pause').textContent(), 'Resume analysis');
+    await page.locator('#search').fill('');
     await page.locator('#metadata-filter-toggle').click();
     const panel = page.locator('#metadata-filters');
     await panel.locator('[name=camera]').selectOption('Studio A7');

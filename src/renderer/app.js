@@ -5,6 +5,7 @@ const state = { deleting: false, session: null, selected: null, marked: new Set(
 let toastTimer, metadataTimer, framePending = false, handoffUsageKey = '', handoffUsageGeneration = 0;
 const gridNodes = new Map(), filmNodes = new Map();
 const culling = { metadata:new Map(), jobs:new Map(), scores:new Map(), bursts:[], byId:new Map(), expanded:new Set(), epoch:0, paused:false, running:false };
+let metadataIndex;
 let survey, burstPrompt=null, tether=null;
 const menus = [];
 // Automatic card opening waits until first-run Welcome has been shown and answered.
@@ -242,7 +243,7 @@ function metadataRow(item) {
   const cached = indexedRows.get(item);
   if (cached && cached.index === index && cached.preset === preset && cached.overrides === item.metadataOverrides &&
     cached.sidecar === item.sidecarMetadata && cached.capture === item.captureMetadata) return cached.row;
-  const row = { name: item.name, ...index, ...PhotoCullMetadata.descriptive(item, index?.embedded, preset) };
+  const row = { name: item.name, metadataPending: !index, ...index, ...PhotoCullMetadata.descriptive(item, index?.embedded, preset) };
   indexedRows.set(item, { index, preset, overrides: item.metadataOverrides, sidecar: item.sidecarMetadata, capture: item.captureMetadata, row });
   return row;
 }
@@ -887,8 +888,17 @@ function clearFilters() {
 function closeMetadataFilters() {
   filterPanel.hidden = true;
   $('metadata-filter-toggle').setAttribute('aria-expanded', 'false');
+  renderIndexStatus();
+}
+function renderIndexStatus() {
+  const status = $('metadata-index-status');
+  const run = metadataIndex;
+  const active = !filterPanel.hidden || state.query || Object.keys(state.metadataFilters).length;
+  status.hidden = !active || !run || run.session !== state.session || run.done && !run.failures;
+  if (!status.hidden) status.textContent = run.done ? `Metadata unavailable for ${run.failures} photos` : `Indexing metadata (${run.processed}/${run.total})…`;
 }
 function renderMetadataFilters() {
+  renderIndexStatus();
   const count = Object.keys(state.metadataFilters).length + Number(!!state.colorFilter);
   $('filter-count').hidden = !count; $('filter-count').textContent = count;
   if (filterPanel.hidden) return;
@@ -1888,7 +1898,7 @@ async function cullingMetadata(id,session=state.session?.id) {
   if(!session)return null;
   if(culling.metadata.has(id))return culling.metadata.get(id);
   if(culling.jobs.has(id))return culling.jobs.get(id);
-  const job=api.metadata(session,id,'preview').then(metadata=>{if(state.session?.id===session){culling.metadata.set(id,metadata);if(state.selected===id)applyFocus();}return metadata;}).finally(()=>{if(culling.jobs.get(id)===job)culling.jobs.delete(id);});
+  const job=api.metadata(session,id,'preview').then(metadata=>{if(state.session?.id===session && culling.jobs.get(id)===job){culling.metadata.set(id,metadata);if(state.selected===id)applyFocus();}return metadata;}).finally(()=>{if(culling.jobs.get(id)===job)culling.jobs.delete(id);});
   culling.jobs.set(id,job);return job;
 }
 function focusOf(id) {return culling.metadata.get(id)?.focus || null;}
@@ -1946,18 +1956,36 @@ function toggleBurst(burst=culling.byId.get(state.selected)) {
 function setPauseLabel(text) {$('analysis-pause').textContent=text;$('analysis-pause').dataset.action=text.split(' ')[0].toLowerCase();}
 function setAnalysis(text,phase) {$('analysis-status').textContent=text;$('analysis-status').dataset.phase=phase;$('analysis-status').closest('.analysis').title=text;}
 function cancelCulling() {culling.epoch++;culling.running=false;void api.cancelSharpness().catch(()=>{});}
+function indexSessionMetadata(session, items) {
+  if (metadataIndex?.session === session && (!metadataIndex.done || !metadataIndex.failures)) return metadataIndex.job;
+  const run = { session, total: items.length, processed: 0, failures: 0, done: false };
+  metadataIndex = run;
+  run.job = (async () => {
+    for (const item of items) {
+      if (state.session !== session || metadataIndex !== run) break;
+      try { await cullingMetadata(item.id, session.id); } catch { run.failures++; }
+      if (state.session !== session || metadataIndex !== run) break;
+      run.processed++;
+      if (run.processed % 8 === 0 || run.processed === 1 || run.processed === run.total) {
+        regroupBursts(); render();
+        if (culling.running) setAnalysis(`Metadata ${run.processed}/${run.total}`, 'running');
+      }
+      await new Promise(resolve => setTimeout(resolve, 35));
+    }
+    run.done = true;
+    if (metadataIndex === run) renderIndexStatus();
+    return run.failures;
+  })();
+  return run.job;
+}
 async function analyzeCulling() {
   cancelCulling();culling.paused=false;culling.running=true;const epoch=culling.epoch,session=state.session?.id,items=[...(state.session?.items || [])];
   $('analysis-pause').hidden=!items.length || !!api.server;setPauseLabel('Pause analysis');
   const current=()=>epoch===culling.epoch && session===state.session?.id && !culling.paused;
-  const yieldUI=()=>new Promise(resolve=>setTimeout(resolve,35));let failures=0;
+  const yieldUI=()=>new Promise(resolve=>setTimeout(resolve,35));
   try {
-    for(const [index,item] of items.entries()) {
-      if(!current())return;try{await cullingMetadata(item.id,session);}catch{failures++;}
-      if(!current())return;
-      if(index%8===0 || index===items.length-1){regroupBursts();render();setAnalysis(`Metadata ${index+1}/${items.length}`,'running');}
-      await yieldUI();
-    }
+    let failures = await indexSessionMetadata(state.session, items);
+    if (!current()) return;
     if(api.canAnalyze) {
       const burstIds=new Set(culling.byId.keys()),order=[...items.filter(i=>burstIds.has(i.id)),...items.filter(i=>!burstIds.has(i.id))];
       for(const item of order) {
