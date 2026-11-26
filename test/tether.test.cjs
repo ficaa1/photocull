@@ -157,11 +157,11 @@ test('preview metadata reads flash tags, preserves zero EV and replaces the prev
     reads++;
     assert.ok(readArgs.includes('-Flash'));
     assert.ok(readArgs.includes('-FlashExposureComp'));
-    return captures.get(file);
+    return { MIMEType: 'image/x-sony-arw', ...captures.get(file) };
   } } });
   const items = paths.map((file, i) => ({ id: String(i), path: file, fingerprint: 'synthetic', raw: true }));
   await fs.mkdir(cacheDir, { recursive: true });
-  await fs.writeFile(path.join(cacheDir, hash(`sources-v2:${items[0].path}:${items[0].fingerprint}`) + '.metadata-v2.json'), '{}');
+  await fs.writeFile(path.join(cacheDir, hash(`sources-v2:${items[0].path}:${items[0].fingerprint}`) + '.metadata-v4.json'), '{}');
   const flash = async (service, item) => {
     const { flash, flashFired, flashComp } = await service.metadata(item);
     return { flash, flashFired, flashComp };

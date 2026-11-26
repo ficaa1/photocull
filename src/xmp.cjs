@@ -58,22 +58,27 @@ function captureSettings(settings, item) {
 }
 
 const dcFields = { title: ['title', 'Alt'], caption: ['description', 'Alt'], creator: ['creator', 'Seq'], copyright: ['rights', 'Alt'], keywords: ['subject', 'Bag'] };
+const rdfChildren = (parent, name) => Array.from(parent?.childNodes || []).filter(n => n.namespaceURI === RDF && n.localName === name);
 function rdfValue(entry) {
-  if (entry.getAttributeNS(RDF, 'parseType') !== 'Resource') return entry;
-  return Array.from(entry.childNodes).find(n => n.namespaceURI === RDF && n.localName === 'value');
+  return entry.getAttributeNS(RDF, 'parseType') === 'Resource' ? rdfChildren(entry, 'value')[0] : entry;
+}
+function isDefaultLanguage(entry) {
+  return entry.getAttributeNS(XML, 'lang') === 'x-default' || rdfValue(entry)?.getAttributeNS(XML, 'lang') === 'x-default';
 }
 
 function descriptive(doc) {
   const result = {};
-  for (const desc of photoDescriptions(doc)) for (const [key, [name]] of Object.entries(dcFields)) {
+  for (const desc of photoDescriptions(doc)) for (const [key, [name, type]] of Object.entries(dcFields)) {
     let values;
     if (desc.hasAttributeNS(DC, name)) values = [desc.getAttributeNS(DC, name)];
     else {
       const el = Array.from(desc.childNodes).find(n => n.namespaceURI === DC && n.localName === name);
       if (!el) continue;
-      const entries = Array.from(el.getElementsByTagNameNS(RDF, 'li'));
-      const preferred = entries.find(li => li.getAttributeNS(XML, 'lang') === 'x-default');
-      values = (preferred ? [preferred] : entries.length ? entries : [el]).map(entry => rdfValue(entry)?.textContent ?? '');
+      const value = rdfValue(el);
+      const container = Array.from(value?.childNodes || []).find(n => n.namespaceURI === RDF && ['Alt', 'Bag', 'Seq'].includes(n.localName));
+      const entries = rdfChildren(container, 'li');
+      const preferred = type === 'Alt' && entries.find(isDefaultLanguage);
+      values = entries.length ? (preferred ? [preferred] : entries).map(li => rdfValue(li)?.textContent ?? '') : [value?.textContent ?? ''];
     }
     if (key === 'keywords') result[key] = [...new Set([...(result[key] || []), ...values.filter(Boolean)])];
     else if (!Object.hasOwn(result, key)) {
@@ -159,10 +164,11 @@ function generatedProperties(description, scopes) {
 
 // Validate with the DOM, then edit only owned XML spans. Unknown attributes,
 // elements, comments, namespace aliases and entity spellings retain their bytes.
-function patchProperties(xml, owned, description, localized) {
+function patchProperties(xml, owned, description, localized, original) {
   const tokens = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<\/?[^>"']*(?:(?:"[^"]*"|'[^']*')[^>"']*)*>/g;
   const stack = [], edits = [];
-  let match, insertion, target, subject;
+  const elements = localized.size ? original.getElementsByTagName('*') : null;
+  let elementIndex = 0, match, insertion, target, subject;
   const key = (ns, name) => ns + ':' + name;
   const decode = value => value.replace(/&(#x[\da-f]+|#\d+|amp|quot|apos|lt|gt);/gi, (_, entity) => entity[0] === '#' ? String.fromCodePoint(parseInt(entity.slice(entity[1].toLowerCase() === 'x' ? 2 : 1), entity[1].toLowerCase() === 'x' ? 16 : 10)) : ({ amp: '&', quot: '"', apos: "'", lt: '<', gt: '>' })[entity.toLowerCase()]);
   while ((match = tokens.exec(xml))) {
@@ -171,10 +177,7 @@ function patchProperties(xml, owned, description, localized) {
     if (token.startsWith('</')) {
       const node = stack.pop();
       if (node.defaultText !== undefined) edits.push([node.contentStart, start, node.defaultText]);
-      if (node.alt && !node.alt.foundDefault) {
-        const li = node.alt.prefix + 'li';
-        edits.push([start, start, '<' + li + ' xml:lang="x-default">' + node.alt.text + '</' + li + '>']);
-      }
+      if (node.appendDefault) edits.push([start, start, node.appendDefault]);
       if (node === target) edits.push([start, start, node.generated.children]);
       else if (node.replaceable) {
         for (let i = edits.length - 1; i >= 0; i--) if (edits[i][0] >= node.start) edits.splice(i, 1);
@@ -200,26 +203,15 @@ function patchProperties(xml, owned, description, localized) {
     const replaceable = desc && attrs.some(a => a[1].split(':').at(-1) === 'version' && scopes[a[1].split(':')[0]] === PHOTOCULL) && attrs.every(a => a[1] === 'xmlns' || a[1].startsWith('xmlns:') && [RDF, XMP, PHOTOCULL, DC].includes(decode(a[2].slice(1, -1))) || a[1].split(':').at(-1) === 'about' && scopes[a[1].split(':')[0]] === RDF || owned.has(key(scopes[a[1].split(':')[0]], a[1].split(':')[1])));
     const remove = !stack.some(n => n.remove) && parent?.desc && owned.has(key(ns, local));
     const node = { scopes, ns, local, start, desc, remove, replaceable };
-    if (parent?.desc && ns === DC && localized.has(local)) node.translation = localized.get(local);
-    if (parent?.translation !== undefined && ns === RDF && local === 'Alt') {
-      node.alt = { text: parent.translation, prefix: parts.length > 1 ? parts[0] + ':' : '', foundDefault: false };
-    }
-    if (parent?.alt && ns === RDF && local === 'li' && attrs.some(a => a[1] === 'xml:lang' && decode(a[2].slice(1, -1)) === 'x-default')) {
-      parent.alt.foundDefault = true;
-      const resource = attrs.some(a => a[1].split(':').at(-1) === 'parseType' && scopes[a[1].split(':')[0]] === RDF && decode(a[2].slice(1, -1)) === 'Resource');
-      if (resource) node.qualifiedText = parent.alt.text;
-      else { node.defaultText = parent.alt.text; node.contentStart = end; }
-    }
-    if (parent?.qualifiedText !== undefined && ns === RDF && local === 'value') {
-      node.defaultText = parent.qualifiedText; node.contentStart = end;
-    }
+    const edit = elements && localized.get(elements.item(elementIndex++));
+    if (edit) Object.assign(node, edit, { contentStart: end });
     if (desc && !target) { target = node; node.generated = generatedProperties(description, scopes); }
     if (desc && !stack.some(n => n.remove) && !remove) for (const attr of attrs) {
       const [prefix, field] = attr[1].split(':');
       if (field && owned.has(key(scopes[prefix], field))) edits.push([start + attr.index, start + attr.index + attr[0].length, '']);
     }
     if (/\/\s*>$/.test(token)) {
-      if (node.defaultText !== undefined) edits.push([end - 2, end, '>' + node.defaultText + '</' + name + '>']);
+      if (edit) edits.push([end - 2, end, '>' + (edit.defaultText ?? edit.appendDefault) + '</' + name + '>']);
       if (node === target) edits.push([end - 2, end, node.generated.attributes + '>' + node.generated.children + '</' + name + '>']);
       else if (remove || replaceable) {
         for (let i = edits.length - 1; i >= 0; i--) if (edits[i][0] >= start) edits.splice(i, 1);
@@ -262,16 +254,22 @@ function updateXmp(xml, decision, settings) {
   function collection(name, type, values) {
     if (type === 'Alt') {
       const properties = photoDescriptions(original).flatMap(d => Array.from(d.childNodes).filter(n => n.namespaceURI === DC && n.localName === name));
-      const alt = properties.length === 1 && Array.from(properties[0].childNodes).find(n => n.namespaceURI === RDF && n.localName === 'Alt');
-      if (alt && alt.getElementsByTagNameNS(RDF, 'li').length) {
-        for (const entry of Array.from(alt.childNodes).filter(n => n.namespaceURI === RDF && n.localName === 'li' && n.getAttributeNS(XML, 'lang') === 'x-default')) {
+      const alt = properties.length === 1 && rdfChildren(rdfValue(properties[0]), 'Alt')[0];
+      if (alt) {
+        const text = new XMLSerializer().serializeToString(doc.createTextNode(values[0]));
+        const defaults = rdfChildren(alt, 'li').filter(isDefaultLanguage);
+        for (const entry of defaults) {
           const value = rdfValue(entry);
           if (!value || Array.from(value.childNodes).some(n => n.nodeType !== 3 && n.nodeType !== 4)) throw new Error('Unsupported qualified XMP text; existing sidecar left intact.');
+          localized.set(value, { defaultText: text });
         }
-        // Edit the default language in place so localized values and their qualifiers keep their XML.
-        localized.set(name, new XMLSerializer().serializeToString(doc.createTextNode(values[0])));
+        if (!defaults.length) {
+          const li = alt.prefix ? alt.prefix + ':li' : 'li';
+          localized.set(alt, { appendDefault: '<' + li + ' xml:lang="x-default">' + text + '</' + li + '>' });
+        }
         return;
       }
+      if (properties.some(el => el.getAttributeNS(RDF, 'parseType') === 'Resource')) throw new Error('Unsupported qualified XMP text; existing sidecar left intact.');
     }
     remove(DC, name); desc.setAttributeNS(XMLNS, 'xmlns:dc', DC);
     const field = doc.createElementNS(DC, 'dc:' + name), list = doc.createElementNS(RDF, 'rdf:' + type);
@@ -296,7 +294,7 @@ function updateXmp(xml, decision, settings) {
   const previous = editedFields(original);
   for (const [key, [name, type]] of Object.entries(dcFields)) {
     if (previous.includes(key) && !Object.hasOwn(decision, 'metadataOverrides')) continue;
-    const restoring = previous.includes(key) && !Object.hasOwn(overrides, key);
+    const restoring = (previous.includes(key) || decision.metadataReverts?.includes(key)) && !Object.hasOwn(overrides, key);
     if (key === 'keywords') {
       if (Object.hasOwn(overrides, key)) collection(name, type, overrides.keywords);
       else if (metadata.keywords.length || restoring) {
@@ -305,7 +303,7 @@ function updateXmp(xml, decision, settings) {
         if (words.length) collection(name, type, words);
         else remove(DC, name);
       }
-    } else if (restoring && key === 'creator' && !metadata.creator && decision.sidecarMetadata?.creators) {
+    } else if (restoring && key === 'creator' && !decision.captureMetadata?.creator && decision.sidecarMetadata?.creators) {
       collection(name, type, decision.sidecarMetadata.creators);
     } else {
       const value = metadata[key] || (restoring && decision.sidecarMetadata?.[key]);
@@ -325,7 +323,7 @@ function updateXmp(xml, decision, settings) {
   if (decision.captureMetadata) scalar(PHOTOCULL, 'photocull', 'captureMetadata', JSON.stringify({ version: 1, metadata: normalizeCaptureMetadata(decision.captureMetadata) }));
   if (Object.hasOwn(decision, 'develop')) scalar(PHOTOCULL, 'photocull', 'develop', JSON.stringify({ version: 1, state: decision.develop ? { ...portableDevelop(decision.develop, decision.path, decision.photoRoot), edited: !!decision.develop.editedBy } : null }));
   desc.setAttributeNS(XMLNS, 'xmlns:rdf', RDF);
-  return patchProperties(xml || base, owned, desc, localized);
+  return patchProperties(xml || base, owned, desc, localized, original);
 }
 
 async function atomicWrite(file, data) {

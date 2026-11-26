@@ -23,8 +23,8 @@ test('embedded JPEG metadata preserves pixels and obeys disabled rating/label wr
  assert.equal(edited.Creator,undefined);assert.equal(edited.Artist,undefined);assert.equal(edited.Subject,'existing');
  assert.deepEqual(await sharp(file).raw().toBuffer(),pixels);});
 
-test('clearing IPTC fields removes legacy fallback values only from embedded destination copies', async t => {
-  const { root, photos, out } = await setup(t), source = path.join(photos, 'sample.jpg');
+for (const ext of ['jpg', 'png', 'webp']) test(`clearing IPTC fields removes legacy fallback values only from embedded ${ext} copies`, async t => {
+  const { root, photos, out } = await setup(t), name = 'sample.' + ext, source = path.join(photos, name);
   const { ExifTool } = require('exiftool-vendored'), exif = new ExifTool();
   const { PreviewService } = require('../src/previews.cjs');
   const previews = new PreviewService(path.join(root, 'previews'), { exif });
@@ -33,18 +33,23 @@ test('clearing IPTC fields removes legacy fallback values only from embedded des
   });
   const copies = new TransferService();
   t.after(async () => { await copies.close(); await library.close(); await previews.close(); });
-  await require('sharp')({ create: { width: 64, height: 48, channels: 3, background: '#405060' } }).jpeg().toFile(source);
-  const legacy = ['IPTC:Keywords','IPTC:ObjectName','IPTC:By-line','IPTC:Caption-Abstract','IPTC:CopyrightNotice','EXIF:Artist','EXIF:ImageDescription','EXIF:Copyright'];
+  await require('sharp')({ create: { width: 64, height: 48, channels: 3, background: '#405060' } }).toFile(source);
+  const legacy = ['IFD0:XPTitle', 'IFD0:XPComment', 'IFD0:XPAuthor', 'IFD0:XPKeywords', 'EXIF:Artist',
+    'EXIF:ImageDescription', 'EXIF:Copyright', 'XMP-dc:Subject'];
+  if (ext === 'jpg') legacy.push('IPTC:Keywords', 'IPTC:ObjectName', 'IPTC:By-line', 'IPTC:Caption-Abstract', 'IPTC:CopyrightNotice');
   await exif.write(source, Object.fromEntries(legacy.map(tag => [tag, 'Legacy'])), ['-overwrite_original']);
+  const readTags = file => exif.readRaw(file, { readArgs: legacy.map(tag => '-' + tag) });
+  const seeded = await readTags(source);
+  for (const tag of legacy) assert.equal(seeded[tag.split(':')[1]], 'Legacy', tag);
   const original = await fs.readFile(source), session = await library.scan(photos), id = session.items[0].id;
   await library.decide(session.id, id, { flag: 'pick' });
   await library.editMetadata(session.id, [id], { title: '', creator: '', caption: '', copyright: '', removeKeyword: 'Legacy' });
   const result = await copies.copy(library.get(session.id), out, { embedMetadata: true, includeXmp: false });
   assert.equal(result.copied, 1, JSON.stringify(result.failures));
-  assert.deepEqual(await fs.readdir(out), ['sample.jpg']);
+  assert.deepEqual(await fs.readdir(out), [name]);
   const copy = await library.scan(out), item = library.item(copy.id, copy.items[0].id);
   assert.deepEqual((await previews.metadata(item)).index.embedded, { title: '', caption: '', creator: '', copyright: '', keywords: [] });
-  const actual = await exif.readRaw(item.path, { readArgs: legacy.map(tag => '-' + tag) });
+  const actual = await readTags(item.path);
   for (const tag of legacy) assert.equal(actual[tag.split(':')[1]], undefined, tag);
   assert.deepEqual(await fs.readFile(source), original);
 });

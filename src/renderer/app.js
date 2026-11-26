@@ -242,9 +242,9 @@ function metadataRow(item) {
   const preset = state.settings.metadata;
   const cached = indexedRows.get(item);
   if (cached && cached.index === index && cached.preset === preset && cached.overrides === item.metadataOverrides &&
-    cached.sidecar === item.sidecarMetadata && cached.capture === item.captureMetadata) return cached.row;
+    cached.reverts === item.metadataReverts && cached.sidecar === item.sidecarMetadata && cached.capture === item.captureMetadata) return cached.row;
   const row = { name: item.name, metadataPending: !index, ...index, ...PhotoCullMetadata.descriptive(item, index?.embedded, preset) };
-  indexedRows.set(item, { index, preset, overrides: item.metadataOverrides, sidecar: item.sidecarMetadata, capture: item.captureMetadata, row });
+  indexedRows.set(item, { index, preset, overrides: item.metadataOverrides, reverts: item.metadataReverts, sidecar: item.sidecarMetadata, capture: item.captureMetadata, row });
   return row;
 }
 let compiledQuery, compiledFilters, matchMetadata;

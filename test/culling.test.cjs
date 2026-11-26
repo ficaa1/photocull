@@ -54,7 +54,7 @@ test('sharpness cache uses file identity and keep-sharpest is one undo step',asy
 });
 test('AF metadata read is persisted and reused without another ExifTool read',async t=>{
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'photocull-focus-test-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));let reads=0;
-  const exif={readRaw:async()=>{reads++;return {...fixtures[0].tags,DateTimeOriginal:'2026:07:08 12:13:14',SubSecTimeOriginal:'250',Model:'ILCE-test'};},end:async()=>{}};
+  const exif={readRaw:async()=>{reads++;return {...fixtures[0].tags,MIMEType:'image/x-sony-arw',DateTimeOriginal:'2026:07:08 12:13:14',SubSecTimeOriginal:'250',Model:'ILCE-test'};},end:async()=>{}};
   const item={id:'photo',path:path.join(root,'photo.ARW'),raw:true,fingerprint:'test'};
   const one=new PreviewService(root,{exif}),meta=await one.metadata(item);await one.close();assert.equal(meta.focus.x,.75);assert.equal(meta.captureTime,Date.UTC(2026,6,8,12,13,14,250));
   const two=new PreviewService(root,{exif});await two.metadata(item);await two.close();assert.equal(reads,1);
@@ -69,7 +69,7 @@ test('focus analysis reads the oriented sRGB cache and restores evicted preview 
   const library=new Library(path.join(root,'state'),{settings:()=>normalizeSettings({writeSidecars:'never'})});t.after(()=>library.close());
   const session=await library.scan(photos),item=library.get(session.id).items[0];
   item.develop={edited:true,tiff:path.join(root,'unavailable-edit.tif')};
-  const exif={readRaw:async()=>({Make:'Sony',Model:'fixture',DateTimeOriginal:'2026:07:08 12:13:14',FocusLocation:'180 120 90 60',Orientation:6}),end:async()=>{}};
+  const exif={readRaw:async()=>({MIMEType:'image/jpeg',Make:'Sony',Model:'fixture',DateTimeOriginal:'2026:07:08 12:13:14',FocusLocation:'180 120 90 60',Orientation:6}),end:async()=>{}};
   const previews=new PreviewService(path.join(root,'cache'),{exif});t.after(()=>previews.close());
   const service=new CullingService(library,previews,()=>({burstGap:1})),source=await service.source(session.id,item.id);
   assert.equal(source.file,path.join(previews.cacheDir,previews.key({...item,develop:null},'preview')+'.jpg'));

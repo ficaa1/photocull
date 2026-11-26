@@ -12,6 +12,9 @@ async function main() {
   const screenshots = path.join(root, 'artifacts');
   await fs.rm(photos, { recursive: true, force: true });
   await fixtures(photos, 36);
+  await fs.writeFile(path.join(photos, 'zzz-empty.jpg'), '');
+  await fs.writeFile(path.join(photos, 'zzz-text.jpg'), 'Unreadable photo');
+  await fs.writeFile(path.join(photos, 'zzz-truncated.jpg'), Buffer.from([0xff, 0xd8, 0xff, 0xe1]));
   const { ExifTool } = require('exiftool-vendored'), exif = new ExifTool();
   try {
     await exif.write(path.join(photos, 'DSC_0003.jpg'), { Model: 'Studio A7', LensModel: 'Prime 50', ISO: 800,
@@ -44,7 +47,12 @@ async function main() {
       assert.equal(await page.locator('#view-count').textContent(), '0', 'unknown keywords cannot satisfy a negated query');
       assert.match(await page.locator('#metadata-index-status').textContent(), /Indexing metadata/);
     } finally { releaseMetadata(); }
-    await page.waitForFunction(count => document.querySelector('#view-count').textContent === String(count - 1), totalPhotos);
+    await page.waitForFunction(() => {
+      const status = document.querySelector('#metadata-index-status');
+      return status.hidden || status.textContent.startsWith('Metadata unavailable');
+    });
+    assert.equal(await page.locator('#view-count').textContent(), String(totalPhotos - 4));
+    assert.equal(await page.locator('#metadata-index-status').textContent(), 'Metadata unavailable for 3 photos');
     assert.equal(await page.locator('#analysis-pause').textContent(), 'Resume analysis');
     await page.locator('#search').fill('');
     await page.locator('#metadata-filter-toggle').click();

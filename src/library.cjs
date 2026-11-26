@@ -1,6 +1,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
+const { isDeepStrictEqual } = require('node:util');
 const { mapLimit } = require('./queue.cjs');
 const { descriptive, textFields } = require('./renderer/metadata-filter.js');
 const { DEFAULTS, text } = require('./preferences.cjs');
@@ -79,29 +80,71 @@ function insertSorted(items, item) {
 function captureMetadata(value) { try { return value ? normalizeCaptureMetadata(value) : undefined; } catch { return undefined; } }
 const captureState = c => ({ exposureId: typeof c.exposureId === 'string' ? c.exposureId : undefined, ordinal: Number.isSafeInteger(c.ordinal) ? c.ordinal : undefined,
   contentRev: Number.isSafeInteger(c.contentRev) && c.contentRev > 0 ? c.contentRev : 0, captureMetadata: captureMetadata(c.captureMetadata), captureDevelop: c.captureDevelop === true });
-const metadataState = item => Object.hasOwn(item, 'metadataOverrides') ? { metadataOverrides: item.metadataOverrides } : {};
+const metadataState = item => Object.hasOwn(item, 'metadataOverrides')
+  ? { metadataOverrides: item.metadataOverrides, ...(item.metadataReverts && { metadataReverts: item.metadataReverts }) } : {};
+function applyMetadataOverrides(item, next) {
+  const previous = [...(item.metadataReverts || []), ...Object.keys(item.metadataOverrides || {})];
+  item.metadataReverts = [...new Set(previous)].filter(key => !Object.hasOwn(next || {}, key));
+  item.metadataOverrides = next;
+  return { id: item.id, ...metadataState(item) };
+}
 const restore = (item, cached, folder) => Object.assign(item, decision(cached), captureState(cached), metadataState(cached), {
   modified: cached.modified || 0, edited: cached.edited ?? (cached.flag !== 'none' || cached.rating > 0),
   develop: developState(resolveDevelop(cached.develop, item.path, folder)), observedMetadata: cached.observedMetadata,
   sidecarMetadata: Object.hasOwn(cached, 'metadataOverrides') ? cached.sidecarMetadata : item.sidecarMetadata
 });
+function copyMetadataField(target, source, key) {
+  for (const field of key === 'creator' ? ['creator', 'creators'] : [key]) {
+    if (Object.hasOwn(source || {}, field)) target[field] = source[field];
+    else delete target[field];
+  }
+}
 function mergeXmpMetadata(item, cached, incoming) {
   const remote = incoming.metadata || {}, overrides = { ...incoming.metadataOverrides };
-  const baseline = cached?.observedMetadata || cached?.sidecarMetadata || {};
+  const observed = cached?.observedMetadata || cached?.sidecarMetadata || {};
+  const baseline = { ...remote }, reverts = [];
+  const local = cached?.metadataOverrides || {};
+  const value = (metadata, key) => key === 'creator' ? metadata?.creators ?? metadata?.creator : metadata?.[key];
+  const reverted = cached?.metadataReverts ?? Object.keys(incoming.metadataOverrides || {}).filter(key =>
+    cached && Object.hasOwn(cached, 'metadataOverrides') && !Object.hasOwn(local, key) &&
+    !isDeepStrictEqual(value(observed, key), value(cached.sidecarMetadata, key)));
   let unsynced = false;
-  for (const [key, local] of Object.entries(cached?.metadataOverrides || {})) {
-    const previous = key === 'creator' ? baseline.creators || baseline.creator : baseline[key];
-    const current = key === 'creator' ? remote.creators || remote.creator : remote[key];
-    if (JSON.stringify(current) === JSON.stringify(previous) || JSON.stringify(current) === JSON.stringify(local)) {
-      overrides[key] = local;
-      if (JSON.stringify(local) !== JSON.stringify(remote[key])) unsynced = true;
+  for (const key of new Set([...Object.keys(local), ...reverted])) {
+    const current = value(remote, key);
+    const hasOverride = Object.hasOwn(local, key);
+    if (!isDeepStrictEqual(current, value(observed, key)) && !(hasOverride && isDeepStrictEqual(current, local[key]))) continue;
+    copyMetadataField(baseline, cached.sidecarMetadata, key);
+    if (hasOverride) {
+      overrides[key] = local[key];
+      if (!isDeepStrictEqual(current, local[key])) unsynced = true;
+    } else {
+      if (Object.hasOwn(overrides, key) || !isDeepStrictEqual(current, value(baseline, key))) unsynced = true;
+      delete overrides[key];
+      reverts.push(key);
     }
   }
-  item.sidecarMetadata = remote;
+  item.sidecarMetadata = baseline;
   item.observedMetadata = remote;
+  item.metadataReverts = reverts;
   if (Object.keys(overrides).length) item.metadataOverrides = overrides;
+  else if (reverts.length) item.metadataOverrides = null;
   else delete item.metadataOverrides;
   return unsynced;
+}
+
+function recordXmpWrite(item, snapshot, observed) {
+  item.observedMetadata = observed;
+  if (!Object.hasOwn(item, 'metadataOverrides')) {
+    item.sidecarMetadata = observed;
+    return false;
+  }
+  if (snapshot.metadataReverts?.length && snapshot.metadataReverts === item.metadataReverts) {
+    const baseline = { ...item.sidecarMetadata };
+    for (const key of snapshot.metadataReverts) copyMetadataField(baseline, observed, key);
+    item.sidecarMetadata = baseline;
+    item.metadataReverts = snapshot.metadataReverts.filter(key => key === 'creator' && observed.creators?.length);
+  }
+  return true;
 }
 
 // Session JSON fields that tie a photo to a tethered exposure.
@@ -239,9 +282,10 @@ class Library {
     return this.publicSession(session);
   }
 
-  publicItem({ id, name, size, raw, companion, flag, rating, color, trashed, source, edited, develop, contentRev, exposureId, ordinal, captureMetadata, sidecarMetadata, metadataOverrides }) {
+  publicItem(item) {
+    const { id, name, size, raw, companion, flag, rating, color, trashed, source, edited, develop, contentRev, exposureId, ordinal, captureMetadata, sidecarMetadata } = item;
     return { id, name, size, raw, paired: !!companion, flag, rating, color, trashed, source, edited, ...developSummary(develop), contentRev: contentRev || 0,
-      ...(sidecarMetadata ? { sidecarMetadata } : {}), ...(metadataOverrides !== undefined ? { metadataOverrides } : {}),
+      ...(sidecarMetadata ? { sidecarMetadata } : {}), ...metadataState(item),
       ...(exposureId ? { exposureId, ordinal } : {}), ...(captureMetadata ? { captureMetadata } : {}) };
   }
 
@@ -327,9 +371,8 @@ class Library {
           if (!source.isFile() || await fs.realpath(item.path) !== item.path || `${source.dev}:${source.ino}` !== item.fileId || source.size !== item.size || source.mtimeMs !== item.mtimeMs) throw new Error('Photo changed; reopen it before writing XMP.');
           if (owners.get(s.id).get(item.sidecar) > 1) throw new Error('Multiple photos share this sidecar name.');
           const snapshot = this.sidecarItem(s, item);
-          item.observedMetadata = await writeXmp(item.sidecar, snapshot, this.settings());
-          if (Object.hasOwn(item, 'metadataOverrides')) updated.add(s);
-          else item.sidecarMetadata = item.observedMetadata;
+          const observed = await writeXmp(item.sidecar, snapshot, this.settings());
+          if (recordXmpWrite(item, snapshot, observed)) updated.add(s);
           this.stats.sidecarWrites++;
         } catch (e) {
           const warning = `${item.name}: XMP not written: ${e.message}`;
@@ -624,13 +667,13 @@ class Library {
       await this.save(s);
       return { items: original.map(item => ({ id: item.id, ...metadataState(item) })) };
     }
-    for (const [i, entry] of batch.entries()) Object.assign(items[i], entry.after);
+    const patches = batch.map((entry, i) => applyMetadataOverrides(items[i], entry.after.metadataOverrides));
     s.undo.push({ batch });
     if (s.undo.length > 500) s.undo.shift();
     s.redo = [];
     this.changed(s, items);
     await this.save(s);
-    return { items: batch.map(entry => ({ id: entry.id, ...entry.after })) };
+    return { items: patches };
   }
 
   async history(sessionId, direction) {
@@ -643,10 +686,7 @@ class Library {
     const items = (action.batch || [action]).map(entry => {
       const item = this.item(sessionId, entry.id);
       const patch = direction === 'redo' ? entry.after : entry.before;
-      if (Object.hasOwn(patch, 'metadataOverrides')) {
-        Object.assign(item, patch);
-        return { id: item.id, ...patch };
-      }
+      if (Object.hasOwn(patch, 'metadataOverrides')) return applyMetadataOverrides(item, patch.metadataOverrides);
       Object.assign(item, patch, { edited: true });
       return { id: item.id, ...decision(item), edited: true };
     });
@@ -672,11 +712,7 @@ class Library {
         if (paths.get(item.sidecar) > 1) throw new Error('Multiple RAWs share this sidecar name; rename them before exporting.');
         const observed = await writeXmp(item.sidecar, item, settings);
         const current = s.byId.get(item.id);
-        if (current) {
-          current.observedMetadata = observed;
-          if (Object.hasOwn(current, 'metadataOverrides')) saveBaseline = true;
-          else current.sidecarMetadata = observed;
-        }
+        if (current && recordXmpWrite(current, item, observed)) saveBaseline = true;
         written++;
       } catch (e) { failures.push({ name: item.name, reason: e.message }); }
     });

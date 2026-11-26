@@ -70,18 +70,23 @@ test('editing a title keeps localized text, foreign qualifiers and other RDF sub
 
 test('qualified x-default text reads and writes only its RDF value', () => {
   const qualifier = "<custom:source code='01'>Keep &amp; preserve</custom:source>";
-  const entry = `<r:li xml:lang="x-default" r:parseType="Resource"><r:value>Before</r:value>${qualifier}</r:li>`;
   for (const [key, name] of [['title', 'title'], ['caption', 'description'], ['copyright', 'rights']]) {
-    const xml = `<x:xmpmeta xmlns:x="adobe:ns:meta/"><r:RDF xmlns:r="${RDF}"><r:Description xmlns:custom="urn:test" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:${name}><r:Alt>${entry}</r:Alt></dc:${name}></r:Description></r:RDF></x:xmpmeta>`;
-    const edited = updateXmp(xml, { flag: 'none', rating: 0, metadataOverrides: { [key]: 'After & <' } });
-    assert.ok(edited.includes(entry.replace('Before', 'After &amp; &lt;')), key);
-    assert.equal(state(xml).metadata[key], 'Before');
-    assert.equal(state(edited).metadata[key], 'After & <');
+    for (const wrapped of [true, false]) for (const langOnValue of [true, false]) {
+      const lang = ' xml:lang="x-default"';
+      const entry = `<r:li r:parseType="Resource"${langOnValue ? '' : lang}><r:value${langOnValue ? lang : ''}>Before</r:value>${qualifier}</r:li>`;
+      const alt = `<r:Alt><r:li xml:lang="fr">Avant</r:li>${entry}</r:Alt>`;
+      const field = wrapped ? `<dc:${name} r:parseType="Resource"><r:value>${alt}</r:value>${qualifier}</dc:${name}>` : `<dc:${name}>${alt}</dc:${name}>`;
+      const xml = `<x:xmpmeta xmlns:x="adobe:ns:meta/"><r:RDF xmlns:r="${RDF}"><r:Description xmlns:custom="urn:test" xmlns:dc="http://purl.org/dc/elements/1.1/">${field}</r:Description></r:RDF></x:xmpmeta>`;
+      const edited = updateXmp(xml, { flag: 'none', rating: 0, metadataOverrides: { [key]: 'After & <' } });
+      assert.ok(edited.includes(field.replace('Before', 'After &amp; &lt;')), key);
+      assert.equal(state(xml).metadata[key], 'Before');
+      assert.equal(state(edited).metadata[key], 'After & <');
+    }
   }
 });
 
 test('undoing a creator edit restores every creator in sequence order', async t => {
-  const { photos, library } = await setup(t);
+  const { photos, library } = await setup(t, { metadata: { creator: 'Preset' } });
   const file = path.join(photos, 'photo.xmp');
   const seq = '<r:Seq><r:li>Ana</r:li><r:li>Bo</r:li></r:Seq>';
   await fs.writeFile(file, `<x:xmpmeta xmlns:x="adobe:ns:meta/"><r:RDF xmlns:r="${RDF}"><r:Description xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:creator>${seq}</dc:creator></r:Description></r:RDF></x:xmpmeta>`);
@@ -90,6 +95,8 @@ test('undoing a creator edit restores every creator in sequence order', async t 
   await library.flushSidecars();
   assert.equal(state(await fs.readFile(file, 'utf8')).metadata.creator, 'Cleo');
   await library.history(session.id, 'undo'); await library.flushSidecars();
+  assert.deepEqual(state(await fs.readFile(file, 'utf8')).metadata.creators, ['Ana', 'Bo']);
+  await library.decide(session.id, session.items[0].id, { rating: 4 }); await library.flushSidecars();
   const creator = parse(await fs.readFile(file, 'utf8')).getElementsByTagNameNS('http://purl.org/dc/elements/1.1/', 'creator')[0];
   assert.deepEqual(Array.from(creator.getElementsByTagNameNS(RDF, 'li'), li => li.textContent), ['Ana', 'Bo']);
 });
@@ -379,4 +386,34 @@ for (const removable of [false, true]) test(`external XMP changes merge field by
   const next = new Library(data, { settings }), reopened = await next.scan(photos, false, { removable });
   await next.exportXmp(reopened.id);
   assert.deepEqual(state(await fs.readFile(file, 'utf8')).metadata, { creator: 'External credit', title: 'Revised title', caption: 'External caption' });
+});
+
+test('a rating change on a card preserves a pending undo until explicit export', async t => {
+  const { photos, data, library } = await setup(t);
+  const card = { removable: true }, session = await library.scan(photos, false, card);
+  const file = path.join(photos, 'photo.xmp');
+  await library.editMetadata(session.id, [session.items[0].id], { creator: 'Cleo' });
+  await library.exportXmp(session.id);
+  const exported = await fs.readFile(file, 'utf8');
+  assert.equal(state(exported).metadata.creator, 'Cleo');
+  await library.history(session.id, 'undo');
+  await library.close();
+  await fs.writeFile(file, exported.replace('xmp:Rating="0"', 'xmp:Rating="4"'));
+  const later = (Date.now() + 10000) / 1000;
+  await fs.utimes(file, later, later);
+  const fresh = new Library(data);
+  t.after(() => fresh.close());
+  let reopened;
+  for (let i = 0; i < 2; i++) {
+    reopened = await fresh.scan(photos, false, card);
+    const [item] = reopened.items;
+    assert.equal(item.rating, 4);
+    assert.equal(item.metadataOverrides?.creator ?? item.sidecarMetadata?.creator, undefined);
+    assert.equal(state(await fs.readFile(file, 'utf8')).metadata.creator, 'Cleo');
+  }
+  assert.deepEqual(await fresh.exportXmp(reopened.id), { written: 1, failures: [] });
+  const final = state(await fs.readFile(file, 'utf8'));
+  assert.equal(final.metadata?.creator, undefined);
+  assert.equal(final.metadataOverrides?.creator, undefined);
+  assert.equal(final.rating, 4);
 });

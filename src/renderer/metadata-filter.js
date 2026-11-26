@@ -11,6 +11,7 @@
     const defaults = item.captureMetadata || preset;
     const result = {};
     for (const key of textFields) result[key] = defaults[key] || base[key] || '';
+    if (item.metadataReverts?.includes('creator') && !item.captureMetadata?.creator && base.creators?.length) result.creator = base.creators[0];
     result.keywords = [...new Set([...(base.keywords || []), ...(defaults.keywords || [])])];
     return Object.assign(result, item.metadataOverrides);
   }

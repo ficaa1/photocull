@@ -15,9 +15,9 @@ class MetadataWriter {
     if (metadata.copyright || owned('copyright')) { tags['XMP-dc:Rights'] = metadata.copyright; if(tiff) tags['IFD0:Copyright'] = metadata.copyright; }
     if (metadata.title || owned('title')) { tags['XMP-dc:Title'] = metadata.title; if(tiff) tags['IFD0:XPTitle'] = metadata.title; }
     if (metadata.caption || owned('caption')) { tags['XMP-dc:Description'] = metadata.caption; if(tiff) tags['IFD0:XPComment'] = metadata.caption; }
-    const legacy = { title: ['IPTC:ObjectName'], creator: ['IPTC:By-line', 'EXIF:Artist'],
-      caption: ['IPTC:Caption-Abstract', 'EXIF:ImageDescription'], copyright: ['IPTC:CopyrightNotice', 'EXIF:Copyright'],
-      keywords: ['IPTC:Keywords'] };
+    const legacy = { title: ['IPTC:ObjectName', 'IFD0:XPTitle'], creator: ['IPTC:By-line', 'EXIF:Artist', 'IFD0:XPAuthor'],
+      caption: ['IPTC:Caption-Abstract', 'EXIF:ImageDescription', 'IFD0:XPComment'], copyright: ['IPTC:CopyrightNotice', 'EXIF:Copyright'],
+      keywords: ['IPTC:Keywords', 'IFD0:XPKeywords'] };
     for (const [field, names] of Object.entries(legacy)) {
       if (owned(field) && !metadata[field].length) for (const name of names) tags[name] = null;
     }
