@@ -140,7 +140,7 @@ impl Backend {
                     let stdin = backup_stdin.clone();
                     // A slow backup volume must not hold replies to camera requests.
                     std::thread::spawn(move || {
-                        let result = match crate::tether::transfer::rename_no_replace(&from, &to) {
+                        let result = match crate::exclusive_rename::rename_no_replace(&from, &to) {
                             Ok(()) => json!({}),
                             Err(e) => json!({
                                 "error": e.to_string(),
