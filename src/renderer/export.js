@@ -95,9 +95,9 @@
     setChoices('format', Object.fromEntries(Object.entries(FORMATS).map(([v, spec]) => [v, spec.label])));
     setChoices('space', SPACES); setChoices('resize', MODES);
     setChoices('wm-anchor', ANCHORS);
-    let imagePath = '', logoRequest, logo, logoError = '', lastText, lettering, sizeRequest;
+    let imagePath = '', logoRequest, logo, logoError = '', logoLoading = false, lastText, lettering, sizeRequest;
     function resetLogo() {
-      logoRequest = null; logo?.close(); logo = null; logoError = '';
+      logoRequest = null; logo?.close(); logo = null; logoError = ''; logoLoading = false;
     }
     function sizePreview(items) {
       const item = items.find(i => i.id === state.selected) || items[0];
@@ -129,6 +129,8 @@
     async function loadLogo(path) {
       if (logoRequest?.path !== path) resetLogo();
       const request = logoRequest = { path };
+      logoLoading = true;
+      refresh();
       try {
         const data = await api.watermarkPreview(path);
         const bitmap = await createImageBitmap(new Blob([new Uint8Array(data)], { type: 'image/png' }));
@@ -137,8 +139,9 @@
       } catch (error) {
         if (logoRequest !== request) return;
         logo?.close(); logo = null; logoError = error.message || String(error);
+      } finally {
+        if (logoRequest === request) { logoLoading = false; refresh(); }
       }
-      refresh();
     }
     function drawMark(items) {
       const enabled = $('wm-enabled').checked, image = $('wm-type').value === 'image';
@@ -153,7 +156,7 @@
       try {
         const mark = readMark();
         if (image && logoRequest?.path !== imagePath) void loadLogo(imagePath);
-        if (image && !logo) throw new Error(logoError || 'Loading PNG…');
+        if (image && (!logo || logoLoading)) throw new Error(logoError || 'Checking PNG…');
         if (!image && lastText !== mark.text) { lettering = textImage(mark.text, 512); lastText = mark.text; }
         const source = image ? logo : lettering, edge = Math.min(width, height), pad = Math.round(mark.padding * edge / 100);
         const factor = Math.min(mark.scale * edge / (100 * source.width), (height - 2 * pad) / source.height);
@@ -301,7 +304,10 @@
       if (dialog.open && !running && $('wm-enabled').checked && $('wm-type').value === 'image' && imagePath) void loadLogo(imagePath);
     }
     function controlsChanged(event) {
-      if (event.target.id.startsWith('image-export-wm-')) {
+      const target = event.target;
+      if (event.type === 'change' && (target.tagName === 'SELECT' || target.type === 'checkbox')) {
+        revalidateLogo();
+      } else if (event.type === 'input' && dialog.open && !running && $('wm-enabled').checked && $('wm-type').value === 'image' && imagePath) {
         clearTimeout(logoTimer); logoTimer = setTimeout(revalidateLogo, 150);
       }
       refresh();
@@ -319,6 +325,10 @@
       if (running || $('start').disabled || state.busy) return;
       let cleanupItems=null;
       let o; try { o = read(); } catch (e) { $('status').textContent = (e.message || String(e)); return; }
+      if (o.watermark.enabled && o.watermark.type === 'image' && imagePath) {
+        await loadLogo(imagePath);
+        if (!logo) return;
+      }
       snapshot = scoped().map(i => ({ ...i })); session = state.session.id; running = true; cancelRequested = false; state.busy = true;
       $('results').hidden = true; $('reveal').hidden = true; $('status').textContent = 'Checking names and destinations…'; $('cancel').disabled = false;
       dialog.querySelectorAll('input,select,button').forEach(el => { el.disabled = true; }); $('cancel').disabled = false; refresh();

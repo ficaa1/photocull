@@ -146,7 +146,17 @@ PhotoCullExport.init = context => {
     await page.locator('#image-export').click();
     await waitForLogo([0, 255, 0]);
     await fs.unlink(logo);
+    await page.locator('#image-export-format').selectOption('jpeg');
+    await page.waitForFunction(() => document.querySelector('#image-export-wm-status').textContent.includes('ENOENT'));
+    await waitForLogo([73, 78, 81]);
+    assert.ok(await page.locator('#image-export-start').isDisabled());
+    await writeLogo('#00ff00');
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await waitForLogo([0, 255, 0]);
+    assert.equal(await page.locator('#image-export-start').isDisabled(), false);
+    await fs.unlink(logo);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    assert.ok(await page.locator('#image-export-start').isDisabled());
     await page.waitForFunction(() => document.querySelector('#image-export-wm-status').textContent.includes('ENOENT'));
     await waitForLogo([73, 78, 81]);
     assert.ok(await page.locator('#image-export-start').isDisabled());

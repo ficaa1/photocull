@@ -214,6 +214,11 @@ async function execute(plan, persist) {
       m.temp = path.join(dirs.get(parent).dir, String(i));
       m.recall = m.temp + '-rollback';
     }
+    for (const m of plan.moves) {
+      if (m.variableFileIds === undefined && dirs.has(path.dirname(m.from))) {
+        m.variableFileIds = dirs.get(path.dirname(m.from)).variableFileIds;
+      }
+    }
     for (const m of moves) {
       m.current = await checkedMove(m.from, m.temp, m.expected, async (from, to) => {
         await fs.rename(from, to);
