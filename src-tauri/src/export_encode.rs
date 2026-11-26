@@ -16,12 +16,15 @@ pub enum AvifSpeed {
 pub struct ExtraOptions {
     pub webp_lossless: bool,
     pub avif_speed: AvifSpeed,
+    #[serde(skip)]
+    pub watermark: Option<crate::watermark::Watermark>,
 }
 impl Default for ExtraOptions {
     fn default() -> Self {
         Self {
             webp_lossless: false,
             avif_speed: AvifSpeed::Faster,
+            watermark: None,
         }
     }
 }
@@ -41,24 +44,27 @@ pub fn encode_rendered(
     extra: &ExtraOptions,
     meta: Option<&lightcraft_meta::Metadata>,
 ) -> Result<Vec<u8>, String> {
-    if o.format == ExportFormat::Avif && o.effective_depth() != OutputDepth::U8 {
+    if o.effective_depth() != OutputDepth::U8 {
         if let Some(deep) = &r.deep {
-            return encode_deep_avif(deep, o, extra, meta);
+            return encode_deep(deep, o, extra, meta);
         }
     }
-    if matches!(o.format, ExportFormat::Webp | ExportFormat::Avif) {
-        return encode_pixels(&r.image, o, extra, meta);
-    }
-    lightcraft_engine::export::encode_rendered(r, o, meta)
+    encode_pixels(&r.image, o, extra, meta)
 }
 
-pub fn encode_deep_avif(
+pub fn encode_deep(
     deep: &lightcraft_pipeline::DeepImage,
     o: &ExportOptions,
     extra: &ExtraOptions,
     meta: Option<&lightcraft_meta::Metadata>,
 ) -> Result<Vec<u8>, String> {
     let mut deep = std::borrow::Cow::Borrowed(deep);
+    if let Some(mark) = &extra.watermark {
+        mark.deep(deep.to_mut());
+    }
+    if o.format != ExportFormat::Avif {
+        return lightcraft_engine::export::encode_deep(&deep, o, meta);
+    }
     if o.sharpen != lightcraft_engine::export::SharpenFor::None {
         lightcraft_engine::export::output_sharpen_deep(deep.to_mut(), o.sharpen, o.sharpen_amount);
     }
@@ -90,12 +96,15 @@ pub fn encode_pixels(
     extra: &ExtraOptions,
     meta: Option<&lightcraft_meta::Metadata>,
 ) -> Result<Vec<u8>, String> {
+    let mut img = std::borrow::Cow::Borrowed(img);
+    if let Some(mark) = &extra.watermark {
+        mark.rgba(img.to_mut());
+    }
     if !matches!(o.format, ExportFormat::Webp | ExportFormat::Avif)
         || o.format == ExportFormat::Webp && extra.webp_lossless
     {
-        return lightcraft_engine::export::encode_with_metadata(img, o, meta);
+        return lightcraft_engine::export::encode_with_metadata(&img, o, meta);
     }
-    let mut img = std::borrow::Cow::Borrowed(img);
     if o.sharpen != lightcraft_engine::export::SharpenFor::None {
         lightcraft_engine::export::output_sharpen(img.to_mut(), o.sharpen, o.sharpen_amount);
     }
@@ -176,6 +185,276 @@ fn chunk(out: &mut Vec<u8>, name: &[u8; 4], data: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn png_mark(
+        anchor: &str,
+        pixel: [u8; 4],
+        options: &ExportOptions,
+    ) -> crate::watermark::Watermark {
+        let mut src = Rgba8::new(2, 1);
+        src.data.fill(pixel);
+        let bytes = lightcraft_codecs::encode_png(
+            &lightcraft_codecs::EncodeImage::rgba8(&src),
+            &Default::default(),
+        )
+        .unwrap();
+        let settings: crate::watermark::Settings = serde_json::from_value(serde_json::json!({
+            "enabled": true, "text": "©", "textPng": bytes, "scale": 40, "padding": 10,
+            "opacity": 50, "anchor": anchor,
+        }))
+        .unwrap();
+        settings
+            .prepare(std::path::Path::new(""), options)
+            .unwrap()
+            .unwrap()
+    }
+
+    #[test]
+    fn resized_watermark_respects_every_anchor_and_png_alpha() {
+        for (anchor, left, top) in [
+            ("topLeft", 1, 1),
+            ("topCenter", 8, 1),
+            ("topRight", 15, 1),
+            ("centerLeft", 1, 4),
+            ("center", 8, 4),
+            ("centerRight", 15, 4),
+            ("bottomLeft", 1, 7),
+            ("bottomCenter", 8, 7),
+            ("bottomRight", 15, 7),
+        ] {
+            let mark = png_mark(anchor, [255, 255, 255, 128], &ExportOptions::default());
+            let mut image = Rgba8::new(20, 10);
+            image.data.fill([0, 0, 0, 255]);
+            mark.rgba(&mut image);
+            for (i, pixel) in image.data.iter().enumerate() {
+                let within =
+                    (left..left + 4).contains(&(i % 20)) && (top..top + 2).contains(&(i / 20));
+                assert_eq!(
+                    *pixel,
+                    if within {
+                        [64, 64, 64, 255]
+                    } else {
+                        [0, 0, 0, 255]
+                    },
+                    "{anchor} at {i}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn translucent_red_png_over_black_keeps_green_and_blue_zero() {
+        for (format, depth, red) in [
+            (ExportFormat::Png, 8, 64),
+            (ExportFormat::Png, 16, 64),
+            (ExportFormat::Tiff, 32, 137),
+        ] {
+            let options = ExportOptions {
+                format,
+                bit_depth: Some(depth),
+                ..Default::default()
+            };
+            let mark = png_mark("topLeft", [255, 0, 0, 128], &options);
+            let mut image = Rgba8::new(20, 10);
+            image.data.fill([0, 0, 0, 255]);
+            let rendered = Rendered {
+                histogram: lightcraft_raster::Histogram::of_srgb8(&image),
+                image,
+                deep: (depth != 8).then(|| lightcraft_pipeline::DeepImage {
+                    width: 20,
+                    height: 10,
+                    space: options.effective_space(),
+                    samples: if depth == 32 {
+                        DeepSamples::F32(vec![0.; 600])
+                    } else {
+                        DeepSamples::U16(vec![0; 600])
+                    },
+                }),
+            };
+            let extra = ExtraOptions {
+                watermark: Some(mark),
+                ..Default::default()
+            };
+            let bytes = encode_rendered(&rendered, &options, &extra, None).unwrap();
+            let pixels = lightcraft_codecs::decode(&bytes, Default::default())
+                .unwrap()
+                .to_srgb8();
+            assert_eq!(pixels.data[21], [red, 0, 0, 255], "{depth}-bit {format:?}");
+        }
+    }
+
+    #[test]
+    fn watermark_blends_at_native_precision_and_preserves_float_headroom() {
+        use lightcraft_engine::export::{DeepImage, OutputSpace};
+        for float in [false, true] {
+            let depth = if float { 32 } else { 16 };
+            let options = ExportOptions {
+                format: ExportFormat::Tiff,
+                bit_depth: Some(depth),
+                ..Default::default()
+            };
+            let mark = png_mark("topLeft", [255; 4], &options);
+            let mut image = DeepImage {
+                width: 20,
+                height: 10,
+                space: OutputSpace::Srgb,
+                samples: if float {
+                    DeepSamples::F32(vec![2.0; 600])
+                } else {
+                    DeepSamples::U16(vec![1000; 600])
+                },
+            };
+            mark.deep(&mut image);
+            let pixel = 3 * 21;
+            match image.samples {
+                DeepSamples::U16(s) => {
+                    assert_eq!(s[0], 1000);
+                    assert!((i32::from(s[pixel]) - 33268).abs() <= 1);
+                }
+                DeepSamples::F32(s) => {
+                    assert_eq!(s[0], 2.0);
+                    assert!((s[pixel] - 1.5).abs() < 0.0001);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_export_format_encodes_the_watermark_at_its_supported_depths() {
+        use lightcraft_pipeline::DeepImage;
+        use ExportFormat::*;
+        for format in [Jpeg, Png, Tiff, Jxl, Webp, Avif] {
+            for &(depth, _) in ExportOptions::bit_depths(format) {
+                let o = ExportOptions {
+                    format,
+                    bit_depth: Some(depth),
+                    quality: 95,
+                    ..Default::default()
+                };
+                let extra = ExtraOptions {
+                    watermark: Some(png_mark("topLeft", [255; 4], &o)),
+                    ..Default::default()
+                };
+                let mut image = Rgba8::new(64, 64);
+                image.data.fill([0, 0, 0, 255]);
+                let deep = (depth != 8).then(|| DeepImage {
+                    width: 64,
+                    height: 64,
+                    space: o.effective_space(),
+                    samples: if depth == 32 {
+                        DeepSamples::F32(vec![0.; 64 * 64 * 3])
+                    } else {
+                        DeepSamples::U16(vec![0; 64 * 64 * 3])
+                    },
+                });
+                let r = Rendered {
+                    histogram: lightcraft_raster::Histogram::of_srgb8(&image),
+                    image,
+                    deep,
+                };
+                let bytes = encode_rendered(&r, &o, &extra, None).unwrap();
+                if format == Avif {
+                    // AVIF is encode-only in Lightcraft.
+                    assert_eq!(&bytes[4..12], b"ftypavif");
+                    assert_ne!(
+                        bytes,
+                        encode_rendered(&r, &o, &ExtraOptions::default(), None).unwrap()
+                    );
+                    continue;
+                }
+                let decoded = lightcraft_codecs::decode(&bytes, Default::default())
+                    .unwrap()
+                    .to_srgb8();
+                assert!(
+                    decoded.data[12 * 64 + 15][0] > 100,
+                    "{format:?} {depth}-bit watermark"
+                );
+                assert!(
+                    decoded.data[40 * 64 + 40][0] < 25,
+                    "{format:?} {depth}-bit background"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn image_presets_require_a_picked_png_before_preview_and_export() {
+        use std::{
+            fs,
+            time::{SystemTime, UNIX_EPOCH},
+        };
+        let dir = std::env::temp_dir().join(format!(
+            "photocull-mark-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&dir).unwrap();
+        let file = dir.join("logo.png");
+        let mut image = Rgba8::new(2, 1);
+        image.data.fill([255; 4]);
+        let bytes = lightcraft_codecs::encode_png(
+            &lightcraft_codecs::EncodeImage::rgba8(&image),
+            &Default::default(),
+        )
+        .unwrap();
+        fs::write(&file, bytes).unwrap();
+        let file = dunce::canonicalize(file).unwrap();
+        let settings = || {
+            serde_json::from_value::<crate::watermark::Settings>(serde_json::json!({
+                "enabled": true, "type":"image", "imagePath":file
+            }))
+            .unwrap()
+        };
+        assert!(settings().prepare(&dir, &Default::default()).is_err());
+        assert!(crate::watermark::preview(&dir, file.to_str().unwrap()).is_err());
+        let path = crate::watermark::approve(&dir, &file).unwrap();
+        assert!(settings()
+            .prepare(&dir, &Default::default())
+            .unwrap()
+            .is_some());
+        assert!(crate::watermark::preview(&dir, &path)
+            .unwrap()
+            .starts_with(b"\x89PNG"));
+        fs::write(&file, b"invalid").unwrap();
+        assert!(settings().prepare(&dir, &Default::default()).is_err());
+        fs::remove_file(&file).unwrap();
+        assert!(crate::watermark::preview(&dir, &path)
+            .unwrap_err()
+            .contains("missing"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn watermark_rejects_malformed_rasters_and_renders_headless_text() {
+        let options = ExportOptions::default();
+        for png in [vec![1, 2, 3], {
+            let mut header = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+            header.extend_from_slice(&[255; 17]);
+            header
+        }] {
+            let settings: crate::watermark::Settings = serde_json::from_value(serde_json::json!({
+                "enabled":true, "text":"test", "textPng":png
+            }))
+            .unwrap();
+            assert!(settings
+                .prepare(std::path::Path::new(""), &options)
+                .is_err());
+        }
+        let settings: crate::watermark::Settings = serde_json::from_value(serde_json::json!({
+            "enabled":true, "text":"© Studio", "scale":50
+        }))
+        .unwrap();
+        let mut image = Rgba8::new(200, 100);
+        settings
+            .prepare(std::path::Path::new(""), &options)
+            .unwrap()
+            .unwrap()
+            .rgba(&mut image);
+        assert!(image.data.iter().any(|p| p[3] > 0 && p[0] == 255));
+    }
+
     #[test]
     fn lossy_webp_quality_profile_metadata_and_readback() {
         let mut img = Rgba8::new(128, 96);

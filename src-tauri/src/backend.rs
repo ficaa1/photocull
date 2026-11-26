@@ -37,10 +37,15 @@ impl From<&str> for Failure {
 
 type Reply = Result<Value, Failure>;
 
+struct Pending {
+    reply: oneshot::Sender<Reply>,
+    renaming: bool,
+}
+
 pub struct Backend {
     stdin: Arc<Mutex<Option<ChildStdin>>>,
     child: Mutex<Option<Child>>,
-    pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Reply>>>>,
+    pending: Arc<Mutex<HashMap<u64, Pending>>>,
     next_id: AtomicU64,
     /// `{ port, token, platform }` from the backend's ready line.
     pub info: Value,
@@ -88,6 +93,10 @@ impl Backend {
         // Node rejects Windows verbatim (\\?\) paths for its entry script.
         command
             .arg(dunce::simplified(&script))
+            .env(
+                "PHOTOCULL_DESKTOP_EXE",
+                std::env::current_exe().map_err(|e| e.to_string())?,
+            )
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
@@ -106,7 +115,7 @@ impl Backend {
         let stdin = Arc::new(Mutex::new(child.stdin.take()));
         let backup_stdin = stdin.clone();
         let stdout = child.stdout.take().ok_or("Backend has no stdout")?;
-        let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Reply>>>> = Arc::default();
+        let pending: Arc<Mutex<HashMap<u64, Pending>>> = Arc::default();
 
         let (ready_tx, ready_rx) = mpsc::channel::<Value>();
         let reader_pending = pending.clone();
@@ -161,14 +170,16 @@ impl Backend {
                         })
                     };
                     if let Some(tx) = reader_pending.lock().unwrap().remove(&id) {
-                        let _ = tx.send(reply);
+                        let _ = tx.reply.send(reply);
                     }
                 }
             }
             crate::logs::write("PhotoCull backend stream closed");
             // The backend exited: fail whatever is still waiting.
             for (_, tx) in reader_pending.lock().unwrap().drain() {
-                let _ = tx.send(Err("PhotoCull's backend stopped. Restart the app.".into()));
+                let _ = tx
+                    .reply
+                    .send(Err("PhotoCull's backend stopped. Restart the app.".into()));
             }
         });
 
@@ -201,7 +212,13 @@ impl Backend {
     pub async fn call_detail(&self, method: &str, params: Value) -> Reply {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().unwrap().insert(id, tx);
+        self.pending.lock().unwrap().insert(
+            id,
+            Pending {
+                reply: tx,
+                renaming: matches!(method, "batch-rename-apply" | "batch-rename-undo"),
+            },
+        );
         let line = json!({ "id": id, "method": method, "params": params }).to_string() + "\n";
         let written = match self.stdin.lock().unwrap().as_mut() {
             Some(stdin) => stdin
@@ -218,17 +235,21 @@ impl Backend {
             .unwrap_or_else(|_| Err("PhotoCull's backend stopped.".into()))
     }
 
-    /// Closing stdin asks the backend to flush pending decision and settings
-    /// writes and exit; it is killed if that takes too long.
+    /// Renames must settle before the shutdown timeout can start.
     pub fn shutdown(&self) {
         self.stdin.lock().unwrap().take();
         let Some(mut child) = self.child.lock().unwrap().take() else {
             return;
         };
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while Instant::now() < deadline {
+        let mut deadline = Instant::now() + Duration::from_secs(10);
+        loop {
             if let Ok(Some(_)) = child.try_wait() {
                 return;
+            }
+            if self.pending.lock().unwrap().values().any(|p| p.renaming) {
+                deadline = Instant::now() + Duration::from_secs(10);
+            } else if Instant::now() >= deadline {
+                break;
             }
             std::thread::sleep(Duration::from_millis(50));
         }

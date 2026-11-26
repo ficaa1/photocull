@@ -35,6 +35,7 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 pub struct Engine {
+    pub(crate) data_dir: PathBuf,
     photos: Mutex<Vec<Arc<Photo>>>,
     lens_dir: PathBuf,
     lens_db: Mutex<Option<Arc<LensDb>>>,
@@ -248,6 +249,7 @@ impl Engine {
         Engine {
             photos: Mutex::default(),
             lens_dir: data_dir.join("lensfun"),
+            data_dir,
             lens_db: Mutex::default(),
             lens_downloading: AtomicBool::new(false),
             cancel: Arc::default(),
@@ -277,7 +279,15 @@ impl Engine {
         serde_json::from_value(value).map_err(|e| e.to_string())
     }
 
-    /// The opened photo for this file, reusing the decoded one while the file and lens database are unchanged.
+    pub(crate) fn reserve_file_job(&self) -> Result<Busy<'_>, String> {
+        Busy::take(&self.busy)
+    }
+
+    pub fn clear_photo_cache(&self) {
+        lock(&self.photos).clear();
+    }
+
+    /// Reuse a decoded RAW while its file and the lens database are unchanged.
     fn photo(self: &Arc<Self>, file: &Path) -> Result<Arc<Photo>, String> {
         let (db, generation) = self.lens_db();
         let current = stamp(file)?;
@@ -459,7 +469,7 @@ fn emit_progress(app: &AppHandle, event: &str, payload: Value) {
 }
 
 /// Busy flag for the batch jobs, so only one runs at a time.
-struct Busy<'a>(&'a AtomicBool);
+pub(crate) struct Busy<'a>(&'a AtomicBool);
 impl<'a> Busy<'a> {
     fn take(flag: &'a AtomicBool) -> Result<Busy<'a>, String> {
         if flag.swap(true, Ordering::SeqCst) {
@@ -535,6 +545,7 @@ pub async fn develop_tiffs(
     if !folder.is_dir() {
         return Err("That folder does not exist.".into());
     }
+    let _busy = engine.reserve_file_job()?;
     let plan = backend
         .call(
             "develop-plan",
@@ -559,8 +570,6 @@ pub async fn develop_tiffs(
             .ok_or("Missing TIFF destination.")?;
         jobs.push((item, ctx, row));
     }
-    let busy_engine = engine.inner().clone();
-    let _busy = Busy::take(&busy_engine.busy)?;
     let ids: Vec<_> = jobs.iter().map(|(item, _, _)| item.id.clone()).collect();
     backend
         .call("handoff-prepare", json!([session, ids]))
@@ -820,7 +829,7 @@ fn encode_finished(
     extra: &crate::export_encode::ExtraOptions,
     meta: Option<&lightcraft_meta::Metadata>,
 ) -> Result<Vec<u8>, String> {
-    use lightcraft_engine::export::{encode_deep, DeepImage, DeepSamples};
+    use lightcraft_engine::export::{DeepImage, DeepSamples};
     let decoded =
         lightcraft_codecs::decode(bytes, Default::default()).map_err(|e| e.to_string())?;
     let orientation = lightcraft_geom::Orientation::from_exif(decoded.orientation);
@@ -888,10 +897,8 @@ fn encode_finished(
     };
     if o.effective_depth() == OutputDepth::U8 {
         crate::export_encode::encode_pixels(&deep.to_rgba8(), o, extra, meta)
-    } else if o.format == ExportFormat::Avif {
-        crate::export_encode::encode_deep_avif(&deep, o, extra, meta)
     } else {
-        encode_deep(&deep, o, meta)
+        crate::export_encode::encode_deep(&deep, o, extra, meta)
     }
 }
 
@@ -1028,7 +1035,15 @@ pub async fn export_photos(
             });
         }
     }
-    let extra: crate::export_encode::ExtraOptions = serde_json::from_value(options.clone())
+    let watermark: crate::watermark::Settings = serde_json::from_value(
+        options
+            .as_object_mut()
+            .ok_or("Invalid export options.")?
+            .remove("watermark")
+            .unwrap_or_else(|| json!({})),
+    )
+    .map_err(|e| format!("Invalid watermark: {e}"))?;
+    let mut extra: crate::export_encode::ExtraOptions = serde_json::from_value(options.clone())
         .map_err(|e| format!("Invalid encoder settings: {e}"))?;
     let o: ExportOptions =
         serde_json::from_value(options).map_err(|e| format!("Invalid export settings: {e}"))?;
@@ -1055,8 +1070,14 @@ pub async fn export_photos(
     {
         return Err("Invalid export size.".into());
     }
-    let mut jobs = Vec::new();
+    let _busy = engine.reserve_file_job()?;
+    let logo_file = watermark.image_source().map(Path::to_owned);
+    extra.watermark = watermark.prepare(&engine.data_dir, &o)?;
     let mut protected = Vec::new();
+    if let Some(file) = logo_file {
+        protected.push(std::fs::canonicalize(file).map_err(|_| "Choose the watermark PNG again.")?);
+    }
+    let mut jobs = Vec::new();
     let mut edited_exports = Vec::new();
     for item in items {
         let ctx = Engine::context(&backend, &session, &item.id).await?;
@@ -1087,8 +1108,6 @@ pub async fn export_photos(
     }
     let engine = engine.inner().clone();
     let total = jobs.len();
-    let busy_engine = engine.clone();
-    let _busy = Busy::take(&busy_engine.busy)?;
     engine.cancel.store(false, Ordering::SeqCst);
     let progress_app = app.clone();
     let results = blocking(move || {

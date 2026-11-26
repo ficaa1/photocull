@@ -377,6 +377,21 @@
     <pre id="export-results" hidden></pre>
   </dialog>
   <!-- Finished-image Export dialog (separate from Copy picks). -->
+  <dialog id="rename-dialog" aria-labelledby="rename-title">
+    <div class="dialog-header"><h2 id="rename-title">Batch Rename</h2><button id="rename-close" aria-label="Close batch rename">×</button></div>
+    <label class="field-row">Naming method<select id="rename-mode"><option value="template">Template</option><option value="find-replace">Find &amp; replace</option><option value="both">Template, then find &amp; replace</option></select></label>
+    <div id="rename-template-fields">
+      <label class="field-row">Template<input id="rename-template" value="{filename}" maxlength="180" spellcheck="false"></label>
+      <p class="subtle small">{filename} · {text} · {seq} · {date} · {capturedate} · {year} · {month} · {day}</p>
+      <div class="image-export-grid"><label>Custom text<input id="rename-text" maxlength="80"></label><label>Start sequence<input id="rename-start" type="number" min="1" max="999999999" value="1"></label><label>Sequence digits<input id="rename-padding" type="number" min="1" max="6" value="4"></label></div>
+    </div>
+    <div id="rename-find-fields" hidden>
+      <div class="image-export-grid"><label>Find<input id="rename-find" maxlength="200"></label><label>Replace with<input id="rename-replace" maxlength="200"></label></div>
+      <div class="inline-options"><label><input id="rename-case" type="checkbox"> Match case</label><label><input id="rename-regex" type="checkbox"> Regular expression</label></div>
+    </div>
+    <div class="rename-table"><table><thead><tr><th>Before</th><th>After</th><th>Status</th></tr></thead><tbody id="rename-rows"></tbody></table></div>
+    <div class="dialog-actions"><span id="rename-status" role="status"></span><button id="rename-apply" class="button primary" disabled>Apply rename</button></div>
+  </dialog>
   <dialog id="image-export-dialog" aria-labelledby="image-export-title">
     <div class="dialog-header"><h2 id="image-export-title">Export finished images</h2><button id="image-export-close" aria-label="Close export">×</button></div>
     <div class="field-row"><label for="image-export-preset">Preset</label><select id="image-export-preset"></select></div>
@@ -400,6 +415,17 @@
       </section>
       <section><h3>Image sizing</h3><select id="image-export-resize" aria-label="Resize mode"></select>
         <div id="image-export-size-row" class="inline-options"><label>Size <input id="image-export-size" type="number" min="0.01" max="65535" step="any" value="2048"> <span id="image-export-size-unit">px</span></label><label id="image-export-height-field">× <input id="image-export-height" type="number" min="1" max="65535" value="2048" aria-label="Height in pixels"> px</label><label><input id="image-export-enlarge" type="checkbox" checked> Don’t enlarge</label></div>
+      </section>
+      <section><h3>Watermark</h3><label><input id="image-export-wm-enabled" type="checkbox"> Add watermark</label>
+        <div id="image-export-wm-controls" hidden>
+          <div class="image-export-grid"><label>Type<select id="image-export-wm-type"><option value="text">Text</option><option value="image">PNG image</option></select></label>
+          <label>Anchor<select id="image-export-wm-anchor"></select></label></div>
+          <label id="image-export-wm-text-row" class="field-row">Text<input id="image-export-wm-text" maxlength="200" placeholder="© Studio Name"></label>
+          <div id="image-export-wm-image-row" class="inline-options" hidden><button id="image-export-wm-pick" class="button quiet" type="button">Choose PNG…</button><span id="image-export-wm-file" class="subtle small"></span></div>
+          <div class="image-export-grid"><label>Opacity (%)<input id="image-export-wm-opacity" type="number" min="5" max="100"></label><label>Width (% of short edge)<input id="image-export-wm-scale" type="number" min="2" max="50"></label><label>Padding (%)<input id="image-export-wm-padding" type="number" min="0" max="20"></label></div>
+          <canvas id="image-export-wm-preview" aria-label="Watermark placement preview"></canvas>
+          <span id="image-export-wm-status" role="status" class="subtle small"></span>
+        </div>
       </section>
       <section><h3>Output sharpening</h3><div class="image-export-grid"><label>Sharpen for<select id="image-export-sharpen"><option value="none">None</option><option value="screen">Screen</option><option value="matte">Matte paper</option><option value="glossy">Glossy paper</option></select></label><label>Amount<select id="image-export-amount"><option value="low">Low</option><option value="standard" selected>Standard</option><option value="high">High</option></select></label></div></section>
       <section><h3>Metadata</h3><select id="image-export-metadata" aria-label="Metadata policy"><option value="all">All</option><option value="allExceptCamera">All except camera &amp; camera-raw info</option><option value="copyright">Copyright &amp; creator only</option><option value="none">None</option></select><label class="image-export-check"><input id="image-export-location" type="checkbox"> Remove location</label><p id="image-export-metadata-note" class="subtle small"></p></section>

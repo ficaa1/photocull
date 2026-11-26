@@ -6,7 +6,13 @@ async function main() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'photocull-image-export-ui-'));
   const photos = path.join(root, 'photos'), out = path.join(root, 'out'), reports = path.resolve(process.argv[2] || 'artifacts/image-export');
   await fs.mkdir(photos); await fs.mkdir(out); await fs.mkdir(reports, { recursive: true });
-  for (const name of ['a.jpg', 'b.jpg']) await sharp({ create: { width: 96, height: 64, channels: 3, background: '#456789' } }).jpeg().toFile(path.join(photos, name));
+  const header = path.join(photos, 'a.jpg'), embedded = path.join(photos, 'b.jpg');
+  const jpeg = (width, height, file) => sharp({ create: { width, height, channels: 3, background: '#456789' } }).jpeg().toFile(file);
+  await jpeg(16, 16, header); await jpeg(96, 64, embedded);
+  const exif = new (require('exiftool-vendored').ExifTool)();
+  try { await exif.write(header, { 'Orientation#': 6 }, { writeArgs: ['-overwrite_original', '-ThumbnailImage<=' + embedded] }); }
+  finally { await exif.end(); }
+  await fs.rename(header, path.join(photos, 'a.ARW'));
   const app = await launch({ env: { ...process.env, PHOTOCULL_DATA_DIR: path.join(root, 'state') } });
   const page = await app.firstWindow(), errors = [];
   page.on('pageerror', e => errors.push(e.message));
@@ -16,7 +22,9 @@ async function main() {
 PhotoCullExport.init = context => {
   let progress, finish;
   window.exportCalls = [];
-  return realExportInit({ ...context, api: { ...context.api, canDevelop: true,
+  return realExportInit({ ...context, api: { ...context.api, canDevelop: true, desktop: true,
+    pickWatermarkImage: async () => '/logos/studio.png',
+    watermarkPreview: () => window.readLogo(),
     pickFolder: async () => ${JSON.stringify(out)},
     onExportProgress: callback => { progress = callback; },
     exportPhotos: async (...args) => {
@@ -28,10 +36,17 @@ PhotoCullExport.init = context => {
     developCancel: async () => { finish?.(); }, revealDestination: async () => { window.revealed = true; },
   } });
 };` }));
+    const logo = path.join(root, 'studio.png');
+    const writeLogo = color => sharp({ create: { width: 2, height: 2, channels: 4, background: color } }).png().toFile(logo);
+    await page.exposeFunction('readLogo', async () => Array.from(await fs.readFile(logo)));
     await page.reload();
+    await page.evaluate(() => photocull.settings({ rawRendering: 'off' }));
     await page.evaluate(folder => window.loadTestFolder(folder, false), photos);
     await page.keyboard.press('Control+a'); await page.keyboard.press('p');
     await page.waitForFunction(() => document.querySelector('#count-pick').textContent === '2');
+    await page.locator('.film-card[aria-label="a.ARW"]').click();
+    const size = await page.evaluate(async () => (await photocull.previewStatus(state.session.id, state.selected, 'preview')).size);
+    assert.equal(size, null);
     await page.keyboard.press('Control+Shift+E');
     await page.locator('#image-export-dialog').waitFor({ state: 'visible' });
     assert.match(await page.locator('#image-export-counts').innerText(), /2 photos/);
@@ -42,6 +57,12 @@ PhotoCullExport.init = context => {
     await page.locator('#image-export-space').selectOption('displayP3');
     await page.locator('#image-export-resize').selectOption('widthHeight');
     await page.locator('#image-export-size').fill('1200'); await page.locator('#image-export-height').fill('800');
+    await page.locator('#image-export-wm-enabled').check();
+    await page.locator('#image-export-wm-text').fill('© Studio 東京');
+    await page.waitForFunction(() => {
+      const canvas = document.querySelector('#image-export-wm-preview');
+      return canvas.width * 3 === canvas.height * 2;
+    }, null, { timeout: 3000 });
     await page.locator('#image-export-sharpen').selectOption('screen');
     await page.locator('#image-export-location').check();
     await page.waitForFunction(() => document.querySelector('#image-export-name-preview').textContent.endsWith('.jxl'));
@@ -52,6 +73,8 @@ PhotoCullExport.init = context => {
     await page.waitForFunction(()=>!state.busy);assert.equal(await page.locator('#handoff-cleanup').isDisabled(),false);
     const calls = await page.evaluate(() => window.exportCalls);
     assert.equal(calls[0][1].length, 2); assert.equal(calls[0][2].jxlLossless, true); assert.equal(calls[0][2].bitDepth, 16);
+    assert.deepEqual(calls[0][2].watermark.textPng.slice(0,8), [137,80,78,71,13,10,26,10]);
+    assert.equal(await page.evaluate(() => state.settings.exportOptions.watermark.textPng), undefined);
     assert.deepEqual(calls[0][2].resize, { mode: 'widthHeight', value: 1200, height: 800, dontEnlarge: true });
     assert.equal(calls[0][2].sharpen, 'screen'); assert.equal(calls[0][2].removeLocation, true);
     await page.locator('#image-export-reveal').click(); assert.equal(await page.evaluate(() => window.revealed), true);
@@ -80,6 +103,7 @@ PhotoCullExport.init = context => {
     assert.equal(await page.locator('#image-export-size').inputValue(),'2048');assert.equal(await page.locator('#image-export-sharpen').inputValue(),'screen');
     await page.locator('#image-export-preset-reset').click();
     await page.locator('#image-export-preset').selectOption(presetId);
+    assert.equal(await page.locator('#image-export-wm-text').inputValue(),'© Studio 東京');
     assert.equal(await page.locator('#image-export-quality').inputValue(),'76');assert.equal(await page.locator('#image-export-subfolder').inputValue(),'Web');
     assert.equal(await page.locator('#image-export-format').inputValue(),'webp');
     await page.locator('#image-export-subfolder').fill('');
@@ -97,6 +121,45 @@ PhotoCullExport.init = context => {
     await page.screenshot({ path: path.join(reports, 'dialog-cancelled.png') });
     await page.evaluate(() => { window.waitForCancel = false; window.stringError = true; }); await page.locator('#image-export-start').click();
     await page.waitForFunction(() => document.querySelector('#image-export-status').textContent === 'Native export failed.');
+    await page.locator('#image-export-wm-type').selectOption('image');
+    await page.locator('#image-export-wm-opacity').fill('100');
+    await page.locator('#image-export-wm-anchor').selectOption('topLeft');
+    await page.locator('#image-export-wm-padding').fill('0');
+    const waitForLogo = rgb => page.waitForFunction(rgb => {
+      const canvas = document.querySelector('#image-export-wm-preview');
+      return Array.from(canvas.getContext('2d').getImageData(1, 1, 1, 1).data).slice(0, 3).join() === rgb;
+    }, rgb.join(), { timeout: 3000 });
+    await writeLogo('#ff0000');
+    await page.locator('#image-export-wm-pick').click();
+    await waitForLogo([255, 0, 0]);
+    await writeLogo('#0000ff');
+    await page.locator('#image-export-wm-pick').click();
+    await waitForLogo([0, 0, 255]);
+    await writeLogo('#ff00ff');
+    await page.locator('#image-export-wm-scale').fill('25');
+    await waitForLogo([255, 0, 255]);
+    await page.evaluate(() => { window.stringError = false; window.failSecond = false; });
+    await page.locator('#image-export-start').click();
+    await page.waitForFunction(() => document.querySelector('#image-export-status').textContent.startsWith('2 exported'));
+    await page.locator('#image-export-close').click();
+    await writeLogo('#00ff00');
+    await page.locator('#image-export').click();
+    await waitForLogo([0, 255, 0]);
+    await fs.unlink(logo);
+    await page.locator('#image-export-format').selectOption('jpeg');
+    await page.waitForFunction(() => document.querySelector('#image-export-wm-status').textContent.includes('ENOENT'));
+    await waitForLogo([73, 78, 81]);
+    assert.ok(await page.locator('#image-export-start').isDisabled());
+    await writeLogo('#00ff00');
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await waitForLogo([0, 255, 0]);
+    assert.equal(await page.locator('#image-export-start').isDisabled(), false);
+    await fs.unlink(logo);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    assert.ok(await page.locator('#image-export-start').isDisabled());
+    await page.waitForFunction(() => document.querySelector('#image-export-wm-status').textContent.includes('ENOENT'));
+    await waitForLogo([73, 78, 81]);
+    assert.ok(await page.locator('#image-export-start').isDisabled());
     await page.locator('#image-export-close').click(); await page.locator('#export').click();
     assert.equal(await page.locator('#export-dialog').isVisible(), true);
     assert.deepEqual(errors, []);

@@ -1268,3 +1268,14 @@ body:not(.tether-active) #tether-dock, body:not(.tether-active) #tether-stage-ba
 .slide-idle #slide-hud:not(:has(:focus-visible)) { opacity: 0; pointer-events: none; }
 @media (max-width: 560px) { .sheet-body { grid-template-columns: 1fr; } .sheet-proof { width: 130px; justify-self: center; } }
 @media (prefers-reduced-motion: reduce) { #slide-hud { transition: none; } #contact-sheet-dialog { animation: none; } }
+
+#rename-dialog { width: min(660px, 90vw); }
+#rename-dialog .image-export-grid, #image-export-wm-controls > * { margin-block: 8px; }
+.rename-table { margin-block: 14px; max-height: 35vh; overflow: auto; border: 1px solid var(--line); }
+.rename-table table { width: 100%; border-collapse: collapse; font-size: var(--fs-m); }
+.rename-table :is(th, td) { text-align: left; padding: 6px 10px; overflow-wrap: anywhere; }
+.rename-table th { position: sticky; top: 0; background: var(--raised); }
+.rename-error, #rename-status { white-space: pre-line; overflow-wrap: anywhere; user-select: text; }
+.rename-table tr.invalid td:last-child, #rename-status, #image-export-wm-status { color: var(--danger); }
+#toast button { margin-inline-start: 10px; }
+#image-export-wm-preview { max-width: 100%; max-height: 160px; margin-inline: auto; display: block; background: var(--surface); }

@@ -92,11 +92,15 @@ const developView = PhotoCullDevelop.init({ api, selection, toast, status: setSt
 
 // The open Del / Shift+Del confirmation, if any: { ids, mode, session, view }.
 let deletePrompt = null;
-function toast(message) {
+function toast(message, action) {
   const notice = $('toast'), settings = $('settings-dialog');
   const surface = settings.open ? settings : document.body;
   if (notice.parentNode !== surface) surface.append(notice);
   notice.textContent = message; notice.hidden = false;
+  if (action) {
+    const button = document.createElement('button');
+    button.className = 'button quiet'; button.textContent = action.label; button.onclick = action.run; notice.append(button);
+  }
   clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 5500);
 }
 function initUpdater({ api, $, toast, getTether, confirmInstall, isBusy, setBusy }) {
@@ -294,20 +298,25 @@ async function openFolder() {
 
 function loadSession(session) {
   if(state.mode==='compare')state.mode=stageMode();
+  clearTimeout(metadataTimer);
   cancelCulling();culling.metadata.clear();culling.jobs.clear();culling.scores.clear();culling.expanded.clear();culling.bursts=[];culling.byId.clear();
-  state.session = session; state.selected = session.items[0]?.id ?? null;
-  state.proposals = []; state.proposalsBusy = false; state.proposalsLoading = !api.server; state.proposalWarning = ''; proposalSignature = '';
+  state.session = session; state.selected = session?.items[0]?.id ?? null;
+  state.proposals = []; state.proposalsBusy = false; state.proposalsLoading = !!session && !api.server; state.proposalWarning = ''; proposalSignature = '';
   resetSelection();
   state.showOriginal = false; clearFilters(); closeMetadataFilters(); state.saveError = false; loupe.reset();
   $('grid').scrollTop = 0;
-  const folderName = session.folder.split(/[\\/]/).filter(Boolean).pop();
-  $('folder-name').textContent = folderName; $('folder-name').title = session.folder;
-  $('folder-detail').textContent = `${session.items.length} photos`;
-  $('breadcrumb').textContent = session.folder;
-  $('breadcrumb').title = session.folder;
-  $('export').disabled = !session.items.length;
-  gridNodes.clear(); filmNodes.clear(); $('grid-content').replaceChildren();
+  const folder = session?.folder || '';
+  $('folder-name').textContent = folder.split(/[\\/]/).filter(Boolean).pop() || folder || 'No folder open';
+  $('folder-name').title = folder;
+  $('folder-detail').textContent = session ? `${session.items.length} photos` : '';
+  $('breadcrumb').textContent = folder; $('breadcrumb').title = folder;
+  $('export').disabled = !session?.items.length;
+  gridNodes.clear(); filmNodes.clear(); $('grid-content').replaceChildren(); $('filmstrip').replaceChildren();
+  if (!session) {
+    $('review-image').removeAttribute('src'); $('navigator-image').removeAttribute('src');
+  }
   survey?.unpin(); render(); renderDevices(); tether?.sessionLoaded(session);
+  if (!session) { setStatus('Ready'); return; }
   setStatus('Saved');void analyzeCulling();
   if (session.warnings.length) toast(`${session.warnings.length} file or sidecar warning(s): ${session.warnings[0]}`);
   const missingHandoffs = session.items.filter(i => i.handoffMissing).length;
@@ -1202,7 +1211,7 @@ for (const direction of ['left','right','up','down']) for (const extend of [fals
 for (const [id,action] of Object.entries({'zoom-in':'zoom-in','zoom-out':'zoom-out',fit:'fit','zoom-toggle':'toggle',pan:'space'})) commandActions[id] = event => state.mode==='compare' ? survey.zoomAction(action) : loupe.handleKey(event, action);
 let recentCommands = [], panKey = null;
 // The server offers culling only: no Develop, external editors, export, camera cards or local files.
-const DESKTOP_COMMANDS = new Set(['export', 'edit', 'configure-editors', 'view-develop', 'backup', 'treat-card', 'diagnostics', 'logs']);
+const DESKTOP_COMMANDS = new Set(['batch-rename', 'batch-rename-undo', 'export', 'edit', 'configure-editors', 'view-develop', 'backup', 'treat-card', 'diagnostics', 'logs']);
 function offered(command) {
   if (command.desktopOnly) return api.desktop;
   return !api.server || !DESKTOP_COMMANDS.has(command.id) && !command.desktop && command.context.some(mode => mode !== 'develop');
@@ -1643,6 +1652,13 @@ function renderEditorActions() {
   const menu = $('external-editor-list'), signature = JSON.stringify(state.settings.editors?.map(e=>[e.id,e.name]));
   if(menu.dataset.editors!==signature){menu.dataset.editors=signature;menu.replaceChildren(...(state.settings.editors || []).map(e=>{const item=menuItem(`Edit in ${e.name}…`,()=>developView.openBatch(e.id));item.dataset.editor=e.id;return item;}),menuSeparator(),menuItem('Configure editors…',()=>openSettings('editors'),'configure-editors'));}
   for(const item of menu.querySelectorAll('[data-editor]'))item.disabled=$('edit-external').disabled;
+  if ($('batch-rename')) {
+    const reason = state.session?.removable ? 'Unavailable on camera cards' : '';
+    $('batch-rename').textContent = reason ? 'Batch Rename… (camera card)' : 'Batch Rename…';
+    $('batch-rename').title = reason;
+    $('batch-rename').disabled = !!reason || busy || !state.session?.items.length || !!tether?.active();
+    $('batch-rename-undo').disabled = !!reason || busy || !state.session?.renameUndo || !!tether?.active();
+  }
   if($('treat-card'))$('treat-card').disabled=!canTreatCard();
   $('handoff-cleanup').disabled = !state.session || busy;
   const usageKey = state.session ? `${state.session.id}:${state.session.items.map(i=>i.developRevision || 0).join(',')}` : '';
@@ -1764,7 +1780,8 @@ function drawPalette() {
   paletteIndex=Math.min(paletteIndex,Math.max(0,paletteRows.length-1));
   $('command-results').replaceChildren(...paletteRows.map((row,index)=>{
     const el=workspaceNode('div',null,{id:'command-option-'+index,role:'option','aria-selected':String(index===paletteIndex),'aria-disabled':String(!!row.disabled),class:'command-option'});
-    el.append(workspaceNode('span',`${row.title} · ${row.category}${!query&&recentCommands.includes(row.id)?' · recent':''}`),workspaceNode('kbd',row.shortcuts?shortcutLabel(row):''));
+    const detail = row.id === 'batch-rename' && state.session?.removable ? 'Unavailable on camera cards' : row.category;
+    el.append(workspaceNode('span',`${row.title} · ${detail}${!query&&recentCommands.includes(row.id)?' · recent':''}`),workspaceNode('kbd',row.shortcuts?shortcutLabel(row):''));
     el.onmousedown=e=>e.preventDefault();el.onclick=()=>runPalette(index);return el;
   }));
   if(paletteRows.length)$('command-query').setAttribute('aria-activedescendant','command-option-'+paletteIndex);else $('command-query').removeAttribute('aria-activedescendant');
@@ -1904,7 +1921,86 @@ function canTreatCard() {return !!state.session&&!state.session.removable;}
 async function treatCard(){if(!state.session)return toast('Open a folder first.');if(!canTreatCard())return toast('This session is already a camera card.');receiveDevices(await api.manualCard(state.session.folder));state.session.removable=true;renderEditorActions();toast('Folder is now treated as a camera card.');}
 function deviceBackupRow(device){const row=workspaceNode('div',null,{class:'device-backup'}),status=cardStatuses.get(device.root) || device.backup;row.append(workspaceButton('Back up card…',()=>openBackup(device.root)));if(status){row.append(workspaceNode('p',backupStatusText(status),{class:status.safe?'backup-safe':'backup-pending'}));if(status.missing.length){const detail=workspaceNode('details');detail.append(workspaceNode('summary','Files needing backup'),workspaceNode('pre',status.missing.map(f=>`${f.name}: ${f.reason}`).join('\n')));row.append(detail);}}return row;}
 // Add discoverable entry points alongside the existing folder controls.
+const renameDialog = $('rename-dialog');
+let renameSelection, renameGeneration = 0, renameTimer, renameRunning = false;
+function renameConfig() {
+  return { mode: $('rename-mode').value, template: $('rename-template').value, text: $('rename-text').value,
+    start: $('rename-start').valueAsNumber, padding: $('rename-padding').valueAsNumber,
+    find: $('rename-find').value, replace: $('rename-replace').value, caseSensitive: $('rename-case').checked, useRegex: $('rename-regex').checked };
+}
+function previewRename(message = '') {
+  const generation = ++renameGeneration;
+  clearTimeout(renameTimer);
+  $('rename-apply').disabled = true; $('rename-status').textContent = message;
+  $('rename-template-fields').hidden = $('rename-mode').value === 'find-replace';
+  $('rename-find-fields').hidden = $('rename-mode').value === 'template';
+  renameTimer = setTimeout(async () => {
+    try {
+      const result = await api.batchRenamePreview(renameSelection.session, renameSelection.ids, renameConfig());
+      if (generation !== renameGeneration || !renameDialog.open) return;
+      const fragment = document.createDocumentFragment();
+      for (const r of result.rows) {
+        const tr = document.createElement('tr'); tr.classList.toggle('invalid', !!r.error);
+        for (const value of [r.before, r.after, r.error || (r.unchanged ? 'Unchanged' : '')]) {
+          const td = document.createElement('td'); td.textContent = value; tr.append(td);
+        }
+        fragment.append(tr);
+      }
+      $('rename-rows').replaceChildren(fragment);
+      renameSelection.signature = result.signature;
+      $('rename-apply').disabled = !result.valid;
+    } catch (error) { if (generation === renameGeneration) $('rename-status').textContent = message || error.message || String(error); }
+  }, 100);
+}
+function openBatchRename() {
+  if (workspaceBusy() || !state.session || state.session.removable) return;
+  renameSelection = { session: state.session.id, ids: selection().map(i => i.id) };
+  $('rename-rows').replaceChildren(); renameDialog.showModal(); previewRename();
+}
+async function runBatchRename(undo, session) {
+  if (workspaceBusy() || state.session?.id !== session || renameRunning) return;
+  renameRunning = true; setBusy(true);
+  for (const control of renameDialog.querySelectorAll('button, select, input')) control.disabled = true;
+  try {
+    const result = undo ? await api.batchRenameUndo(session) : await api.batchRenameApply(session, renameSelection.ids, { ...renameConfig(), signature: renameSelection.signature });
+    if (state.session?.id !== session) return;
+    state.session.renameUndo = result.canUndo;
+    for (const item of result.items) {
+      gridNodes.get(item.id)?.remove(); gridNodes.delete(item.id); filmNodes.delete(item.id);
+    }
+    const changed = new Map(result.items.map(item => [item.id, item]));
+    replaceTetherLibrary({ ...state.session, items: state.session.items.map(i => changed.get(i.id) || i)
+      .sort((a,b) => nameOrder.compare(a.name, b.name)) });
+    renameDialog.close();
+    toast(undo ? 'Original filenames restored.' : 'Batch rename complete.', undo ? null : { label: 'Undo', run: () => runBatchRename(true, session) });
+  } catch (error) {
+    const message = error.message || String(error);
+    const closed = error.detail?.sessionClosed === true;
+    if (closed && state.session?.id === session) {
+      renameDialog.close(); clearTimeout(renameTimer); renameGeneration++; renameSelection = null;
+      loadSession(null);
+    }
+    if (undo || closed) {
+      const title = closed ? 'Batch rename recovery' : 'Undo batch rename';
+      const report = workspaceNode('dialog', null, { 'aria-label': title });
+      report.append(workspaceNode('h2', title), workspaceNode('p', message, { class: 'rename-error' }),
+        workspaceButton('Close', () => report.close()));
+      report.onclose = () => report.remove();
+      document.body.append(report); report.showModal();
+    } else previewRename(message);
+  } finally {
+    renameRunning = false; setBusy(false);
+    for (const control of renameDialog.querySelectorAll('button, select, input')) control.disabled = false;
+    $('rename-apply').disabled = true;
+  }
+}
+renameDialog.oninput = () => previewRename();
+renameDialog.oncancel = e => { if (renameRunning) e.preventDefault(); };
+$('rename-close').onclick = () => renameDialog.close();
+$('rename-apply').onclick = () => runBatchRename(false, renameSelection.session);
 $('source-menu').append(menuItem('Open folder…',openFolder),menuSeparator(),menuItem('Back up card or folder…',()=>openBackup(),'backup-open'),menuItem('Treat folder as card',treatCard,'treat-card'));
+if (!api.server) $('source-menu').append(menuSeparator(), menuItem('Batch Rename…', openBatchRename, 'batch-rename'),
+  menuItem('Undo Last Batch Rename', () => runBatchRename(true, state.session?.id), 'batch-rename-undo'));
 bindMenu($('source-menu-button'),$('source-menu'));
 const verifyLabel=workspaceNode('label',null,{class:'toggle-row'});verifyLabel.innerHTML='<input id="copy-verify" type="checkbox"> Verify copied files (SHA-256)';$('copy-naming').before(verifyLabel);
 

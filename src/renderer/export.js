@@ -30,13 +30,41 @@
     if (!Number.isFinite(n) || n < min || n > max || integer && !Number.isInteger(n)) throw new Error(`${label} must be ${min}–${max}.`);
     return n;
   }
+  const ANCHORS = { topLeft: 'Top left', topCenter: 'Top center', topRight: 'Top right', centerLeft: 'Center left',
+    center: 'Center', centerRight: 'Center right', bottomLeft: 'Bottom left', bottomCenter: 'Bottom center', bottomRight: 'Bottom right' };
+  function watermark(input = {}) {
+    if (!input || typeof input !== 'object' || Array.isArray(input) ||
+        input.enabled !== undefined && typeof input.enabled !== 'boolean') throw new Error('Invalid watermark settings.');
+    const type = choice(input.type, ['text', 'image'], 'text', 'watermark type'), text = input.text ?? '', imagePath = input.imagePath ?? '';
+    if (typeof text !== 'string' || [...text].length > 200) throw new Error('Use up to 200 characters of watermark text.');
+    if (typeof imagePath !== 'string' || imagePath.length > 4096 || imagePath && (!/\.png$/i.test(imagePath) || /[\x00-\x1f]/.test(imagePath))) throw new Error('Choose a PNG watermark.');
+    if (input.enabled && (type === 'text' ? !text.trim() : !imagePath)) throw new Error(type === 'text' ? 'Enter watermark text.' : 'Choose a PNG watermark.');
+    return { enabled: input.enabled === true, type, text, imagePath, anchor: choice(input.anchor, Object.keys(ANCHORS), 'bottomRight', 'watermark anchor'),
+      opacity: number(input.opacity, 65, 5, 100, 'Watermark opacity'), scale: number(input.scale, 12, 2, 50, 'Watermark scale'),
+      padding: number(input.padding, 4, 0, 20, 'Watermark padding') };
+  }
+
+  function textImage(text, widthLimit) {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    ctx.font = '96px sans-serif';
+    const metrics = ctx.measureText(text);
+    const width = Math.max(1, metrics.actualBoundingBoxLeft + metrics.actualBoundingBoxRight + 4);
+    const height = Math.max(1, metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent + 4);
+    const factor = Math.min(widthLimit / width, 1024 / height);
+    canvas.width = Math.ceil(width * factor);
+    canvas.height = Math.ceil(height * factor);
+    ctx.scale(factor, factor); ctx.font = '96px sans-serif'; ctx.fillStyle = 'white';
+    ctx.fillText(text, 2 + metrics.actualBoundingBoxLeft, 2 + metrics.actualBoundingBoxAscent);
+    return canvas;
+  }
   function options(input = {}) {
     const format = choice(input.format, Object.keys(FORMATS), 'jpeg', 'format'), spec = FORMATS[format];
     const result = { format, quality: spec.quality ? number(input.quality, 90, 1, 100, 'Quality') : 90,
       bitDepth: number(input.bitDepth, spec.depths[0], 8, 32, 'Bit depth'),
       colorSpace: choice(input.colorSpace, Object.keys(SPACES), 'srgb', 'color space'),
       ppi: number(input.ppi, 240, 1, 65535, 'Resolution'),
-      resize: null, sharpen: choice(input.sharpen, ['none', 'screen', 'matte', 'glossy'], 'none', 'sharpening'),
+      watermark: watermark(input.watermark), resize: null, sharpen: choice(input.sharpen, ['none', 'screen', 'matte', 'glossy'], 'none', 'sharpening'),
       sharpenAmount: choice(input.sharpenAmount, ['low', 'standard', 'high'], 'standard', 'sharpen amount'),
       metadata: choice(input.metadata, ['all', 'allExceptCamera', 'copyright', 'none'], 'all', 'metadata policy'),
       removeLocation: input.removeLocation === true, limitKb: null,
@@ -66,6 +94,85 @@
     const setChoices = (id, values) => $(id).replaceChildren(...Object.entries(values).map(([v, label]) => opt(v, label)));
     setChoices('format', Object.fromEntries(Object.entries(FORMATS).map(([v, spec]) => [v, spec.label])));
     setChoices('space', SPACES); setChoices('resize', MODES);
+    setChoices('wm-anchor', ANCHORS);
+    let imagePath = '', logoRequest, logo, logoError = '', logoLoading = false, lastText, lettering, sizeRequest;
+    function resetLogo() {
+      logoRequest = null; logo?.close(); logo = null; logoError = ''; logoLoading = false;
+    }
+    function sizePreview(items) {
+      const item = items.find(i => i.id === state.selected) || items[0];
+      const original = $('source').value === 'raw';
+      const session = state.session?.id;
+      if (sizeRequest && sizeRequest.item === item && sizeRequest.session === session && sizeRequest.original === original) return;
+      const request = sizeRequest = { item, session, original };
+      const canvas = $('wm-preview');
+      canvas.width = canvas.height = 480;
+      if (item) api.previewStatus(session, item.id, 'preview', original).then(async ({ size }) => {
+        if (sizeRequest !== request) return;
+        if (!size && item.raw) {
+          const preview = new Image();
+          preview.src = api.imageUrl(session, item.id, 'preview', `&original=${Number(original)}&cr=${item.contentRev || 0}&d=${item.developRevision || 0}`);
+          await preview.decode();
+          size = { width: preview.naturalWidth, height: preview.naturalHeight };
+        }
+        if (sizeRequest !== request || !(size?.width > 0 && size.height > 0)) return;
+        const factor = 600 / Math.max(size.width, size.height);
+        canvas.width = Math.max(1, Math.round(size.width * factor));
+        canvas.height = Math.max(1, Math.round(size.height * factor));
+        refresh();
+      }).catch(() => {});
+    }
+    function readMark() {
+      return watermark({ enabled: $('wm-enabled').checked, type: $('wm-type').value, text: $('wm-text').value, imagePath,
+        anchor: $('wm-anchor').value, opacity: $('wm-opacity').value, scale: $('wm-scale').value, padding: $('wm-padding').value });
+    }
+    async function loadLogo(path) {
+      if (logoRequest?.path !== path) resetLogo();
+      const request = logoRequest = { path };
+      logoLoading = true;
+      refresh();
+      let ok = false;
+      try {
+        const data = await api.watermarkPreview(path);
+        const bitmap = await createImageBitmap(new Blob([new Uint8Array(data)], { type: 'image/png' }));
+        if (logoRequest !== request) { bitmap.close(); return false; }
+        logo?.close(); logo = bitmap; logoError = ''; ok = true;
+      } catch (error) {
+        if (logoRequest !== request) return false;
+        logo?.close(); logo = null; logoError = error.message || String(error);
+      } finally {
+        if (logoRequest === request) { logoLoading = false; refresh(); }
+      }
+      return ok;
+    }
+    function drawMark(items) {
+      const enabled = $('wm-enabled').checked, image = $('wm-type').value === 'image';
+      $('wm-controls').hidden = !enabled;
+      $('wm-text-row').hidden = image; $('wm-image-row').hidden = !image;
+      $('wm-pick').disabled = running || !api.desktop;
+      $('wm-file').textContent = imagePath.split(/[\\/]/).pop() || (api.desktop ? 'No PNG selected' : 'PNG selection needs the desktop app.');
+      if (!enabled) return true;
+      sizePreview(items);
+      const canvas = $('wm-preview'), ctx = canvas.getContext('2d'), { width, height } = canvas;
+      ctx.globalAlpha = 1; ctx.fillStyle = '#494e51'; ctx.fillRect(0, 0, width, height);
+      try {
+        const mark = readMark();
+        if (image && logoRequest?.path !== imagePath) void loadLogo(imagePath);
+        if (image && (!logo || logoLoading)) throw new Error(logoError || 'Checking PNG…');
+        if (!image && lastText !== mark.text) { lettering = textImage(mark.text, 512); lastText = mark.text; }
+        const source = image ? logo : lettering, edge = Math.min(width, height), pad = Math.round(mark.padding * edge / 100);
+        const factor = Math.min(mark.scale * edge / (100 * source.width), (height - 2 * pad) / source.height);
+        const w = Math.max(1, Math.round(source.width * factor)), h = Math.max(1, Math.round(source.height * factor));
+        const x = mark.anchor.endsWith('Left') ? pad : mark.anchor.endsWith('Right') ? width - w - pad : (width - w) / 2;
+        const y = mark.anchor.startsWith('top') ? pad : mark.anchor.startsWith('bottom') ? height - h - pad : (height - h) / 2;
+        ctx.globalAlpha = mark.opacity / 100; ctx.drawImage(source, x, y, w, h);
+        $('wm-status').textContent = ''; return true;
+      } catch (error) { $('wm-status').textContent = error.message; return false; }
+    }
+    $('wm-pick').onclick = async () => {
+      try { const path = await api.pickWatermarkImage(); if (path) { resetLogo(); imagePath = path; refresh(); } }
+      catch (error) { $('wm-status').textContent = error.message || String(error); }
+    };
     let presets = [], presetSaving = false;
     const presetName = () => $('preset-name').value.trim();
     const selectedPreset = () => presets.find(p => p.id === $('preset').value);
@@ -116,6 +223,9 @@
     const scoped = () => ($('scope').value === 'selection' ? selection() : picked()).filter(i => !i.trashed);
     function fill(input) {
       let o; try { o = options(input); } catch { o = options(); }
+      imagePath = o.watermark.imagePath;
+      $('wm-enabled').checked = o.watermark.enabled;
+      for (const key of ['type', 'text', 'anchor', 'opacity', 'scale', 'padding']) $('wm-' + key).value = o.watermark[key];
       $('format').value = o.format; depths(o.bitDepth);
       for (const [id, key] of Object.entries({ quality: 'quality', space: 'colorSpace', ppi: 'ppi', sharpen: 'sharpen', amount: 'sharpenAmount', metadata: 'metadata', compression: 'tiffCompression', effort: 'jxlEffort' })) $(id).value = key === 'tiffCompression' ? o[key].toLowerCase() : o[key];
       $('webp-lossless').checked = o.webpLossless; $('avif-speed').value = o.avifSpeed; $('lossless').checked = o.jxlLossless; $('progressive').checked = o.jxlProgressive; $('location').checked = o.removeLocation;
@@ -129,7 +239,7 @@
       $('depth').value = String(values.includes(Number(wanted)) ? wanted : values[0]);
     }
     function read() {
-      return options({ format: $('format').value, quality: $('quality').value, bitDepth: $('depth').value, colorSpace: $('space').value, ppi: $('ppi').value,
+      return options({ watermark: readMark(), format: $('format').value, quality: $('quality').value, bitDepth: $('depth').value, colorSpace: $('space').value, ppi: $('ppi').value,
         webpLossless: $('webp-lossless').checked, avifSpeed: $('avif-speed').value, jxlLossless: $('lossless').checked, jxlProgressive: $('progressive').checked, jxlEffort: $('effort').value, tiffCompression: $('compression').value,
         limitKb: $('limit').checked ? $('limit-kb').value : null, sharpen: $('sharpen').value, sharpenAmount: $('amount').value,
         metadata: $('metadata').value, removeLocation: $('location').checked,
@@ -163,13 +273,15 @@
       $('destination-path').textContent = destination || 'Choose folder…';
       $('destination-summary-path').textContent = destination || 'No folder chosen';
       if (document.activeElement !== $('folder')) $('folder').value = destination;
-      $('start').disabled = running || presetSaving || !items.length || !destination || !api.canDevelop || state.pendingSaves > 0 || state.deleting || state.copy.running;
+      const markValid = drawMark(items);
+      $('start').disabled = !markValid || running || presetSaving || !items.length || !destination || !api.canDevelop || state.pendingSaves > 0 || state.deleting || state.copy.running;
       $('cancel').hidden = !running; $('close').disabled = running;
       void preview();
     }
     async function open() {
       if (running || state.busy || state.copy.running || state.deleting || !state.session) return;
       try {
+        resetLogo(); sizeRequest = null;
         state.settings = await api.settings(); lastUsed = state.settings.exportOptions;
         await Promise.all(state.session.items.filter(i => i.externalEdit).map(async item => {
           const develop = await api.developGet(state.session.id, item.id); item.externalEdit = !!(develop.edited && develop.tiff);
@@ -188,7 +300,22 @@
       buildNaming('image-export', preset?.naming || state.settings.naming, preview);
     };
     $('format').onchange = () => { depths(); refresh(); };
-    dialog.addEventListener('input', refresh); dialog.addEventListener('change', refresh);
+    let logoTimer;
+    function revalidateLogo() {
+      clearTimeout(logoTimer);
+      if (dialog.open && !running && $('wm-enabled').checked && $('wm-type').value === 'image' && imagePath) void loadLogo(imagePath);
+    }
+    function controlsChanged(event) {
+      const target = event.target;
+      if (event.type === 'change' && (target.tagName === 'SELECT' || target.type === 'checkbox')) {
+        revalidateLogo();
+      } else if (event.type === 'input' && dialog.open && !running && $('wm-enabled').checked && $('wm-type').value === 'image' && imagePath) {
+        clearTimeout(logoTimer); logoTimer = setTimeout(revalidateLogo, 150);
+      }
+      refresh();
+    }
+    window.addEventListener('focus', revalidateLogo);
+    dialog.addEventListener('input', controlsChanged); dialog.addEventListener('change', controlsChanged);
     $('destination').onclick = async () => { try { destination = await api.pickFolder('Export finished images to…') || destination; refresh(); } catch (e) { $('status').textContent = (e.message || String(e)); } };
     $('folder').oninput = () => { destination = $('folder').value.trim(); refresh(); };
     $('close').onclick = () => { if (!running) dialog.close(); };
@@ -200,6 +327,10 @@
       if (running || $('start').disabled || state.busy) return;
       let cleanupItems=null;
       let o; try { o = read(); } catch (e) { $('status').textContent = (e.message || String(e)); return; }
+      if (o.watermark.enabled && o.watermark.type === 'image' && imagePath) {
+        clearTimeout(logoTimer);
+        if (!(await loadLogo(imagePath)) || !logo) return;
+      }
       snapshot = scoped().map(i => ({ ...i })); session = state.session.id; running = true; cancelRequested = false; state.busy = true;
       $('results').hidden = true; $('reveal').hidden = true; $('status').textContent = 'Checking names and destinations…'; $('cancel').disabled = false;
       dialog.querySelectorAll('input,select,button').forEach(el => { el.disabled = true; }); $('cancel').disabled = false; refresh();
@@ -216,7 +347,13 @@
         if (cancelRequested) { $('status').textContent = 'Export cancelled before writing files.'; return; }
         state.settings = await api.settings({ exportOptions: o, exportSubfolder: $('subfolder').value, exportConflict: $('conflict').value, naming: readNaming('image-export') });
         lastUsed = o; $('progress').hidden = false; $('progress').value = 0; $('progress').max = Math.max(1, items.length);
-        const result = items.length ? await api.exportPhotos(session, items, o, $('conflict').value === 'overwrite', state.settings.metadata) : { results: [] };
+        const request = { ...o };
+        if (o.watermark.enabled && o.watermark.type === 'text') {
+          const png = await new Promise(resolve => textImage(o.watermark.text, 4096).toBlob(resolve, 'image/png'));
+          if (!png) throw new Error('Could not rasterize watermark text.');
+          request.watermark = { ...o.watermark, textPng: Array.from(new Uint8Array(await png.arrayBuffer())) };
+        }
+        const result = items.length ? await api.exportPhotos(session, items, request, $('conflict').value === 'overwrite', state.settings.metadata) : { results: [] };
         if (result.cleanup?.items && state.session?.id === session) cleanupItems=result.cleanup.items;
         if (result.cleanupWarning) toast(result.cleanupWarning);
         else if (result.cleanup?.failures?.length) toast('Export succeeded; some hand-off files could not be removed. Use Clean up hand-off files to retry.');
