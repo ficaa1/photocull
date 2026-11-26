@@ -1005,8 +1005,11 @@
       $('tether-backup-enabled').checked = !!backup?.enabled;
       $('tether-backup-path').textContent = $('tether-backup-path').title = backup?.root || '';
       const badge = $('tether-backup-status');
-      badge.dataset.failed = !!(backup?.enabled && backup.failed);
-      badge.textContent = !backup?.enabled ? 'Backup off' : backup.failed ? `Backup: ${backup.failed} failed — ${backup.error}` :
+      const offline = backup?.availability === 'offline' || backup?.availability === 'wrong';
+      badge.dataset.failed = !!(backup?.enabled && (backup.failed || offline));
+      badge.textContent = !backup?.enabled ? 'Backup off' : offline ?
+        `Backup offline — ${backup.availability === 'wrong' ? 'Wrong backup drive' : 'Drive unavailable'}${backup.failed ? ` (${backup.failed} failed)` : ''}` :
+        backup.availability === 'checking' ? 'Checking backup drive…' : backup.failed ? `Backup: ${backup.failed} failed — ${backup.error}` :
         backup.pending ? `Backup: Syncing (${backup.pending} pending)` : backup.synced ? `Backup: Synced (${backup.synced})` : 'Backup ready';
       $('tether-backup-retry').hidden = !backup?.enabled || !backup.failed;
       $('tether-backup-retry').disabled = !!busy;

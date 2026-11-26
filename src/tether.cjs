@@ -4,7 +4,8 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
-const { backupState, hasAncestor, checkRoot, mirrorFile } = require('./tether-backup.cjs');
+const { hashFile } = require('./backup.cjs');
+const { backupState, hasAncestor, markRoot, checkRoot, backupDirectory, backupStem, reservedStems, availableStem, cleanPartial, mirrorFile, publishedReceipts, removeRetired } = require('./tether-backup.cjs');
 const { atomicWrite, normalizeCaptureMetadata, sidecarPaths } = require('./xmp.cjs');
 const { checkSettings } = require('./develop.cjs');
 const { TETHER, normalizeTether } = require('./preferences.cjs');
@@ -182,7 +183,7 @@ class TetherService {
   }
   async close() {
     this.closing = true;
-    clearTimeout(this.backupTimer);
+    this.stopBackupMonitor();
     await Promise.allSettled([...this.queues.values(), this.counterWrites, this.backupWork]);
   }
 
@@ -392,6 +393,7 @@ class TetherService {
         s.configRev++;
       } else s.activeDirId = identity;
       if (s.backup?.enabled) {
+        s.backup.availability = 'checking';
         this.retryMembers(draft);
         events.push(this.backupEvent(draft));
       }
@@ -402,6 +404,7 @@ class TetherService {
       return { shootId: s.shootId, session: this.library.publicSession(session), configRev: s.configRev, libraryRev: s.libraryRev, recoveries };
     });
     this.activeShoot = shoot.shootId;
+    this.startBackupMonitor();
     this.wakeBackups();
     return bound;
   }
@@ -449,28 +452,35 @@ class TetherService {
 
   async backupLocation(shootId, expectedRev, op, picked = null) {
     let destination;
-    if (op === 'choose') {
-      const { canonicalRoot: root, folderId } = await this.checkDestination(picked, null, { cameraOnly: true });
-      const primary = this.ledger(shootId).shoot;
+    const primary = this.ledger(shootId).shoot;
+    const enroll = op === 'enable' && primary.backup && !primary.backup.backupVolumeId;
+    if (op === 'choose' || enroll) {
+      const { canonicalRoot: root, folderId } = await this.checkDestination(enroll ? primary.backup.root : picked, enroll ? primary.backup.folderId : null, { cameraOnly: true });
       if (await hasAncestor(root, primary.folderId) || await hasAncestor(primary.canonicalRoot, folderId)) {
         fail('DEST_CHANGED', 'Choose a backup folder separate from the capture location.');
       }
-      destination = { root, folderId, enabled: true };
+      this.checkRev(this.ledger(shootId).shoot, expectedRev);
+      if (this.activeShoot !== shootId) fail('STALE_SESSION', 'This tethered shoot is no longer active.');
+      destination = { root, folderId, backupVolumeId: await markRoot(root, folderId), enabled: true, availability: 'online' };
     }
-    return this.tx(shootId, async (ledger, events) => {
+    const result = await this.tx(shootId, async (ledger, events) => {
       const { shoot } = ledger;
       if (shoot.closedAt || this.activeShoot !== shootId) fail('STALE_SESSION', 'This tethered shoot is no longer active.');
       this.checkRev(shoot, expectedRev);
       if (op === 'clear') shoot.backup = null;
       else {
-        if (op === 'choose') shoot.backup = destination;
+        if (destination) shoot.backup = destination;
         else if (!shoot.backup) fail('DEST_CHANGED', 'Choose a backup location first.');
         else if (op === 'enable' || op === 'disable') shoot.backup.enabled = op === 'enable';
         else if (op !== 'retry' || !shoot.backup.enabled) fail('UNSUPPORTED', 'Enable backup before retrying.');
         shoot.backup.generation = randomUUID();
+        if (op === 'enable') shoot.backup.availability = 'checking';
         for (const { backup } of Object.values(ledger.members)) {
-          if (backup && backup.status !== 'synced' && (backup.folderId !== shoot.backup.folderId || backup.destination !== shoot.backup.root)) {
-            Object.assign(backup, { destination: shoot.backup.root, folderId: shoot.backup.folderId, path: null });
+          if (!backup) continue;
+          const legacy = shoot.backup.backupVolumeId && !backup.backupVolumeId && backup.folderId === shoot.backup.folderId && backup.destination === shoot.backup.root;
+          const redirected = backup.backupVolumeId !== shoot.backup.backupVolumeId || backup.destination !== shoot.backup.root;
+          if (legacy || backup.status !== 'synced' && redirected) {
+            Object.assign(backup, { destination: shoot.backup.root, backupVolumeId: shoot.backup.backupVolumeId, status: 'pending', path: null, sidecar: null, owned: false });
           }
         }
         if (shoot.backup.enabled) this.retryMembers(ledger);
@@ -479,81 +489,156 @@ class TetherService {
       events.push(this.configEvent(ledger), this.backupEvent(ledger));
       return { configRev: shoot.configRev, backup: backupState(ledger) };
     });
+    this.startBackupMonitor();
+    return result;
   }
 
   wakeBackups() {
     if (this.closing || this.backupWork || !this.activeShoot) return;
     this.backupWork = this.drainBackups().catch(error => {
       console.warn('Tether backup: %s', error.message);
-      this.scheduleBackupCheck();
     }).finally(() => { this.backupWork = null; });
   }
 
-  scheduleBackupCheck() {
-    if (this.closing || this.backupTimer) return;
-    this.backupTimer = setTimeout(async () => {
-      this.backupTimer = null;
-      const shootId = this.activeShoot;
-      if (!shootId) return;
-      const ledger = this.ledger(shootId), config = ledger.shoot.backup;
-      if (!config?.enabled || !Object.values(ledger.members).some(m => m.backup?.unavailable || m.backup?.status === 'pending')) return;
+  stopBackupMonitor() {
+    clearTimeout(this.backupMonitor?.timer);
+    this.backupMonitor = null;
+  }
+
+  startBackupMonitor() {
+    this.stopBackupMonitor();
+    const shootId = this.activeShoot, backup = shootId && this.ledger(shootId).shoot.backup;
+    if (!backup?.enabled || this.closing) return;
+    const monitor = this.backupMonitor = { checked: 0, busy: false };
+    const probe = monitor.probe = async () => {
+      if (monitor.busy || this.backupMonitor !== monitor) return;
+      monitor.busy = true;
+      clearTimeout(monitor.timer);
       try {
-        await checkRoot(config);
-        if (this.closing) return;
-        if (Object.values(ledger.members).some(m => m.backup?.unavailable)) {
+        const availability = await checkRoot(backup).then(() => 'online', error => error.code === 'BACKUP_WRONG_DRIVE' ? 'wrong' : 'offline');
+        if (this.backupMonitor !== monitor) return;
+        const ledger = this.ledger(shootId);
+        if (availability !== ledger.shoot.backup?.availability || availability === 'online' && Object.values(ledger.members).some(m => m.backup?.unavailable)) {
           await this.tx(shootId, async (draft, events) => {
-            if (draft.shoot.closedAt || draft.shoot.backup?.generation !== config.generation) return;
-            this.retryMembers(draft, true);
+            if (this.backupMonitor !== monitor || draft.shoot.backup?.generation !== backup.generation) return;
+            draft.shoot.backup.availability = availability;
+            if (availability === 'online') this.retryMembers(draft, true);
             events.push(this.backupEvent(draft));
           });
         }
         this.wakeBackups();
-      } catch { this.scheduleBackupCheck(); }
-    }, 5000);
-    this.backupTimer.unref();
+      } catch (error) { console.warn('Backup drive check: %s', error.message); }
+      finally {
+        monitor.busy = false;
+        monitor.checked = Date.now();
+        if (this.backupMonitor === monitor) {
+          monitor.timer = setTimeout(probe, 5000);
+          monitor.timer.unref();
+        }
+      }
+    };
+    void probe();
   }
 
   async drainBackups() {
     while (!this.closing && this.activeShoot) {
-      const shootId = this.activeShoot, ledger = this.ledger(shootId), { shoot } = ledger, backup = shoot.backup;
+      const ledger = this.ledger(this.activeShoot), { shoot } = ledger, backup = shoot.backup;
       if (!backup?.enabled || shoot.closedAt) return;
-      const members = Object.values(ledger.members);
-      const member = members.find(m => m.backup?.status === 'pending');
-      if (!member) {
-        if (members.some(m => m.backup?.unavailable)) this.scheduleBackupCheck();
-        return;
+      const member = Object.values(ledger.members).find(m => m.backup?.status === 'pending');
+      if (!member) return;
+      await this.mirrorExposure(ledger, member);
+    }
+  }
+
+  async mirrorExposure(ledger, member) {
+    const { shoot } = ledger, { shootId, backup } = shoot;
+    const source = this.absolute(shoot, member.finalRelPath), relative = path.relative(shoot.canonicalRoot, source);
+    const sourceStem = member.finalRelPath.slice(0, -path.extname(source).length);
+    const family = Object.values(ledger.members).filter(m => m.exposureId === member.exposureId && m.backup &&
+      m.backup.backupVolumeId === backup.backupVolumeId && m.backup.destination === backup.root &&
+      m.finalRelPath?.slice(0, -path.extname(m.finalRelPath).length) === sourceStem);
+    const exposure = ledger.exposures[member.exposureId];
+    const plans = exposure.backupPlans || [];
+    const index = plans.findIndex(p => p.backupVolumeId === backup.backupVolumeId && p.root === backup.root && p.sourceStem === sourceStem);
+    const plan = plans[index];
+    const current = () => !this.closing && this.activeShoot === shootId && this.ledger(shootId).shoot.backup?.generation === backup.generation;
+    const checkCurrent = () => { if (!current()) throw new Error('Backup paused.'); };
+    const commit = (work, notify = true) => this.tx(shootId, async (draft, events) => {
+      if (!current() || draft.shoot.closedAt) return;
+      work(draft);
+      if (notify) events.push(this.backupEvent(draft));
+    });
+    const photos = new Map();
+    let sidecar = plan?.sidecar, prepared = new Map();
+    const assign = async suffix => {
+      const retired = [...(plan?.retired || []), ...prepared.values(), sidecar, ...family.map(m => photos.get(m.memberId) || m.backup)].filter(r => r?.owned);
+      await commit(draft => {
+        const groups = draft.exposures[member.exposureId].backupPlans ??= [];
+        groups[index < 0 ? groups.length : index] = {
+          root: backup.root, backupVolumeId: backup.backupVolumeId, sourceStem, suffix,
+          partial: plan?.partial ?? `.photocull-backup-${randomUUID()}.partial`, sidecar: null,
+          retired: retired.map(({ path, hash, ino, owned }) => ({ path, hash, ino, owned })),
+        };
+        for (const m of family) Object.assign(draft.members[m.memberId].backup, { status: 'pending', path: null, owned: false, sidecar: null });
+      });
+    };
+    try {
+      const { dir, verify } = await backupDirectory(backup, relative, checkCurrent);
+      const images = new Map();
+      for (const m of family) images.set(path.extname(m.finalRelPath), m.sha256 || m.backup.hash || (await hashFile(this.absolute(shoot, m.finalRelPath))).hash);
+      const base = path.basename(sourceStem), reserved = reservedStems(ledger, plan, sourceStem);
+      prepared = await publishedReceipts(plan, dir);
+      const previousStem = backupStem(base, plan?.suffix);
+      sidecar = prepared.get(path.join(dir, previousStem + '.xmp')) || sidecar;
+      const { stem, suffix } = await availableStem(dir, base, plan?.suffix ?? 0, images, sidecar, reserved);
+      if (!plan || plan.suffix !== suffix) return await assign(suffix);
+      if (path.basename(plan.partial) !== plan.partial) throw new Error('Invalid backup staging name.');
+      const temp = path.join(dir, plan.partial);
+      await cleanPartial(temp, verify);
+      // The receipt identifies our file if publication succeeds just before a crash.
+      const remember = receipt => commit(draft => {
+        const group = draft.exposures[member.exposureId].backupPlans[index];
+        (group.prepared ??= {})[path.extname(receipt.path)] = receipt;
+      }, false);
+      const options = { temp, verify, checkCurrent, remember, renameExclusive: this.renameExclusive };
+      for (const m of family) {
+        const file = path.join(dir, stem + path.extname(m.finalRelPath));
+        photos.set(m.memberId, await mirrorFile({ ...options, source: this.absolute(shoot, m.finalRelPath), file, hash: images.get(path.extname(m.finalRelPath)), previous: prepared.get(file) || m.backup }));
       }
-      const current = () => this.activeShoot === shootId && this.ledger(shootId).shoot.backup?.generation === backup.generation;
-      const checkCurrent = () => { if (!current() || this.closing) throw new Error('Backup paused.'); };
-      const source = this.absolute(shoot, member.finalRelPath);
-      const relative = path.relative(shoot.canonicalRoot, source);
-      const options = { backup, checkCurrent, renameExclusive: this.renameExclusive };
-      let result;
-      try {
-        await checkRoot(backup);
-        const photo = await mirrorFile({ ...options, source, relative, expectedHash: member.sha256 });
-        result = { ...photo, status: 'synced', error: null, unavailable: false };
-        await this.library.flushSidecars();
-        const sidecars = sidecarPaths(source), index = sidecars.findIndex(file => path.basename(file) === member.backup.sidecarName);
-        if (index >= 0) {
-          const stat = await fs.lstat(sidecars[index]).catch(error => { if (error.code !== 'ENOENT') throw error; });
-          if (stat?.isFile()) {
-            const sidecar = sidecarPaths(photo.path)[index];
-            result.sidecar = await mirrorFile({ ...options, source: sidecars[index], relative: path.relative(backup.root, sidecar) });
-          }
+      await this.library.flushSidecars();
+      const owner = family.find(m => m.role === 'raw' && m.backup.sidecarName) || family.find(m => m.backup.sidecarName);
+      if (owner) {
+        const xmp = sidecarPaths(this.absolute(shoot, owner.finalRelPath)).find(file => path.basename(file) === owner.backup.sidecarName);
+        const exists = xmp && await fs.lstat(xmp).catch(error => { if (error.code !== 'ENOENT') throw error; });
+        if (exists?.isFile()) sidecar = await mirrorFile({ ...options, source: xmp, file: path.join(dir, stem + '.xmp'), previous: sidecar, sidecar: true });
+      }
+      // Another writer can create a different extension while this exposure is being copied.
+      const final = await availableStem(dir, base, suffix, images, sidecar, reserved);
+      if (final.suffix !== suffix) return await assign(final.suffix);
+      for (const receipt of photos.values()) {
+        const stat = await fs.lstat(receipt.path);
+        if (!stat.isFile() || stat.ino !== receipt.ino) throw new Error('The verified backup changed before the exposure was recorded.');
+      }
+      await removeRetired(plan.retired, dir, verify);
+      await commit(draft => {
+        Object.assign(draft.exposures[member.exposureId].backupPlans[index], { sidecar, retired: [], prepared: {} });
+        for (const m of family) {
+          const entry = draft.members[m.memberId].backup;
+          if (entry.status !== 'synced') entry.attempts++;
+          Object.assign(entry, photos.get(m.memberId), { sidecar, status: 'synced', error: null, unavailable: false });
         }
-      } catch (error) {
-        if (!current() || this.closing) continue;
-        // A disconnect during the copy should retry as soon as the original folder returns.
-        const unavailable = error.code === 'BACKUP_UNAVAILABLE' || !await checkRoot(backup).then(() => true, () => false);
-        result = { ...result, status: 'failed', unavailable, error: unavailable ? 'Backup drive unavailable.' : error.message };
-      }
-      if (!current() || this.closing) continue;
-      await this.tx(shootId, async (draft, events) => {
-        if (draft.shoot.closedAt || draft.shoot.backup?.generation !== backup.generation) return;
-        const entry = draft.members[member.memberId].backup;
-        Object.assign(entry, result, { attempts: entry.attempts + 1 });
-        events.push(this.backupEvent(draft));
+      });
+    } catch (error) {
+      if (!current()) return;
+      if (error.code === 'BACKUP_COLLISION' && plan) return assign(plan.suffix + 1);
+      const driveError = ['BACKUP_UNAVAILABLE', 'BACKUP_WRONG_DRIVE'].includes(error.code) ? error : await checkRoot(backup).then(() => null, e => e);
+      await commit(draft => {
+        if (driveError) draft.shoot.backup.availability = driveError.code === 'BACKUP_WRONG_DRIVE' ? 'wrong' : 'offline';
+        for (const m of family) {
+          const entry = draft.members[m.memberId].backup;
+          if (entry.status === 'synced') continue;
+          Object.assign(entry, photos.get(m.memberId), { status: 'failed', unavailable: !!driveError, error: (driveError || error).message, attempts: entry.attempts + 1 });
+        }
       });
     }
   }
@@ -991,7 +1076,7 @@ class TetherService {
   async ingestMember(ledger, events, member, receipt = {}) {
     const shoot = ledger.shoot, exposure = ledger.exposures[member.exposureId], policy = exposure.frozenPolicy;
     if (shoot.backup?.enabled && !member.backup) {
-      member.backup = { destination: shoot.backup.root, folderId: shoot.backup.folderId, status: 'pending', path: null, hash: member.sha256, error: null, attempts: 0 };
+      member.backup = { destination: shoot.backup.root, backupVolumeId: shoot.backup.backupVolumeId, status: 'pending', path: null, hash: member.sha256, error: null, attempts: 0 };
       events.push(this.backupEvent(ledger));
     }
     const delta = await this.library.ingestCapture(shoot.session, { path: this.absolute(shoot, member.finalRelPath), shootId: shoot.shootId, exposureId: exposure.exposureId, ordinal: exposure.ordinal,
@@ -1158,7 +1243,7 @@ class TetherService {
         await this.library.flushSidecars();
         shoot.closedAt = this.now().toISOString();
         await this.releaseClaims(ledger, claim => ledger.exposures[claim.exposureId]?.status !== 'complete');
-        if (this.activeShoot === shootId) this.activeShoot = null;
+        if (this.activeShoot === shootId) { this.activeShoot = null; this.stopBackupMonitor(); }
         this.primaries.delete(shootId);
       } else fail('UNSUPPORTED', 'Unknown journal operation.', { field: 'op' });
       const pending = Object.values(ledger.members).filter(m => PENDING.has(m.status)).length;
@@ -1417,6 +1502,8 @@ class TetherService {
   async state(sessionId) {
     const ledger = [...this.ledgers.values()].find(l => l.shoot.session === sessionId && !l.shoot.closedAt);
     if (!ledger) return { session: sessionId ?? null, shootId: null };
+    const monitor = this.backupMonitor;
+    if (monitor && Date.now() - monitor.checked >= 1000) void monitor.probe();
     const { shoot } = ledger, members = Object.values(ledger.members);
     const queue = { pending: members.filter(m => PENDING.has(m.status)).length, receiving: members.filter(m => m.status === 'announced' || m.status === 'receiving').length,
       pendingPairs: Object.values(ledger.exposures).filter(e => e.status === 'availablePartial').length, held: members.filter(m => m.status === 'held').length };

@@ -450,7 +450,11 @@ async function main() {
       Object.assign(s.backup, patch);
       __camera.emit('tether-backup-changed', { shootId: s.shootId, session: s.session, backup: structuredClone(s.backup) });
     }, patch);
-    await backupProgress({ failed: 1, error: 'Drive unavailable' });
+    await backupProgress({ availability: 'offline' });
+    assert.match(await page.locator('#tether-backup-status').textContent(), /Backup offline.*Drive unavailable/);
+    await backupProgress({ availability: 'wrong' });
+    assert.match(await page.locator('#tether-backup-status').textContent(), /Wrong backup drive/);
+    await backupProgress({ availability: 'online', failed: 1, error: 'Drive unavailable' });
     assert.match(await page.locator('#tether-backup-status').textContent(), /1 failed.*Drive unavailable/);
     await page.locator('#tether-backup-retry').click();
     assert.match(await page.locator('#tether-backup-status').textContent(), /Syncing.*1 pending/);
