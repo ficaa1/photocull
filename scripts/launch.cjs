@@ -32,7 +32,7 @@ async function launch({ env = process.env, viewport = { width: 1440, height: 960
     });
     backend.once('exit', code => { clearTimeout(timer); reject(new Error(`Backend exited (${code}):\n${output}`)); });
   });
-  const executablePath = process.env.CHROMIUM_PATH || CANDIDATES.find(file => existsSync(file));
+  const executablePath = env.CHROMIUM_PATH || (env.PLAYWRIGHT_BROWSERS_PATH ? undefined : CANDIDATES.find(file => existsSync(file)));
   const options = { executablePath, headless: true, args: ['--disable-gpu'], viewport };
   const browser = dataDir ? await chromium.launchPersistentContext(path.join(dataDir, 'browser-profile'), options) : await chromium.launch(options);
   const page = dataDir ? browser.pages()[0] || await browser.newPage() : await browser.newPage({ viewport });
