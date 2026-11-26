@@ -131,17 +131,19 @@
       const request = logoRequest = { path };
       logoLoading = true;
       refresh();
+      let ok = false;
       try {
         const data = await api.watermarkPreview(path);
         const bitmap = await createImageBitmap(new Blob([new Uint8Array(data)], { type: 'image/png' }));
-        if (logoRequest !== request) { bitmap.close(); return; }
-        logo?.close(); logo = bitmap; logoError = '';
+        if (logoRequest !== request) { bitmap.close(); return false; }
+        logo?.close(); logo = bitmap; logoError = ''; ok = true;
       } catch (error) {
-        if (logoRequest !== request) return;
+        if (logoRequest !== request) return false;
         logo?.close(); logo = null; logoError = error.message || String(error);
       } finally {
         if (logoRequest === request) { logoLoading = false; refresh(); }
       }
+      return ok;
     }
     function drawMark(items) {
       const enabled = $('wm-enabled').checked, image = $('wm-type').value === 'image';
@@ -326,8 +328,8 @@
       let cleanupItems=null;
       let o; try { o = read(); } catch (e) { $('status').textContent = (e.message || String(e)); return; }
       if (o.watermark.enabled && o.watermark.type === 'image' && imagePath) {
-        await loadLogo(imagePath);
-        if (!logo) return;
+        clearTimeout(logoTimer);
+        if (!(await loadLogo(imagePath)) || !logo) return;
       }
       snapshot = scoped().map(i => ({ ...i })); session = state.session.id; running = true; cancelRequested = false; state.busy = true;
       $('results').hidden = true; $('reveal').hidden = true; $('status').textContent = 'Checking names and destinations…'; $('cancel').disabled = false;

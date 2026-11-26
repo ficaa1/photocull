@@ -457,17 +457,28 @@ test('undo restores distinct original formats that shared an unused sidecar name
 test('case-only rename on a link-less volume preserves XMP autosave and undo for an unchanged sidecar', async t => {
   const { dir, lib } = await fixture(t, ['photo.JPG', 'PHOTO.xmp']);
   const { updateXmp, readXmp } = require('../src/xmp.cjs');
-  await fs.writeFile(path.join(dir, 'PHOTO.xmp'), updateXmp('', { rating: 1, flag: 'none' }));
+  const sidecar = path.join(dir, 'PHOTO.xmp');
+  await fs.writeFile(sidecar, updateXmp('', { rating: 1, flag: 'none' }));
+  const time = new Date('2026-04-01T00:00:00Z');
+  await fs.utimes(sidecar, time, time);
   const session = await lib.scan(dir), ids = [session.items[0].id];
   t.mock.method(fs, 'link', async () => {
     throw Object.assign(new Error('Hard links unsupported'), { code: 'ENOTSUP' });
   });
   await lib.batchRename(session.id, ids, { template: 'PHOTO' }, 'apply');
+  const rename = fs.rename;
+  t.mock.method(fs, 'rename', async (from, to) => {
+    await rename(from, to);
+    if (from === sidecar) {
+      const copy = to + '.copy';
+      await fs.copyFile(to, copy); await fs.utimes(copy, time, time); await rename(copy, to);
+    }
+  });
   lib.settings = () => DEFAULTS;
   await lib.decide(session.id, ids[0], { rating: 5 });
   await lib.flushSidecars();
-  assert.equal(readXmp(await fs.readFile(path.join(dir, 'PHOTO.xmp'), 'utf8')).rating, 5);
+  assert.equal(readXmp(await fs.readFile(sidecar, 'utf8')).rating, 5);
   await lib.batchRename(session.id, ids, {}, 'undo');
-  assert.equal(readXmp(await fs.readFile(path.join(dir, 'PHOTO.xmp'), 'utf8')).rating, 5);
+  assert.equal(readXmp(await fs.readFile(sidecar, 'utf8')).rating, 5);
   assert.equal(await fs.readFile(path.join(dir, 'photo.JPG'), 'utf8'), 'photo.JPG');
 });
