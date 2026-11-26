@@ -116,6 +116,12 @@
           <div class="tether-row"><button id="tether-choose-folder" class="button quiet" type="button">Choose folder…</button><button id="tether-new-shot" class="button quiet" type="button">New shot…</button></div>
           <form id="tether-new-shot-form" class="tether-new-shot" hidden><label for="tether-new-shot-name">Shot name</label><input id="tether-new-shot-name" maxlength="80" autocomplete="off"><label class="toggle-row"><input type="checkbox" id="tether-new-shot-activate" checked> Set as Capture Folder</label><div class="tether-row"><button type="submit" class="button">Create</button><button type="button" id="tether-new-shot-cancel" class="button quiet">Cancel</button></div></form>
           <div class="field-row"><label for="tether-recent-shots">Recent shots</label><select id="tether-recent-shots"></select></div>
+          <div class="tether-backup">
+            <label class="toggle-row"><input type="checkbox" id="tether-backup-enabled"> Next Capture Backup</label>
+            <span id="tether-backup-path" class="tether-path small"></span>
+            <div class="tether-row"><button id="tether-backup-choose" class="button quiet" type="button">Backup location…</button><button id="tether-backup-clear" class="button quiet" type="button">Clear</button></div>
+            <div class="tether-row"><span id="tether-backup-status" class="small tabular" role="status"></span><button id="tether-backup-retry" class="button quiet" type="button" hidden>Retry backup</button></div>
+          </div>
           <div class="tether-disk" id="tether-disk"><div class="tether-disk-bar"><div id="tether-disk-fill"></div></div><p id="tether-disk-text" class="small tabular"></p></div>
         </div></details>
         <details class="tether-tool" id="tether-tool-naming" open><summary>Next Capture Naming</summary><div class="tether-tool-body">

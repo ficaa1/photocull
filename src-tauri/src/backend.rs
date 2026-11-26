@@ -38,7 +38,7 @@ impl From<&str> for Failure {
 type Reply = Result<Value, Failure>;
 
 pub struct Backend {
-    stdin: Mutex<Option<ChildStdin>>,
+    stdin: Arc<Mutex<Option<ChildStdin>>>,
     child: Mutex<Option<Child>>,
     pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Reply>>>>,
     next_id: AtomicU64,
@@ -103,7 +103,8 @@ impl Backend {
                 node.display()
             )
         })?;
-        let stdin = child.stdin.take();
+        let stdin = Arc::new(Mutex::new(child.stdin.take()));
+        let backup_stdin = stdin.clone();
         let stdout = child.stdout.take().ok_or("Backend has no stdout")?;
         let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Reply>>>> = Arc::default();
 
@@ -121,6 +122,26 @@ impl Backend {
                     if let Some(tx) = ready.take() {
                         let _ = tx.send(info.clone());
                     }
+                } else if let Some(rename) = message.get("backupRename") {
+                    let (Some(from), Some(to)) = (rename["from"].as_str(), rename["to"].as_str())
+                    else {
+                        continue;
+                    };
+                    let (from, to) = (PathBuf::from(from), PathBuf::from(to));
+                    let stdin = backup_stdin.clone();
+                    // A slow backup volume must not hold replies to camera requests.
+                    std::thread::spawn(move || {
+                        let result = match crate::tether::transfer::rename_no_replace(&from, &to) {
+                            Ok(()) => json!({}),
+                            Err(e) => json!({
+                                "error": e.to_string(),
+                                "code": if e.kind() == std::io::ErrorKind::AlreadyExists { "EEXIST" } else { "IO_ERROR" },
+                            }),
+                        };
+                        if let Some(input) = stdin.lock().unwrap().as_mut() {
+                            let _ = writeln!(input, "{}", json!({ "backupRenamed": result }));
+                        };
+                    });
                 } else if let Some(event) = message.get("event").and_then(Value::as_str) {
                     let _ = handle.emit(
                         event,
@@ -162,7 +183,7 @@ impl Backend {
                 )
             })?;
         Ok(Backend {
-            stdin: Mutex::new(stdin),
+            stdin,
             child: Mutex::new(Some(child)),
             pending,
             next_id: AtomicU64::new(1),

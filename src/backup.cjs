@@ -7,14 +7,17 @@ const { inside } = require('./transfer.cjs');
 const canceled = signal => { if(signal?.aborted) throw Object.assign(new Error('Backup canceled. Verified files are kept; run again to resume.'),{code:'ABORT_ERR'}); };
 async function hashFile(file, signal) {
   canceled(signal);
-  const named=await fs.lstat(file);if(!named.isFile()||named.isSymbolicLink())throw new Error('Not a regular file.');
+  const named=await fs.lstat(file);if(!named.isFile()||named.isSymbolicLink())throw Object.assign(new Error('Not a regular file.'), { code: 'FILE_CHANGED' });
   const handle=await fs.open(file,constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
   try {
-    const before=await handle.stat();if(!before.isFile()||before.dev!==named.dev||before.ino!==named.ino)throw new Error('File changed before hashing.');
+    const before=await handle.stat();if(!before.isFile()||before.dev!==named.dev||before.ino!==named.ino)throw Object.assign(new Error('File changed before hashing.'), { code: 'FILE_CHANGED' });
     const hash=createHash('sha256');
     for await(const chunk of handle.createReadStream({autoClose:false,signal,highWaterMark:1024*1024}))hash.update(chunk);
     const after=await handle.stat();
-    if(before.size!==after.size||before.mtimeMs!==after.mtimeMs)throw new Error('File changed while hashing.');
+    const current = await fs.lstat(file);
+    if (![after, current].every(stat => stat.isFile() && stat.dev === before.dev && stat.ino === before.ino && stat.size === before.size && stat.mtimeMs === before.mtimeMs)) {
+      throw Object.assign(new Error('File changed while hashing.'), { code: 'FILE_CHANGED' });
+    }
     return {hash:hash.digest('hex'),size:after.size,mtimeMs:after.mtimeMs};
   } finally {await handle.close();}
 }

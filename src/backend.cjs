@@ -109,9 +109,9 @@ async function start() {
 
   const culling = new CullingService(library,previews,() => settings.value);
   // A card inserted since the last poll still counts, so this asks the system afresh.
-  const onCard = async folder => {
+  const onCard = async (folder, { cameraOnly = false } = {}) => {
     const real = await fs.realpath(folder);
-    const within = list => list.some(device => inside(device.root, real));
+    const within = list => list.some(device => (!cameraOnly || device.camera !== false) && inside(device.root, real));
     return within(devices.devices) || within(await cards());
   };
   // Copying and deleting must not overlap: a copy could read a photo that a
@@ -121,7 +121,12 @@ async function start() {
   const recipes = new RecipeStore(settings.folder);
   await recipes.init();
   const bundles = new SettingsBundles(settings, recipes);
-  tether = new TetherService({ dataDir, library, recipes, settings: () => settings.value, presets: () => settings.presets, send, isCard: onCard,
+  let backupRename = null;
+  const renameExclusive = (from, to) => new Promise((resolve, reject) => {
+    backupRename = { resolve, reject };
+    process.stdout.write(JSON.stringify({ backupRename: { from, to } }) + '\n');
+  });
+  tether = new TetherService({ dataDir, library, recipes, settings: () => settings.value, presets: () => settings.presets, send, isCard: onCard, renameExclusive,
     dimensions: (session, id) => previews.dimensions(previewPhoto(library.item(session, id))),
     onDelta: delta => { for (const id of [...delta.upserts.map(i => i.id), ...delta.remap.map(r => r.from)]) previews.invalidatePhoto({ id }); } });
   await tether.init();
@@ -369,6 +374,7 @@ async function start() {
       'tether-check-destination': (root, folderId) => tether.checkDestination(root, folderId),
       'tether-resume-target': shootId => tether.resumeTarget(shootId),
       'tether-bind': (...args) => bindTether(args),
+      'tether-backup-location': (...args) => tether.backupLocation(...args),
       'tether-set-location': (...args) => tether.setLocation(...args),
       'tether-request': (...args) => tether.request(...args),
       'tether-accept': (...args) => tether.accept(...args),
@@ -549,13 +555,23 @@ async function start() {
     input.on('line', async line => {
       let message;
       try { message = JSON.parse(line); } catch { return; }
+      if (Object.hasOwn(message, 'backupRenamed')) {
+        const result = message.backupRenamed;
+        if (result.error) backupRename?.reject(Object.assign(new Error(result.error), { code: result.code }));
+        else backupRename?.resolve();
+        backupRename = null;
+        return;
+      }
       let reply;
       try { reply = { id: message.id, ok: true, value: await call(message.method, message.params) ?? null }; }
       catch (error) { reply = { id: message.id, ok: false, error: error.message, ...(error.detail ? { errorDetail: error.detail } : {}) }; }
       process.stdout.write(JSON.stringify(reply) + '\n');
     });
     // The shell closing stdin means it has gone away; finish pending writes and exit.
-    input.on('close', () => { void shutdown(); });
+    input.on('close', () => {
+      backupRename?.reject(new Error('Desktop session closed.'));
+      void shutdown();
+    });
   }
   if (!serverMode) devices.start();
 }

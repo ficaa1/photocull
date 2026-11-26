@@ -978,6 +978,9 @@ dialog details > summary:hover { color: var(--text); }
 .tether-checklist-tabs [role=tab] { flex: 1; height: 24px; border: 1px solid var(--line-strong); border-radius: var(--r1); background: transparent; color: var(--text-2); font-size: var(--fs-s); }
 .tether-checklist-tabs [role=tab][aria-selected=true] { background: var(--accent-bg); border-color: var(--accent-line); color: #e3eef5; }
 .tether-checklist { margin: 0; padding-left: 18px; color: var(--text-2); display: flex; flex-direction: column; gap: 4px; }
+.tether-backup { display: grid; gap: var(--s1); border-top: 1px solid var(--line); padding-top: var(--s2); }
+#tether-backup-status[data-failed="true"] { color: var(--warn); overflow-wrap: anywhere; }
+.tether-backup .tether-path:empty { display: none; }
 .tether-location { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1); }
 .tether-path { color: var(--text-2); font-size: var(--fs-s); overflow-wrap: anywhere; }
 .tether-new-shot { display: flex; flex-direction: column; gap: 6px; padding: var(--s2); background: var(--raised); border-radius: var(--r2); font-size: var(--fs-s); }

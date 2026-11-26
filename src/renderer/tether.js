@@ -204,6 +204,10 @@
       const changed = value?.shootId !== this.shoot?.shootId;
       if (changed || value?.location?.relative !== this.shoot?.location?.relative) this.resetMisfire(changed);
       this.shoot = value ? { ...value } : null;
+      const latest = this.lastBackup;
+      if (this.shoot && latest?.shootId === value.shootId && latest.session === value.session && latest.backup.rev > (value.backup?.rev ?? -1)) {
+        this.shoot.backup = latest.backup;
+      }
       if (changed) {
         this.openSeq++;
         this.telemetry.queued = this.telemetry.receiving = 0;
@@ -276,6 +280,13 @@
         Object.assign(this.shoot, { configRev: event.configRev, location: event.location, counters: event.counters });
         if (!Object.keys(this.savePatch).length) { this.shoot.config = event.config; this.composeChanged(); }
         this.render();
+      });
+      api.onTetherBackup(event => {
+        if (this.lastBackup?.shootId === event.shootId && this.lastBackup.backup.rev > event.backup.rev) return;
+        this.lastBackup = event;
+        if (this.shoot?.shootId !== event.shootId || this.shoot.session !== event.session) return;
+        this.shoot.backup = event.backup;
+        this.renderLocation();
       });
       api.onTetherLibrary(delta => this.receiveDelta(delta));
       api.onTetherConnection(event => { if (this.shoot && event.shootId && event.shootId !== this.shoot.shootId) return; this.applyConnection(event); });
@@ -569,6 +580,10 @@
       this.bindHold($('tether-af'));
       // Location
       $('tether-choose-folder').onclick = () => void this.location({ op: 'choose' });
+      $('tether-backup-choose').onclick = () => this.backupLocation('choose');
+      $('tether-backup-clear').onclick = () => this.backupLocation('clear');
+      $('tether-backup-enabled').onchange = event => this.backupLocation(event.target.checked ? 'enable' : 'disable');
+      $('tether-backup-retry').onclick = () => this.backupLocation('retry');
       $('tether-new-shot').onclick = () => this.newShot();
       $('tether-new-shot-cancel').onclick = () => { $('tether-new-shot-form').hidden = true; $('tether-new-shot').focus(); };
       $('tether-new-shot-form').onsubmit = event => { event.preventDefault(); const leaf = $('tether-new-shot-name').value.trim(); if (!leaf) return; void this.location({ op: 'create', parentRel: this.shoot?.location?.relative.split('/').slice(0, -1).join('/') || '', leaf, activate: $('tether-new-shot-activate').checked }).then(done => { if (done) $('tether-new-shot-form').hidden = true; }); };
@@ -983,6 +998,21 @@
         select.replaceChildren(blank, ...recents.slice(0, 12).map(r => { const o = el('option', null, r || '(capture root)'); o.value = r; return o; }));
         select.value = '';
       }
+      const backup = shoot?.backup, busy = !shoot || this.backupBusy;
+      $('tether-backup-choose').disabled = !!busy;
+      $('tether-backup-choose').textContent = backup?.root ? 'Change backup location…' : 'Backup location…';
+      $('tether-backup-enabled').disabled = $('tether-backup-clear').disabled = !!busy || !backup?.root;
+      $('tether-backup-enabled').checked = !!backup?.enabled;
+      $('tether-backup-path').textContent = $('tether-backup-path').title = backup?.root || '';
+      const badge = $('tether-backup-status');
+      const offline = backup?.availability === 'offline' || backup?.availability === 'wrong';
+      badge.dataset.failed = !!(backup?.enabled && (backup.failed || offline));
+      badge.textContent = !backup?.enabled ? 'Backup off' : offline ?
+        `Backup offline — ${backup.availability === 'wrong' ? 'Wrong backup drive' : 'Drive unavailable'}${backup.failed ? ` (${backup.failed} failed)` : ''}` :
+        backup.availability === 'checking' ? 'Checking backup drive…' : backup.failed ? `Backup: ${backup.failed} failed — ${backup.error}` :
+        backup.pending ? `Backup: Syncing (${backup.pending} pending)` : backup.synced ? `Backup: Synced (${backup.synced})` : 'Backup ready';
+      $('tether-backup-retry').hidden = !backup?.enabled || !backup.failed;
+      $('tether-backup-retry').disabled = !!busy;
       const space = shoot?.space, disk = $('tether-disk');
       disk.hidden = !space || !Number.isFinite(space.freeBytes);
       if (disk.hidden) return;
@@ -1380,6 +1410,23 @@
         else if (['confirmed', 'requested', 'dispatched'].includes(result?.state)) this.startRecycle();
       } catch (error) { this.host.toast(error.message); }
       finally { this.capturing = false; }
+    }
+    async backupLocation(op) {
+      if (!this.shoot || this.backupBusy) return;
+      const { shootId } = this.shoot;
+      this.backupBusy = true;
+      this.renderLocation();
+      try {
+        await this.flush();
+        if (this.shoot?.shootId !== shootId) return;
+        const result = await this.api.tetherBackupLocation({ shootId, expectedConfigRev: this.shoot.configRev, op });
+        if (result && this.shoot?.shootId === shootId && result.configRev > this.shoot.configRev) {
+          Object.assign(this.shoot, result);
+        }
+      } catch (error) {
+        this.host.toast(error.message);
+        if (error.code === 'STALE_REV') await this.refreshState();
+      } finally { this.backupBusy = false; this.renderLocation(); }
     }
     async location(args) {
       if (!this.shoot) return false;
