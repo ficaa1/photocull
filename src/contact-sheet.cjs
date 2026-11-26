@@ -1,12 +1,14 @@
 const fs = require('node:fs/promises');
+const { createReadStream } = require('node:fs');
+const { photoPaths } = require('./library.cjs');
 const path = require('node:path');
 const sharp = require('sharp');
-const { layout, cell } = require('./renderer/contact-sheet-layout.js');
+const { layout, cell, ratingText, exifText } = require('./renderer/contact-sheet-layout.js');
 
 const entities = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' };
 const xml = value => String(value).replace(/[^\u0020-\ud7ff\ue000-\ufffd\u{10000}-\u{10ffff}]/gu, ' ').replace(/[&<>"']/g, c => entities[c]);
 
-async function renderPage(items, g, page, pages, previews, signal, progress) {
+async function renderPage(items, g, page, pages, previews, signal, warnings, progress) {
   const { options: o, width, height, margin, font } = g;
   const kind = Math.max(g.cellWidth, g.imageHeight) > 2560 ? 'full' : 'preview';
   const dark = o.theme === 'dark', ink = dark ? '#f4f4f4' : '#242424';
@@ -22,22 +24,36 @@ async function renderPage(items, g, page, pages, previews, signal, progress) {
   for (const [index, item] of items.entries()) {
     signal.throwIfAborted();
     const { x, y } = cell(g, index);
-    const source = await previews.get(item, kind, 100);
-    signal.throwIfAborted();
-    const thumb = await sharp(source).rotate().resize(g.cellWidth, g.imageHeight, { fit: 'inside' })
-      .toColourspace('srgb').removeAlpha().raw().toBuffer({ resolveWithObject: true });
-    layers.push({ input: thumb.data, raw: { width: thumb.info.width, height: thumb.info.height, channels: thumb.info.channels },
-      left: x + Math.floor((g.cellWidth - thumb.info.width) / 2), top: y + Math.floor((g.imageHeight - thumb.info.height) / 2) });
+    try {
+      const source = await previews.getForPresentation(item, kind);
+      signal.throwIfAborted();
+      const thumb = await sharp(source).rotate().resize(g.cellWidth, g.imageHeight, { fit: 'inside' })
+        .toColourspace('srgb').removeAlpha().raw().toBuffer({ resolveWithObject: true });
+      layers.push({ input: thumb.data, raw: { width: thumb.info.width, height: thumb.info.height, channels: thumb.info.channels },
+        left: x + Math.floor((g.cellWidth - thumb.info.width) / 2), top: y + Math.floor((g.imageHeight - thumb.info.height) / 2) });
+    } catch (error) {
+      signal.throwIfAborted();
+      warnings.push({ filename: item.name, kind: 'preview', message: error.message });
+      labels.push(`<rect x="${x}" y="${y}" width="${g.cellWidth}" height="${g.imageHeight}" fill="${dark ? '#383838' : '#ededed'}"/>`);
+      const message = o.captions.filename ? ['Preview unavailable'] : ['Preview unavailable', xml(item.name)];
+      const lineHeight = Math.min(g.line, Math.floor(g.imageHeight / message.length));
+      const top = y + Math.floor((g.imageHeight - lineHeight * message.length) / 2);
+      message.forEach((text, i) => label(x, top + i * lineHeight, g.cellWidth, lineHeight, text, Math.min(font, lineHeight * .8)));
+    }
     const lines = [];
     if (o.captions.filename) lines.push(xml(item.name));
     if (o.captions.rating) {
       const color = item.sheetColor;
       const dot = color && /^#[\da-f]{6}$/i.test(color.hex) ? `<tspan fill="${color.hex}">●</tspan>` : '';
-      lines.push([dot, '★'.repeat(item.rating || 0), item.flag === 'pick' ? 'Pick' : item.flag === 'reject' ? 'Reject' : ''].filter(Boolean).join('  '));
+      lines.push([dot, ratingText(item)].filter(Boolean).join('  '));
     }
     if (o.captions.exif) {
-      const m = await previews.metadata(item);
-      lines.push(xml([m.focalLength, m.aperture, m.shutter && m.shutter + ' s', m.iso && 'ISO ' + m.iso].filter(Boolean).join(' · ')));
+      try { lines.push(xml(exifText(await previews.metadata(item)))); }
+      catch (error) {
+        signal.throwIfAborted();
+        warnings.push({ filename: item.name, kind: 'metadata', message: error.message });
+        lines.push('EXIF unavailable');
+      }
     }
     lines.forEach((line, i) => label(x, y + g.imageHeight + i * g.line, g.cellWidth, g.line, line));
     progress(index + 1);
@@ -83,7 +99,50 @@ async function writePdf(file, g, pages, render) {
   } finally { await handle.close(); }
 }
 
-async function exportContactSheet({ photos, options, file, previews, colors = [], metadata = {}, signal = new AbortController().signal, onProgress = () => {} }) {
+async function protectSources(targets, protectedPaths) {
+  const names = new Set(targets.map(file => path.basename(file).toLowerCase()));
+  const folder = path.dirname(targets[0]).toLowerCase();
+  for (const file of protectedPaths) {
+    if (!names.has(path.basename(file).toLowerCase())) continue;
+    const parent = await fs.realpath(path.dirname(file)).catch(error => {
+      if (error.code === 'ENOENT') return path.dirname(file);
+      throw error;
+    });
+    if (parent.toLowerCase() === folder) throw new Error('A contact sheet would replace a source photo. Choose another name.');
+  }
+}
+
+async function publish(staged, target, created, signal) {
+  const stamp = await fs.stat(staged, { bigint: true });
+  try {
+    await fs.link(staged, target);
+    created.set(target, stamp);
+    return;
+  } catch (error) {
+    if (!['EPERM', 'EXDEV', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EINVAL'].includes(error.code)) throw error;
+  }
+  // FAT volumes lack hard links. Keep writing through the exclusively opened handle.
+  const output = await fs.open(target, 'wx');
+  try {
+    created.set(target, await output.stat({ bigint: true }));
+    for await (const chunk of createReadStream(staged, { signal })) await output.writeFile(chunk);
+    await output.sync();
+  } finally { await output.close(); }
+}
+
+async function rollback(created) {
+  const failures = [];
+  for (const [file, stamp] of created) {
+    try {
+      const current = await fs.lstat(file, { bigint: true });
+      if (!stamp.ino) failures.push(file);
+      else if (current.isFile() && current.dev === stamp.dev && current.ino === stamp.ino && current.birthtimeNs === stamp.birthtimeNs) await fs.unlink(file);
+    } catch (e) { if (e.code !== 'ENOENT') failures.push(file); }
+  }
+  return failures;
+}
+
+async function exportContactSheet({ photos, options, file, previews, colors = [], metadata = {}, protectedPaths = photoPaths(photos), isCard, signal = new AbortController().signal, onProgress = () => {} }) {
   const g = layout(options), o = g.options;
   if (typeof file !== 'string' || !path.isAbsolute(file) || !(o.format === 'pdf' ? /\.pdf$/i : /\.jpe?g$/i).test(file))
     throw new Error('Choose a filename with the matching contact sheet extension.');
@@ -91,35 +150,39 @@ async function exportContactSheet({ photos, options, file, previews, colors = []
     ...i, develop: i.develop?.missing ? null : i.develop, sheetColor: colors.find(c => c.id === (i.color ?? metadata[i.flag + 'Color'])),
   }));
   if (!items.length) throw new Error('No photos in this scope.');
-  const pages = Math.ceil(items.length / g.capacity), folder = path.dirname(file);
+  const pages = Math.ceil(items.length / g.capacity), folder = await fs.realpath(path.dirname(file));
+  if (await isCard?.(folder)) throw new Error('Choose a contact sheet destination outside the camera card.');
+  file = path.join(folder, path.basename(file));
   const targets = o.format === 'pdf' || pages === 1 ? [file] : Array.from({ length: pages }, (_, i) =>
     path.join(folder, path.parse(file).name + '_p' + String(i + 1).padStart(Math.max(2, String(pages).length), '0') + '.jpg'));
+  await protectSources([file, ...targets], protectedPaths);
   signal.throwIfAborted();
   const stage = await fs.mkdtemp(path.join(folder, '.photocull-sheet-'));
   const staged = i => path.join(stage, String(i));
-  const reserved = [];
-  const render = i => renderPage(items.slice(i * g.capacity, (i + 1) * g.capacity), g, i + 1, pages, previews, signal,
+  const created = new Map(), warnings = [];
+  const render = i => renderPage(items.slice(i * g.capacity, (i + 1) * g.capacity), g, i + 1, pages, previews, signal, warnings,
     n => onProgress({ done: i * g.capacity + n, total: items.length, page: i + 1, pages }));
   try {
-    onProgress({ done: 0, total: items.length, page: 1, pages });
-    if (o.format === 'pdf') await writePdf(staged(0), g, pages, render);
-    else for (let i = 0; i < pages; i++) await fs.writeFile(staged(i), await render(i));
-    // Reserve every sibling exclusively before publishing any page, including on FAT volumes.
-    for (const target of targets) {
+    try {
+      onProgress({ done: 0, total: items.length, page: 1, pages });
+      if (o.format === 'pdf') await writePdf(staged(0), g, pages, render);
+      else for (let i = 0; i < pages; i++) await fs.writeFile(staged(i), await render(i));
       signal.throwIfAborted();
-      const handle = await fs.open(target, 'wx');
-      reserved.push(target);
-      await handle.close();
-    }
-    for (const [i, target] of targets.entries()) {
-      signal.throwIfAborted();
-      await fs.rename(staged(i), target);
-    }
-    return { folder, pages, photos: items.length, files: targets.length };
-  } catch (e) {
-    for (const target of reserved) await fs.unlink(target);
-    if (e.code === 'EEXIST') throw new Error('A contact sheet filename already exists. Choose another name.');
-    throw e;
-  } finally { await fs.rm(stage, { recursive: true }); }
+      const unavailable = warnings.filter(w => w.kind === 'preview');
+      if (unavailable.length === items.length) throw new Error('No previews available: ' + unavailable.map(w => w.filename).join(', '));
+      for (const [i, target] of targets.entries()) {
+        signal.throwIfAborted();
+        await publish(staged(i), target, created, signal);
+      }
+    } finally { await fs.rm(stage, { recursive: true }); }
+    signal.throwIfAborted();
+    return { folder, pages, photos: items.length, files: targets.length, warnings };
+  } catch (error) {
+    const failures = await rollback(created);
+    if (failures.length) throw new Error(error.message + '. Could not remove: ' + failures.join(', '));
+    signal.throwIfAborted();
+    if (error.code === 'EEXIST') throw new Error('A contact sheet filename already exists. Choose another name.');
+    throw error;
+  }
 }
 module.exports = { exportContactSheet };

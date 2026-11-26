@@ -1207,12 +1207,14 @@ body:not(.tether-active) #tether-dock, body:not(.tether-active) #tether-stage-ba
 #contact-sheet-dialog { max-width: 720px; max-height: calc(100dvh - 32px); overflow: auto; }
 .sheet-body { display: grid; grid-template-columns: minmax(150px, .85fr) minmax(0, 1.15fr); gap: var(--s5); align-items: center; }
 .sheet-proof { min-width: 0; text-align: center; }
-#sheet-preview { position: relative; margin: auto; overflow: hidden; background: white; color: #242424; box-shadow: 0 2px 10px #0004; }
+#sheet-preview { container-type: inline-size; position: relative; margin: auto; overflow: hidden; background: white; color: #242424; box-shadow: 0 2px 10px #0004; }
 #sheet-preview[data-theme=dark] { background: #292929; color: #f4f4f4; }
 #sheet-preview > * { position: absolute; overflow: hidden; }
 #sheet-preview img { object-fit: contain; }
 #sheet-preview div { display: flex; justify-content: space-between; gap: 3px; }
 #sheet-preview span, #sheet-preview small { overflow: hidden; white-space: nowrap; text-align: left; font: 6px sans-serif; }
+#sheet-preview small { font-size: var(--sheet-font); line-height: 1.2; }
+#sheet-warnings ul { max-height: 8em; overflow: auto; overflow-wrap: anywhere; }
 #sheet-preview span:last-child { flex: none; }
 #sheet-fields { border: 0; margin: 0; padding: 0; min-width: 0; }
 #sheet-fields input:not([type=checkbox]), #sheet-fields select { width: 100%; min-width: 0; }

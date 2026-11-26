@@ -29,7 +29,7 @@ test('JPEG sheets preserve rotated image proportions and confine escaped text to
   const file = path.join(folder, 'proof.jpg');
   await exportContactSheet({ photos: [item], file,
     options: { format: 'jpeg', rows: 2, columns: 2, headerTitle: '"<&>\'', captions: { exif: true } },
-    previews: { get: async () => rotated, metadata: async () => ({ focalLength: '50 mm', aperture: 'f/2', iso: 200 }) },
+    previews: { getForPresentation: async () => rotated, metadata: async () => ({ focalLength: '50 mm', aperture: 'f/2', iso: 200 }) },
     signal: new AbortController().signal });
   const info = await sharp(file).metadata();
   assert.deepEqual([info.format, info.width, info.height, info.density], ['jpeg', 1275, 1650, 150]);
@@ -52,8 +52,10 @@ test('desktop sidecar exports scoped PDFs and JPEG siblings and rolls back colli
   await fs.mkdir(photos); await fs.mkdir(destination);
   const jpg = await sharp({ create: { width: 60, height: 90, channels: 3, background: 'red' } }).jpeg().toBuffer();
   for (const name of ['a&b.jpg', 'c.jpg', 'd.jpg']) await fs.writeFile(path.join(photos, name), jpg);
+  const card = path.join(root, 'card'), devices = path.join(root, 'devices.json');
+  await fs.mkdir(card); await fs.writeFile(devices, JSON.stringify([{ root: card, identity: 'camera-card' }]));
   const child = spawn(process.execPath, [path.resolve(__dirname, '../src/backend.cjs')], { stdio: ['pipe', 'pipe', 'ignore'],
-    env: { ...process.env, PHOTOCULL_SMOKE_TEST: '1', PHOTOCULL_DATA_DIR: path.join(root, 'data') } });
+    env: { ...process.env, PHOTOCULL_SMOKE_TEST: '1', PHOTOCULL_TEST_DEVICES: devices, PHOTOCULL_DATA_DIR: path.join(root, 'data') } });
   const exited = once(child, 'exit');
   t.after(async () => { child.stdin.end(); await exited; await fs.rm(root, { recursive: true }); });
   const lines = readline.createInterface({ input: child.stdout })[Symbol.asyncIterator]();
@@ -103,7 +105,7 @@ test('desktop sidecar exports scoped PDFs and JPEG siblings and rolls back colli
   const before = (await fs.readdir(destination)).sort();
   await assert.rejects(reply(start('taken.jpg', { format: 'jpeg', scope: 'all' })), /exists/);
   assert.equal(await fs.readFile(path.join(destination, 'taken_p02.jpg'), 'utf8'), 'existing');
-  await assert.rejects(reply(send('export-contact-sheet', [session.id, [first.id], { format: 'jpeg' }, path.join(photos, first.name)])), /exists/);
+  await assert.rejects(reply(send('export-contact-sheet', [session.id, [first.id], { format: 'jpeg' }, path.join(photos, first.name)])), /source photo/);
   assert.deepEqual(await fs.readFile(path.join(photos, first.name)), jpg);
   await assert.rejects(reply(start('empty.pdf', {}, [])), /No photos/);
   await assert.rejects(reply(start('unknown.pdf', {}, ['missing'])), /not in this folder session/);
@@ -113,4 +115,71 @@ test('desktop sidecar exports scoped PDFs and JPEG siblings and rolls back colli
     await assert.rejects(reply(job, e => { if (e.done === 1) send('contact-sheet-cancel', []); }), /canceled/);
     assert.deepEqual((await fs.readdir(destination)).sort(), before);
   }
+  await fs.unlink(path.join(photos, second.name));
+  await assert.rejects(reply(send('export-contact-sheet', [session.id, [first.id], { format: 'jpeg' }, path.join(photos, second.name)])), /source photo/);
+  await assert.rejects(reply(send('export-contact-sheet', [session.id, [first.id], {}, path.join(card, 'sheet.pdf')])), /camera card/);
+  assert.deepEqual(await fs.readdir(card), []);
+  await assert.rejects(fs.access(path.join(photos, second.name)), { code: 'ENOENT' });
+
+  const mixed = path.join(root, 'mixed');
+  await fs.mkdir(mixed); await fs.writeFile(path.join(mixed, '1-good.jpg'), jpg);
+  await fs.writeFile(path.join(mixed, '2-corrupt.jpg'), 'invalid image');
+  await fs.writeFile(path.join(mixed, '3-missing.jpg'), jpg);
+  const scanned = await reply(send('scan', [mixed, false]));
+  await fs.unlink(path.join(mixed, '3-missing.jpg'));
+  const sheet = path.join(destination, 'mixed.jpg');
+  const summary = await reply(send('export-contact-sheet', [scanned.id, [], { scope: 'all', format: 'jpeg', columns: 3, rows: 1,
+    captions: { filename: false, rating: false } }, sheet]));
+  assert.deepEqual(summary.warnings.map(w => w.filename), ['2-corrupt.jpg', '3-missing.jpg']);
+  assert.deepEqual([summary.photos, summary.files], [3, 1]);
+  const tile = await sharp(sheet).extract({ left: 461, top: 122, width: 345, height: 1450 }).greyscale().raw().toBuffer();
+  assert.ok(tile.includes(237) && tile.some(v => v < 100), 'unavailable photo has a shaded tile and a printed label');
+  await assert.rejects(reply(send('export-contact-sheet', [scanned.id, scanned.items.slice(1).map(i => i.id), {}, path.join(destination, 'bad.pdf')])),
+    /2-corrupt\.jpg.*3-missing\.jpg/);
+  await assert.rejects(fs.access(path.join(destination, 'bad.pdf')), { code: 'ENOENT' });
+
+  const sibling = path.join(mixed, 'book_p02.jpg');
+  await fs.writeFile(sibling, jpg);
+  const book = await reply(send('scan', [mixed, false]));
+  await fs.unlink(sibling);
+  const ids = book.items.filter(i => i.name !== 'book_p02.jpg').map(i => i.id);
+  await assert.rejects(reply(send('export-contact-sheet', [book.id, ids, { format: 'jpeg', columns: 1, rows: 1 }, path.join(mixed, 'book.jpg')])), /source photo/);
+  await assert.rejects(fs.access(sibling), { code: 'ENOENT' });
+});
+
+for (const fallback of [false, true]) test('cancel during final publication preserves foreign replacements · ' + (fallback ? 'exclusive copy' : 'hard link'), async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sheet-publish-'));
+  t.after(() => fs.rm(root, { recursive: true }));
+  const first = path.join(root, 'sheet_p01.jpg'), last = path.join(root, 'sheet_p03.jpg');
+  const controller = new AbortController(), link = fs.link, open = fs.open;
+  async function replaceAndCancel() {
+    await fs.unlink(first);
+    await fs.writeFile(first, 'foreign', { flag: 'wx' });
+    controller.abort(new Error('Canceled during publication'));
+  }
+  t.mock.method(fs, 'link', async (source, target) => {
+    if (fallback) throw Object.assign(new Error('Hard links unavailable'), { code: 'EPERM' });
+    await link(source, target);
+    if (target === last) await replaceAndCancel();
+  });
+  if (fallback) t.mock.method(fs, 'open', async (file, flags) => {
+    const handle = await open(file, flags);
+    if (file === last) {
+      const sync = handle.sync.bind(handle);
+      handle.sync = async () => { await sync(); await replaceAndCancel(); };
+    }
+    return handle;
+  });
+  const blocked = path.join(root, 'sheet_p02.jpg');
+  if (!fallback) {
+    const unlink = fs.unlink;
+    t.mock.method(fs, 'unlink', file => file === blocked
+      ? Promise.reject(Object.assign(new Error('File is in use'), { code: 'EBUSY' })) : unlink(file));
+  }
+  const image = await sharp({ create: { width: 12, height: 12, channels: 3, background: 'blue' } }).jpeg().toBuffer();
+  await assert.rejects(exportContactSheet({ photos: ['a', 'b', 'c'].map(name => ({ name })), file: path.join(root, 'sheet.jpg'),
+    options: { format: 'jpeg', columns: 1, rows: 1 }, previews: { getForPresentation: async () => image }, signal: controller.signal }),
+    fallback ? /Canceled during publication/ : /Canceled during publication.*Could not remove.*sheet_p02\.jpg/);
+  assert.deepEqual((await fs.readdir(root)).sort(), fallback ? ['sheet_p01.jpg'] : ['sheet_p01.jpg', 'sheet_p02.jpg']);
+  assert.equal(await fs.readFile(first, 'utf8'), 'foreign');
 });

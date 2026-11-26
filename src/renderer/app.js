@@ -900,25 +900,25 @@ async function setFullscreen(value = !state.fullscreen, presentation = false) {
   // and ignore intermediate native events while a newer target is pending.
   const transition = fullscreenQueue.catch(() => {}).then(() => api.setFullscreen(value));
   fullscreenQueue = transition;
-  try { const result = await transition; if (!presentation && request === fullscreenRequest) applyFullscreen(result.fullscreen); }
+  try { const result = await transition; if (request === fullscreenRequest && (!presentation || !result.fullscreen)) applyFullscreen(result.fullscreen); }
   catch (error) { if (!presentation && request === fullscreenRequest) applyFullscreen(previous); toast(error.message); }
   finally { fullscreenPending--; }
 }
 $('fullscreen').innerHTML = fullscreenIcons.enter;
 $('fullscreen').onclick = () => { $('fullscreen').blur(); void setFullscreen(); };
-const contactSheet = PhotoCullContactSheet.init({ $, api, session: () => state.session, selection,
+const labelColor = item => state.settings.colors.find(c => c.id === colorOf(item));
+const contactSheet = PhotoCullContactSheet.init({ $, api, session: () => state.session, selection, labelColor, metadata: cullingMetadata,
   imageUrl: item => imageUrl(item, 'thumb', false, false) });
 const slideshow = PhotoCullSlideshow.init({ $, items: () => state.marked.size > 1 ? selection() : filtered(),
-  current: () => state.marked.size > 1 ? null : state.selected, imageUrl,
-  colorOf: item => state.settings.colors.find(c => c.id === colorOf(item)),
-  fullscreen: () => state.fullscreen, setFullscreen: value => setFullscreen(value, true) });
+  current: () => state.marked.size > 1 ? null : state.selected, imageUrl: (item, kind) => imageUrl(item, kind) + '&slideshow=1',
+  colorOf: labelColor, fullscreen: () => state.fullscreen, setFullscreen });
 $('contact-sheet').onclick = () => contactSheet.open();
 $('start-slideshow').onclick = () => slideshow.open();
 api.onSlideshow(() => { if (!$('start-slideshow').disabled) slideshow.open(); });
 api.onFullscreen(status => {
-  if (fullscreenPending) return;
-  if ($('slideshow').open) { if (!status.fullscreen) void slideshow.exit(); }
-  else applyFullscreen(status.fullscreen);
+  if (fullscreenPending || $('slideshow').open && status.fullscreen) return;
+  applyFullscreen(status.fullscreen);
+  if ($('slideshow').open) void slideshow.exit(false);
 });
 api.onFullscreenToggle(() => hideDeletePrompt());
 api.onFullscreenToggle(() => { if (!document.querySelector('dialog[open]')) void setFullscreen(); });

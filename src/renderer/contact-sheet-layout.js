@@ -40,6 +40,13 @@
     return { x: g.margin + index % g.options.columns * (g.cellWidth + g.gap),
       y: g.margin + g.header + Math.floor(index / g.options.columns) * (g.cellHeight + g.gap) };
   }
-  const api = { layout, cell };
+  function ratingText(item) {
+    const flag = item.flag === 'pick' ? 'Pick' : item.flag === 'reject' ? 'Reject' : '';
+    return ['★'.repeat(item.rating || 0), flag].filter(Boolean).join('  ');
+  }
+  function exifText(m) {
+    return [m.focalLength, m.aperture, m.shutter && m.shutter + ' s', m.iso && 'ISO ' + m.iso].filter(Boolean).join(' · ');
+  }
+  const api = { layout, cell, ratingText, exifText };
   if (typeof module === 'object') module.exports = api; else root.PhotoCullSheetLayout = api;
 })(globalThis);

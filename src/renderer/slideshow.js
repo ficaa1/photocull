@@ -75,18 +75,18 @@ window.PhotoCullSlideshow = { init({ $, items, current, imageUrl, colorOf, fulls
     if (ended || !ready && !loading) void show(ended ? 0 : index);
     else { controls(); schedule(); }
   }
-  async function exit() {
+  async function exit(restoreWindow = true) {
     if (closing || !listeners) return;
     closing = true; hud.inert = true; generation++; pause(); clearTimeout(hudTimer);
     listeners.abort(); listeners = null; discard(preload); discard(loading); preload = loading = null;
-    try { await setFullscreen(previousFullscreen); }
+    try { if (restoreWindow) await setFullscreen(previousFullscreen); }
     finally { dialog.close(); frame.replaceChildren(); photos = []; ready = false; closing = false; hud.inert = false; }
   }
   function keydown(event) {
     wake();
     if (event.key === 'Escape') { event.preventDefault(); void exit(); return; }
     if (event.target === interval && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' '].includes(event.key)) return;
-    if (event.key === ' ' && event.target.matches('input[type=checkbox]')) return;
+    if (event.key === ' ' && event.target.closest('button, input, select, a[href]')) return;
     if (![' ', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return;
     event.preventDefault(); if (closing) return;
     if (event.key === ' ') { if (!event.repeat) toggle(); } else move(event.key === 'ArrowLeft' ? -1 : 1);
@@ -105,7 +105,7 @@ window.PhotoCullSlideshow = { init({ $, items, current, imageUrl, colorOf, fulls
     window.addEventListener('blur', pause, events);
     document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); }, events);
     dialog.showModal(); frame.focus(); wake(); playing = true;
-    void setFullscreen(true);
+    void setFullscreen(true, true);
     void show(Math.max(0, photos.findIndex(i => i.id === current())));
   }
   play.onclick = toggle;
@@ -113,7 +113,7 @@ window.PhotoCullSlideshow = { init({ $, items, current, imageUrl, colorOf, fulls
   interval.onchange = () => { save(); schedule(); };
   loop.onchange = () => { save(); controls(); if (ready) prefetch(); };
   captions.onchange = () => { save(); $('slide-caption').hidden = !captions.checked; };
-  $('slide-exit').onclick = exit;
+  $('slide-exit').onclick = () => exit();
   dialog.onclose = () => { if (!dialog.open) void exit(); };
   dialog.oncancel = event => { event.preventDefault(); void exit(); };
   return { open, exit };

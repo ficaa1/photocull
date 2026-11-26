@@ -1,7 +1,7 @@
-window.PhotoCullContactSheet = { init({ $, api, session, selection, imageUrl }) {
+window.PhotoCullContactSheet = { init({ $, api, session, selection, imageUrl, labelColor, metadata }) {
   const dialog = $('contact-sheet-dialog'), preview = $('sheet-preview'), status = $('sheet-status');
   const fields = $('sheet-fields'), progress = $('sheet-progress'), cancel = $('sheet-cancel');
-  const close = dialog.querySelector('.close-dialog');
+  const close = dialog.querySelector('.close-dialog'), warnings = $('sheet-warnings');
   let running = false, folder = null;
   function options() {
     const value = key => $('sheet-' + key).value;
@@ -15,12 +15,13 @@ window.PhotoCullContactSheet = { init({ $, api, session, selection, imageUrl }) 
     const o = options(), photos = (o.scope === 'selection' ? selection() : session().items)
       .filter(i => !i.trashed && (o.scope !== 'picks' || i.flag === 'pick'));
     const count = $('sheet-count'), save = $('sheet-save');
-    preview.replaceChildren(); count.textContent = ''; save.disabled = true;
+    warnings.hidden = true; preview.replaceChildren(); count.textContent = ''; save.disabled = true;
     let g;
     try { g = PhotoCullSheetLayout.layout(o); } catch (e) { status.textContent = e.message; return; }
     const pages = Math.ceil(photos.length / g.capacity);
     preview.style.aspectRatio = g.width + '/' + g.height;
     preview.dataset.theme = o.theme;
+    preview.style.setProperty('--sheet-font', (g.font / g.width * 100) + 'cqw');
     preview.style.width = 'min(100%, ' + (290 * g.width / g.height) + 'px)';
     function place(node, x, y, w, h) {
       Object.assign(node.style, { left: x / g.width * 100 + '%', top: y / g.height * 100 + '%',
@@ -34,9 +35,24 @@ window.PhotoCullContactSheet = { init({ $, api, session, selection, imageUrl }) 
       const { x, y } = PhotoCullSheetLayout.cell(g, index);
       const image = new Image(); image.alt = ''; image.src = imageUrl(item);
       place(image, x, y, g.cellWidth, g.imageHeight);
-      if (o.captions.filename) {
-        const label = document.createElement('small'); label.textContent = item.name;
-        place(label, x, y + g.imageHeight, g.cellWidth, g.line);
+      let lineTop = y + g.imageHeight;
+      function line(text) {
+        const label = document.createElement('small'); label.textContent = text;
+        place(label, x, lineTop, g.cellWidth, g.line); lineTop += g.line;
+        return label;
+      }
+      if (o.captions.filename) line(item.name);
+      if (o.captions.rating) {
+        const label = line(PhotoCullSheetLayout.ratingText(item)), color = labelColor(item);
+        if (color) {
+          const dot = document.createElement('b'); dot.textContent = '● '; dot.style.color = color.hex;
+          dot.title = color.name; label.prepend(dot);
+        }
+      }
+      if (o.captions.exif) {
+        const label = line('');
+        void metadata(item.id).then(m => { if (m && label.isConnected) label.textContent = PhotoCullSheetLayout.exifText(m); })
+          .catch(() => { label.textContent = 'EXIF unavailable'; });
       }
     }
     count.textContent = photos.length + (photos.length === 1 ? ' photo' : ' photos') + ' → ' + pages + (pages === 1 ? ' page' : ' pages');
@@ -57,11 +73,19 @@ window.PhotoCullContactSheet = { init({ $, api, session, selection, imageUrl }) 
     if (running) return;
     running = true; fields.disabled = close.disabled = cancel.disabled = $('sheet-save').disabled = true;
     folder = null; $('sheet-reveal').hidden = true;
-    progress.hidden = false; progress.removeAttribute('value'); status.textContent = 'Choose where to save the contact sheet.';
+    warnings.hidden = true; progress.hidden = false; progress.removeAttribute('value'); status.textContent = 'Choose where to save the contact sheet.';
     try {
       const o = options();
       const result = await api.saveContactSheet(session().id, o.scope === 'selection' ? selection().map(i => i.id) : [], o);
       status.textContent = result ? `Saved ${result.photos} ${result.photos === 1 ? 'photo' : 'photos'} on ${result.pages} ${result.pages === 1 ? 'page' : 'pages'}.` : '';
+      if (result?.warnings.length) {
+        warnings.querySelector('summary').textContent = 'Warnings (' + result.warnings.length + ')';
+        const list = warnings.querySelector('ul'); list.replaceChildren();
+        for (const w of result.warnings) {
+          const row = document.createElement('li'); row.textContent = w.filename + ' — ' + w.message; list.append(row);
+        }
+        warnings.open = false; warnings.hidden = false;
+      }
       if (result) { folder = result.folder; $('sheet-reveal').hidden = false; }
     } catch (error) { status.textContent = error.message || String(error); }
     finally {

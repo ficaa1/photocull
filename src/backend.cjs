@@ -25,7 +25,7 @@ const path = require('node:path');
 const os = require('node:os');
 const readline = require('node:readline');
 const { randomBytes } = require('node:crypto');
-const { Library } = require('./library.cjs');
+const { Library, photoPaths, inside } = require('./library.cjs');
 const { RecipeStore, planExport } = require('./develop.cjs');
 const { planTiffs, writableFolder } = require('./develop-plan.cjs');
 const { PreviewService } = require('./previews.cjs');
@@ -57,7 +57,6 @@ const RENDERER_FILES = new Map([['index.html', 'text/html'], ['styles.css', 'tex
   ['naming.js', 'text/javascript'], ['image-view.js', 'text/javascript'], ['loupe.js', 'text/javascript'], ['culling.js', 'text/javascript'], ['survey.js', 'text/javascript'], ['bridge.js', 'text/javascript'], ['server.js', 'text/javascript'],
   ['contact-sheet-layout.js', 'text/javascript'], ['contact-sheet.js', 'text/javascript'], ['slideshow.js', 'text/javascript'],
   ['tether.js', 'text/javascript'], ['overlays.js', 'text/javascript']]);
-const inside = (parent, child) => { const rel = path.relative(parent, child); return rel === '' || !!rel && !rel.startsWith('..') && !path.isAbsolute(rel); };
 
 function defaultDataDir() {
   // Matches Electron's userData folder, which is named after productName
@@ -204,7 +203,7 @@ async function start() {
       if (!Array.isArray(ids) || !ids.length || ids.length > 100_000) throw new Error('Choose photos to export.');
       const items = [...new Set(ids)].map(id => library.item(session, id));
       if (items.some(item => item.trashed)) throw new Error('Photos in Trash cannot be exported.');
-      return planExport(items, { ...(options || {}), protectedPaths: s.items.flatMap(i => [i.path, i.companion, i.develop?.tiff, ...(i.develop?.handoffs || []).map(r=>r.path)]).filter(Boolean), captureDate: item => previews.metadata(item).then(data => data.captured) });
+      return planExport(items, { ...(options || {}), protectedPaths: photoPaths(s.items), captureDate: item => previews.metadata(item).then(data => data.captured) });
     },
     // Shell-only: Lightcraft's AVIF muxer carries EXIF but omits XMP. The file is still staged.
     'export-embed-xmp': async (file, xmp) => {
@@ -322,13 +321,15 @@ async function start() {
     ...(!web && {
       'export-contact-sheet': async (session, ids, options, file) => {
         if (contactSheet) throw new Error('A contact sheet is already being exported.');
-        let photos = library.get(session).items;
+        const source = library.get(session);
+        let photos = source.items;
         if ((options?.scope ?? 'selection') === 'selection') {
           if (!Array.isArray(ids)) throw new Error('Invalid photo selection.');
           photos = [...new Set(ids.map(id => library.item(session, id)))];
         }
         const controller = new AbortController();
-        const job = exportContactSheet({ photos, options, file, previews,
+        const job = exportContactSheet({ photos, options, file, previews, protectedPaths: photoPaths(source.items),
+          isCard: folder => source.removable && inside(source.folder, folder) || onCard(folder),
           colors: settings.value.colors, metadata: settings.value.metadata, signal: controller.signal,
           onProgress: progress => send('contact-sheet-progress', progress) });
         contactSheet = { controller, job };
@@ -473,6 +474,7 @@ async function start() {
         // prefetch=N ranks look-ahead work below anything on screen.
         const rank = Number(url.searchParams.get('prefetch')) || 0;
         const data = url.searchParams.has('cached') ? await previews.peek(item, kind)
+          : kind === 'full' && url.searchParams.has('slideshow') ? await previews.getForPresentation(item, kind)
           : await previews.get(item, kind, kind === 'thumb' ? 1 : url.searchParams.has('prefetch') ? Math.max(2, Math.min(9, 10 - rank)) : 100);
         if (!data) { res.writeHead(404, { 'Cache-Control': 'no-store' }).end(); return; }
         res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=31536000, immutable', 'Content-Length': data.length });
