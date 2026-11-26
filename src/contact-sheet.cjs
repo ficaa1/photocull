@@ -65,7 +65,8 @@ async function renderPage(items, g, page, pages, previews, signal, warnings, pro
 
 async function writePdf(file, g, pages, render, onCreate) {
   const handle = await fs.open(file, 'wx');
-  onCreate?.(file, await handle.stat({ bigint: true }));
+  const entry = [file, await handle.stat({ bigint: true })];
+  onCreate?.(entry);
   const offsets = [0];
   let position = 0;
   async function write(data) {
@@ -97,6 +98,7 @@ async function writePdf(file, g, pages, render, onCreate) {
     await write(offsets.slice(1).map(n => String(n).padStart(10, '0') + ' 00000 n \n').join(''));
     await write(`trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${start}\n%%EOF\n`);
     await handle.sync();
+    entry[1] = await handle.stat({ bigint: true });
   } finally { await handle.close(); }
 }
 
@@ -126,15 +128,25 @@ async function verifyFolder(folder, stamp, isCard) {
 
 async function writeStaged(file, data, onCreate) {
   const handle = await fs.open(file, 'wx');
-  onCreate?.(file, await handle.stat({ bigint: true }));
+  const entry = [file, await handle.stat({ bigint: true })];
+  onCreate?.(entry);
   try {
     await handle.writeFile(data);
     await handle.sync();
+    entry[1] = await handle.stat({ bigint: true });
   } finally { await handle.close(); }
 }
 
-async function publish(staged, target, folder, stamp, isCard) {
-  await verifyFolder(folder, stamp, isCard);
+async function publish(staged, stagedStamp, target, folder, folderStamp, stage, stageStamp, isCard) {
+  await verifyFolder(folder, folderStamp, isCard);
+  const currentStage = await fs.lstat(stage, { bigint: true });
+  if (!currentStage.isDirectory() || currentStage.isSymbolicLink() || currentStage.dev !== stageStamp.dev || currentStage.ino !== stageStamp.ino) {
+    throw new Error('The contact sheet staging folder changed before publication.');
+  }
+  const currentStaged = await fs.lstat(staged, { bigint: true });
+  if (!currentStaged.isFile() || currentStaged.isSymbolicLink() || currentStaged.dev !== stagedStamp.dev || currentStaged.ino !== stagedStamp.ino || currentStaged.size !== stagedStamp.size) {
+    throw new Error('The staged contact sheet file changed before publication.');
+  }
   try {
     await fs.link(staged, target);
   } catch (error) {
@@ -142,6 +154,10 @@ async function publish(staged, target, folder, stamp, isCard) {
       throw new Error('This volume does not support atomic non-overwriting saves. Choose a destination on a local drive.');
     }
     throw error;
+  }
+  const linked = await fs.lstat(target, { bigint: true });
+  if (!linked.isFile() || linked.isSymbolicLink() || linked.dev !== stagedStamp.dev || linked.ino !== stagedStamp.ino || linked.size !== stagedStamp.size) {
+    throw new Error('The staged contact sheet file changed during publication.');
   }
 }
 
@@ -198,12 +214,11 @@ async function exportContactSheet({ photos, options, file, previews, colors = []
     const stageReal = await fs.realpath(stage);
     const stageParent = path.dirname(stageReal);
     if (stageParent !== folder || await isCard?.(stageParent)) {
-      await fs.rmdir(stage).catch(() => {});
       throw new Error('Choose a contact sheet destination outside the camera card.');
     }
     stageStamp = await fs.lstat(stage, { bigint: true });
     onProgress({ done: 0, total: items.length, page: 1, pages });
-    const trackStaged = (stagedPath, stamp) => stagedFiles.push([stagedPath, stamp]);
+    const trackStaged = entry => stagedFiles.push(entry);
     if (o.format === 'pdf') {
       await writePdf(staged(0), g, pages, render, trackStaged);
     } else {
@@ -223,7 +238,7 @@ async function exportContactSheet({ photos, options, file, previews, colors = []
     }
     for (const [i, target] of targets.entries()) {
       signal.throwIfAborted();
-      await publish(staged(i), target, folder, folderStamp, isCard);
+      await publish(stagedFiles[i][0], stagedFiles[i][1], target, folder, folderStamp, stage, stageStamp, isCard);
       published.push(target);
     }
     signal.throwIfAborted();
@@ -239,7 +254,6 @@ async function exportContactSheet({ photos, options, file, previews, colors = []
     throw error;
   } finally {
     if (stageStamp) await cleanupStage(folder, folderStamp, isCard, stage, stageStamp, stagedFiles);
-    else await fs.rmdir(stage).catch(() => {});
   }
 }
 module.exports = { exportContactSheet };

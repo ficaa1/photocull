@@ -188,14 +188,20 @@ test('destination replaced before staging or redirected before cleanup never wri
   const out = path.join(root, 'out'), card = path.join(root, 'card'), moved = path.join(root, 'moved');
   await fs.mkdir(out); await fs.mkdir(card);
   const mkdtemp = fs.mkdtemp;
-  let swapped = false;
-  t.mock.method(fs, 'mkdtemp', async prefix => {
-    if (!swapped) {
-      swapped = true;
+  // Redirecting destination before staging fails before mkdtemp even touches the card.
+  let checkedCard = false;
+  const realpath = fs.realpath;
+  t.mock.method(fs, 'realpath', async target => {
+    if (!checkedCard && target === out) {
+      checkedCard = true;
+      return realpath(out);
+    }
+    if (checkedCard && target === out) {
+      checkedCard = false;
       await fs.rename(out, moved);
       await fs.symlink(card, out);
     }
-    return mkdtemp(prefix);
+    return realpath(target);
   });
   const image = await sharp({ create: { width: 12, height: 12, channels: 3, background: 'blue' } }).jpeg().toBuffer();
   await assert.rejects(exportContactSheet({
@@ -203,21 +209,24 @@ test('destination replaced before staging or redirected before cleanup never wri
     file: path.join(out, 'sheet.pdf'),
     options: { format: 'pdf', columns: 1, rows: 1 },
     previews: { getForPresentation: async () => image },
-    isCard: async folder => (await fs.realpath(folder)) === (await fs.realpath(card)),
+    isCard: async folder => (await realpath(folder)) === (await realpath(card)),
   }), /camera card|changed during export/);
   assert.deepEqual(await fs.readdir(card), []);
 
-  // Same-path replacement before mkdtemp must abort before rendering begins.
+  // Same-path replacement right after mkdtemp aborts before rendering and never deletes a same-named empty dir in the replacement.
   const out2 = path.join(root, 'out2'), moved2 = path.join(root, 'moved2');
   await fs.mkdir(out2);
-  let replaced = false, rendered = false;
+  let replaced = false, rendered = false, replacementStage = null;
   t.mock.method(fs, 'mkdtemp', async prefix => {
+    const dir = await mkdtemp(prefix);
     if (!replaced) {
       replaced = true;
       await fs.rename(out2, moved2);
       await fs.mkdir(out2);
+      replacementStage = path.join(out2, path.basename(dir));
+      await fs.mkdir(replacementStage);
     }
-    return mkdtemp(prefix);
+    return dir;
   });
   await assert.rejects(exportContactSheet({
     photos: [{ name: 'a.jpg' }],
@@ -226,7 +235,31 @@ test('destination replaced before staging or redirected before cleanup never wri
     previews: { getForPresentation: async () => { rendered = true; return image; } },
   }), /changed during export/);
   assert.equal(rendered, false);
-  assert.deepEqual(await fs.readdir(out2), []);
+  assert.equal((await fs.lstat(replacementStage)).isDirectory(), true);
+
+  // Replacing the staged file while PDF writer holds its handle must be rejected before publication.
+  const out4 = path.join(root, 'out4');
+  await fs.mkdir(out4);
+  let stagedDir4 = null;
+  t.mock.method(fs, 'mkdtemp', async prefix => {
+    const dir = await mkdtemp(prefix);
+    stagedDir4 = dir;
+    return dir;
+  });
+  await assert.rejects(exportContactSheet({
+    photos: [{ name: 'a.jpg' }],
+    file: path.join(out4, 'tampered.pdf'),
+    options: { format: 'pdf', columns: 1, rows: 1 },
+    previews: {
+      getForPresentation: async () => {
+        const stagedPath = path.join(stagedDir4, '0');
+        await fs.unlink(stagedPath);
+        await fs.writeFile(stagedPath, 'replaced bytes', { flag: 'wx' });
+        return image;
+      },
+    },
+  }), /staged contact sheet file changed/);
+  await assert.rejects(fs.access(path.join(out4, 'tampered.pdf')), { code: 'ENOENT' });
 
   // Destination redirected before cancellation cleanup must never delete a same-named foreign directory.
   const out3 = path.join(root, 'out3'), moved3 = path.join(root, 'moved3'), other = path.join(root, 'other');

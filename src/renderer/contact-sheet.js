@@ -15,7 +15,13 @@ window.PhotoCullContactSheet = { init({ $, api, session, selection, imageUrl, la
     const o = options(), photos = (o.scope === 'selection' ? selection() : session().items)
       .filter(i => !i.trashed && (o.scope !== 'picks' || i.flag === 'pick'));
     const count = $('sheet-count'), save = $('sheet-save');
-    warnings.hidden = true; preview.replaceChildren(); count.textContent = ''; save.disabled = true;
+    let sample = $('sheet-caption-sample');
+    if (!sample) {
+      sample = document.createElement('div');
+      sample.id = 'sheet-caption-sample';
+      preview.insertAdjacentElement('afterend', sample);
+    }
+    warnings.hidden = true; preview.replaceChildren(); sample.replaceChildren(); sample.hidden = true; count.textContent = ''; save.disabled = true;
     let g;
     try { g = PhotoCullSheetLayout.layout(o); } catch (e) { status.textContent = e.message; return; }
     const pages = Math.ceil(photos.length / g.capacity);
@@ -66,13 +72,6 @@ window.PhotoCullContactSheet = { init({ $, api, session, selection, imageUrl, la
       tile.append(captionBox);
       place(tile, x, y, g.cellWidth, g.cellHeight);
     }
-    let sample = $('sheet-caption-sample');
-    if (!sample) {
-      sample = document.createElement('div');
-      sample.id = 'sheet-caption-sample';
-      preview.insertAdjacentElement('afterend', sample);
-    }
-    sample.replaceChildren();
     const hasCaptions = o.captions.filename || o.captions.rating || o.captions.exif;
     sample.hidden = !photos.length || !hasCaptions;
     if (!sample.hidden) appendCaptions(sample, photos[0]);
@@ -127,6 +126,11 @@ window.PhotoCullContactSheet = { init({ $, api, session, selection, imageUrl, la
   };
   dialog.oncancel = event => { if (running) { event.preventDefault(); if (!cancel.disabled) cancel.click(); } };
   $('sheet-reveal').onclick = () => api.revealDestination(folder).catch(e => { status.textContent = e.message || String(e); });
-  dialog.onclose = () => { preview.replaceChildren(); cancel.textContent = 'Cancel'; };
+  dialog.onclose = () => {
+    preview.replaceChildren();
+    const sample = $('sheet-caption-sample');
+    if (sample) { sample.replaceChildren(); sample.hidden = true; }
+    cancel.textContent = 'Cancel';
+  };
   return { open };
 } };
