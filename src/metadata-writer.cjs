@@ -19,7 +19,12 @@ class MetadataWriter {
       caption: ['IPTC:Caption-Abstract', 'EXIF:ImageDescription', 'IFD0:XPComment'], copyright: ['IPTC:CopyrightNotice', 'EXIF:Copyright'],
       keywords: ['IPTC:Keywords', 'IFD0:XPKeywords'] };
     for (const [field, names] of Object.entries(legacy)) {
-      if (owned(field) && !metadata[field].length) for (const name of names) tags[name] = null;
+      if (!owned(field)) continue;
+      if (!metadata[field].length || !tiff) {
+        for (const name of names) tags[name] = null;
+      } else if (field !== 'keywords') {
+        for (const name of names) if (name.startsWith('IPTC:')) tags[name] = null;
+      }
     }
     if (metadata.writeRatings) {
       const rating = item.flag === 'reject' && metadata.rejectRating ? -1 : item.rating;
@@ -32,7 +37,8 @@ class MetadataWriter {
     }
     if (owned('keywords')) {
       tags['XMP-dc:Subject'] = metadata.keywords.length ? metadata.keywords : null;
-      if (tiff) tags['IFD0:XPKeywords'] = metadata.keywords.join(';');
+      tags['IPTC:Keywords'] = metadata.keywords.length && tiff ? metadata.keywords : null;
+      tags['IFD0:XPKeywords'] = metadata.keywords.length && tiff ? metadata.keywords.join(';') : null;
     }
     if (!Object.keys(tags).length && !metadata.keywords.length) return;
     this.exif ||= new ExifTool({ maxProcs: 1, taskTimeoutMillis: 30000 });

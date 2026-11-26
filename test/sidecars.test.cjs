@@ -417,3 +417,70 @@ test('a rating change on a card preserves a pending undo until explicit export',
   assert.equal(final.metadataOverrides?.creator, undefined);
   assert.equal(final.rating, 4);
 });
+
+test('undo preserves qualified titles with an empty x-default in both RDF layouts', async t => {
+  const layouts = [
+    `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:ex="http://example.com/ns/"><rdf:Description rdf:about=""><dc:title rdf:parseType="Resource"><rdf:value><rdf:Alt><rdf:li xml:lang="x-default"></rdf:li><rdf:li xml:lang="fr">Titre</rdf:li></rdf:Alt></rdf:value><ex:qual>keep-outer</ex:qual></dc:title></rdf:Description></rdf:RDF></x:xmpmeta>`,
+    `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:ex="http://example.com/ns/"><rdf:Description rdf:about=""><dc:title><rdf:Alt><rdf:li rdf:parseType="Resource"><rdf:value xml:lang="x-default"></rdf:value><ex:qual>keep-inner</ex:qual></rdf:li><rdf:li xml:lang="fr">Titre</rdf:li></rdf:Alt></dc:title></rdf:Description></rdf:RDF></x:xmpmeta>`,
+  ];
+  for (const [index, xml] of layouts.entries()) {
+    const { photos, library } = await setup(t);
+    const file = path.join(photos, 'photo.xmp');
+    await fs.writeFile(file, xml);
+    const session = await library.scan(photos);
+    await library.editMetadata(session.id, [session.items[0].id], { title: 'Edited' });
+    await library.flushSidecars();
+    let written = await fs.readFile(file, 'utf8');
+    assert.ok(written.includes(index === 0 ? 'keep-outer' : 'keep-inner'));
+    assert.ok(written.includes('Titre'));
+    await library.history(session.id, 'undo');
+    await library.flushSidecars();
+    written = await fs.readFile(file, 'utf8');
+    assert.ok(written.includes(index === 0 ? 'keep-outer' : 'keep-inner'), 'qualifier survives undo');
+    assert.ok(written.includes('Titre'), 'translation survives undo');
+    assert.ok(!written.includes('Edited'));
+  }
+});
+
+test('removing one keyword clears stale legacy IPTC and XPKeywords on JPEG, PNG and WebP copies', async t => {
+  const sharp = require('sharp');
+  const { ExifTool } = require('exiftool-vendored');
+  const exif = new ExifTool({ maxProcs: 1, taskTimeoutMillis: 30000 });
+  t.after(() => exif.end());
+  const { root, photos, library } = await setup(t, { writeSidecars: 'never' }, []);
+  const out = path.join(root, 'out');
+  await fs.mkdir(out);
+  const pixel = sharp({ create: { width: 16, height: 16, channels: 3, background: '#336699' } });
+  const files = [
+    ['a.jpg', await pixel.clone().jpeg().toBuffer()],
+    ['b.png', await pixel.clone().png().toBuffer()],
+    ['c.webp', await pixel.clone().webp().toBuffer()],
+  ];
+  const originals = new Map();
+  for (const [name, buf] of files) {
+    const file = path.join(photos, name);
+    await fs.writeFile(file, buf);
+    await exif.write(file, {
+      'XMP-dc:Subject': ['keep', 'remove'],
+      'IPTC:Keywords': ['keep', 'remove'],
+      'IFD0:XPKeywords': 'keep;remove',
+    }, ['-overwrite_original']);
+    originals.set(name, await fs.readFile(file));
+  }
+  const session = await library.scan(photos);
+  const ids = session.items.map(i => i.id);
+  for (const id of ids) await library.decide(session.id, id, { flag: 'pick' });
+  await library.editMetadata(session.id, ids, { addKeyword: 'keep' });
+  await library.editMetadata(session.id, ids, { removeKeyword: 'remove' });
+  const copies = new TransferService();
+  t.after(() => copies.close());
+  const result = await copies.copy(library.get(session.id), out, { embedMetadata: true, includeXmp: false });
+  assert.equal(result.failures.length, 0);
+  for (const [name] of files) {
+    assert.deepEqual(await fs.readFile(path.join(photos, name)), originals.get(name), 'source file stays untouched');
+    const tags = await exif.readRaw(path.join(out, name), { readArgs: ['-XMP-dc:Subject', '-IPTC:Keywords', '-IFD0:XPKeywords'] });
+    const subject = Array.isArray(tags.Subject) ? tags.Subject : [tags.Subject];
+    assert.deepEqual(subject, ['keep']);
+    assert.ok(!JSON.stringify(tags).includes('remove'), `${name} should not retain removed keyword: ${JSON.stringify(tags)}`);
+  }
+});

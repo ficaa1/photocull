@@ -307,7 +307,11 @@ function updateXmp(xml, decision, settings) {
       collection(name, type, decision.sidecarMetadata.creators);
     } else {
       const value = metadata[key] || (restoring && decision.sidecarMetadata?.[key]);
-      if (value || Object.hasOwn(overrides, key)) collection(name, type, [value || '']);
+      const preservedAlt = type === 'Alt' && photoDescriptions(original)
+        .flatMap(d => Array.from(d.childNodes).filter(n => n.namespaceURI === DC && n.localName === name))
+        .some(el => el.getAttributeNS(RDF, 'parseType') === 'Resource'
+          || rdfChildren(rdfValue(el), 'Alt').some(alt => rdfChildren(alt, 'li').some(li => !isDefaultLanguage(li) || li.getAttributeNS(RDF, 'parseType') === 'Resource')));
+      if (value || Object.hasOwn(overrides, key) || restoring && preservedAlt) collection(name, type, [value || '']);
       else if (restoring) remove(DC, name);
     }
   }
