@@ -163,18 +163,22 @@ async function publish(staged, stagedStamp, target, folder, folderStamp, stage, 
 
 async function cleanupStage(folder, folderStamp, isCard, stage, stageStamp, stagedFiles) {
   try {
-    await verifyFolder(folder, folderStamp, isCard);
-    const current = await fs.lstat(stage, { bigint: true });
-    if (!current.isDirectory() || current.isSymbolicLink() || current.dev !== stageStamp.dev || current.ino !== stageStamp.ino) return;
+    const sameStage = async () => {
+      await verifyFolder(folder, folderStamp, isCard);
+      const current = await fs.lstat(stage, { bigint: true });
+      return current.isDirectory() && !current.isSymbolicLink() && current.dev === stageStamp.dev && current.ino === stageStamp.ino;
+    };
+    if (!(await sameStage())) return;
     for (const [file, stamp] of stagedFiles) {
       try {
+        if (!(await sameStage())) return;
         const stat = await fs.lstat(file, { bigint: true });
         if (stat.isFile() && !stat.isSymbolicLink() && stat.dev === stamp.dev && stat.ino === stamp.ino) {
           await fs.unlink(file);
         }
       } catch {}
     }
-    await fs.rmdir(stage).catch(() => {});
+    if (await sameStage()) await fs.rmdir(stage).catch(() => {});
   } catch {}
 }
 
