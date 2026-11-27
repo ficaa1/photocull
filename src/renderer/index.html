@@ -84,7 +84,7 @@
         <label class="toggle-row tether-flash-sub"><input type="checkbox" id="tether-flash-misfire-chime"> Warning tone</label>
         <p class="subtle small">The cooldown holds only the Capture button; the camera’s shutter always fires. Misfire alerts compare each frame with the last three.</p>
       </div></details>
-      <details class="tether-tool" id="tether-tool-camera" open><summary>Camera &amp; connection</summary><div class="tether-tool-body">
+      <details class="tether-tool" id="tether-tool-camera" open><summary>Capture source</summary><div class="tether-tool-body">
         <div class="tether-device-head"><span class="tether-label" id="tether-device-label">Cameras</span><button id="tether-discover" class="icon-button tether-icon-button" type="button" title="Look for USB cameras again" aria-label="Refresh cameras"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.6-4.5L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.6 4.5L20 16"/><path d="M20 20v-4h-4"/></svg></button></div>
         <ul id="tether-device" class="tether-devices" aria-labelledby="tether-device-label"></ul>
         <p id="tether-device-empty" class="subtle small tether-device-empty">No cameras found yet.</p>
@@ -109,6 +109,8 @@
           <div class="tether-row tether-wifi-submit"><button id="tether-wifi-cancel" class="button quiet" type="button">Cancel</button><button id="tether-wifi-connect" class="button" type="submit">Connect Wi-Fi</button></div>
           <p id="tether-wifi-status" class="subtle small" role="status" aria-live="polite"></p>
         </form>
+        <div class="tether-row"><button id="tether-hot-folder-watch" class="button quiet" type="button" disabled>Watch Hot Folder…</button><button id="tether-hot-folder-stop" class="button quiet" type="button" hidden>Stop Watching</button></div>
+        <div id="tether-hot-folder-status" role="status" hidden><span id="tether-hot-folder-path" class="tether-path"></span><p id="tether-hot-folder-message" class="tether-warning" hidden></p></div>
         <dl id="tether-camera-status" class="tether-status tether-online"><dt>Model</dt><dd id="tether-camera-model">—</dd><dt>Link</dt><dd id="tether-camera-usb">—</dd><dt>Battery</dt><dd id="tether-camera-battery" class="tabular">—</dd><dt>Save to</dt><dd><span id="tether-camera-destination" class="tether-badge-dest">—</span></dd></dl>
         <div class="tether-row tether-online"><button id="tether-reconnect" class="button quiet" type="button">Reconnect</button><button id="tether-disconnect" class="button quiet" type="button">Disconnect</button></div>
         <div class="tether-backfill tether-online"><button id="tether-backfill-pull" class="button quiet" type="button" title="Copy shots the camera saved to its card but never sent; the card is only read">Pull missed shots from card</button><label class="toggle-row"><input type="checkbox" id="tether-auto-backfill"> Auto-pull missed frames on reconnect</label><p id="tether-backfill-note" class="subtle small" role="status" aria-live="polite"></p></div>

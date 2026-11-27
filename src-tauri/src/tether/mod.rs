@@ -345,6 +345,7 @@ struct Inner {
     live: LiveViewHub,
     binding: Mutex<Option<Binding>>,
     actor: Mutex<Option<ActorHandle>>,
+    hot_folder: Mutex<Option<HotFolderTask>>,
     /// Unique to this launch: epochs restart with every launch, so they alone never tell an undated
     /// photo of this launch from one journaled by an earlier launch.
     cohort: String,
@@ -669,6 +670,7 @@ enum SetValue {
 enum Cmd {
     Bind(Binding, Value, Reply<Vec<Value>>),
     Connect(String, Option<ExpectedBody>, Reply<Value>),
+    ClaimHotFolder(Stamp, HotFolderTask, Reply<()>),
     Snapshot(Reply<Value>),
     TransfersSettled(Reply<bool>),
     Pause(Stamp, bool, Reply<Value>),
@@ -691,6 +693,11 @@ type Reply<T> = oneshot::Sender<TResult<T>>;
 struct ActorHandle {
     tx: mpsc::Sender<Cmd>,
     done: Arc<AtomicBool>,
+}
+
+struct HotFolderTask {
+    stop: Option<oneshot::Sender<()>>,
+    done: Option<oneshot::Receiver<()>>,
 }
 
 enum FocusOp {
@@ -759,6 +766,7 @@ impl TetherManager {
                 live: LiveViewHub::default(),
                 binding: Mutex::new(None),
                 actor: Mutex::new(None),
+                hot_folder: Mutex::new(None),
                 cohort: launch_cohort(),
                 epoch: AtomicU64::new(0),
                 state: Mutex::new((LinkState::Offline, None)),
@@ -799,6 +807,29 @@ impl TetherManager {
 
     fn binding(&self) -> Option<Binding> {
         self.inner.binding.lock().unwrap().clone()
+    }
+
+    async fn stop_hot_folder(&self, binding: &Binding) -> TResult<()> {
+        let signals = self
+            .inner
+            .hot_folder
+            .lock()
+            .unwrap()
+            .as_mut()
+            .and_then(|task| Some((task.stop.take()?, task.done.take()?)));
+        if let Some((stop, done)) = signals {
+            let _ = stop.send(());
+            let stopped = node(
+                &self.inner.app,
+                "tether-hot-folder",
+                json!([binding.shoot_id, "stop"]),
+            )
+            .await;
+            let _ = done.await;
+            self.inner.hot_folder.lock().unwrap().take();
+            stopped?;
+        }
+        Ok(())
     }
 
     fn check(&self, shoot_id: &str, epoch: Option<u64>) -> TResult<Binding> {
@@ -855,6 +886,16 @@ impl TetherManager {
     pub fn shutdown(&self) {
         self.inner.cancel.store(true, Ordering::SeqCst);
         self.inner.abort_connect();
+        if let Some(stop) = self
+            .inner
+            .hot_folder
+            .lock()
+            .unwrap()
+            .take()
+            .and_then(|task| task.stop)
+        {
+            let _ = stop.send(());
+        }
         self.inner.live.close();
         let sender = self.inner.actor.lock().unwrap().take();
         if let Some(ActorHandle { tx, .. }) = sender {
@@ -1810,6 +1851,26 @@ impl Actor {
                 let result = self.connect(&device_id, true, expect.as_ref());
                 let _ = reply.send(result);
             }
+            Cmd::ClaimHotFolder(stamp, task, reply) => {
+                let result = self.check_stamp(&stamp).and_then(|_| {
+                    let mut current = self.inner.hot_folder.lock().unwrap();
+                    if current.is_some() {
+                        return Err(TetherError::new(
+                            "CAMERA_BUSY",
+                            "Stop watching the current Hot Folder first.",
+                        ));
+                    }
+                    if self.state != LinkState::Offline {
+                        return Err(TetherError::new(
+                            "CAMERA_BUSY",
+                            "Disconnect the camera before watching a Hot Folder.",
+                        ));
+                    }
+                    *current = Some(task);
+                    Ok(())
+                });
+                let _ = reply.send(result);
+            }
             Cmd::Snapshot(reply) => {
                 let _ = reply.send(Ok(self.snapshot()));
             }
@@ -2115,6 +2176,12 @@ impl Actor {
         explicit: bool,
         expect: Option<&ExpectedBody>,
     ) -> TResult<Value> {
+        if self.inner.hot_folder.lock().unwrap().is_some() {
+            return Err(TetherError::new(
+                "CAMERA_BUSY",
+                "Stop watching the Hot Folder to connect a camera.",
+            ));
+        }
         let binding = self
             .inner
             .binding
@@ -4070,57 +4137,66 @@ fn spawn_publish(
     epoch: u64,
 ) {
     inner.outstanding.fetch_add(1, Ordering::SeqCst);
-    tauri::async_runtime::spawn(async move {
-        let _guard = inner.publish_lock.lock().await;
-        let result = publish(
+    tauri::async_runtime::spawn(publish_member(inner, binding, plan, receipt, shot, epoch));
+}
+
+async fn publish_member(
+    inner: Arc<Inner>,
+    binding: Binding,
+    plan: MemberPlan,
+    receipt: StageReceipt,
+    shot: Value,
+    epoch: u64,
+) {
+    let _guard = inner.publish_lock.lock().await;
+    let result = publish(
+        &inner,
+        &binding,
+        &plan.member_id,
+        &plan.name,
+        &plan.stage_rel,
+        receipt,
+        shot,
+    )
+    .await;
+    inner.outstanding.fetch_sub(1, Ordering::SeqCst);
+    match result {
+        Ok(_) => emit_transfer(
             &inner,
-            &binding,
-            &plan.member_id,
-            &plan.name,
-            &plan.stage_rel,
-            receipt,
-            shot,
-        )
-        .await;
-        inner.outstanding.fetch_sub(1, Ordering::SeqCst);
-        match result {
-            Ok(_) => emit_transfer(
-                &inner,
-                Some(&binding.shoot_id),
-                epoch,
-                Some(&plan.exposure_id),
-                Some(&plan.member_id),
-                "ingested",
-                0,
-                plan.declared,
-                None,
-            ),
-            Err(e) => {
-                crate::logs::write(&format!("tether publish {}: {}", e.code, e.message));
-                if !e.journaled {
-                    let app = inner.app.clone();
-                    let code = e.code.clone();
-                    let _ = node(
+            Some(&binding.shoot_id),
+            epoch,
+            Some(&plan.exposure_id),
+            Some(&plan.member_id),
+            "ingested",
+            0,
+            plan.declared,
+            None,
+        ),
+        Err(e) => {
+            crate::logs::write(&format!("tether publish {}: {}", e.code, e.message));
+            if !e.journaled {
+                let app = inner.app.clone();
+                let code = e.code.clone();
+                let _ = node(
                         &app,
                         "tether-journal",
                         json!([binding.shoot_id, "issue", { "memberId": plan.member_id, "code": journal_code(&code), "message": e.message, "retryable": e.retryable }]),
                     )
                     .await;
-                }
-                emit_transfer(
-                    &inner,
-                    Some(&binding.shoot_id),
-                    epoch,
-                    Some(&plan.exposure_id),
-                    Some(&plan.member_id),
-                    "failed",
-                    0,
-                    plan.declared,
-                    None,
-                );
             }
+            emit_transfer(
+                &inner,
+                Some(&binding.shoot_id),
+                epoch,
+                Some(&plan.exposure_id),
+                Some(&plan.member_id),
+                "failed",
+                0,
+                plan.declared,
+                None,
+            );
         }
-    });
+    }
 }
 
 fn journal_code(code: &str) -> &str {
@@ -5048,6 +5124,12 @@ pub async fn tether_open(
             }
             let rebinding = tether.binding();
             if let Some(bound) = &rebinding {
+                if tether.inner.hot_folder.lock().unwrap().is_some() {
+                    return Err(TetherError::new(
+                        "CAMERA_BUSY",
+                        "Stop watching the Hot Folder before reopening the shoot.",
+                    ));
+                }
                 let same = dunce::canonicalize(&chosen).is_ok_and(|root| root == bound.root);
                 if resume.is_some() || !same {
                     return Err(TetherError::new(
@@ -5247,6 +5329,131 @@ pub async fn tether_location(
 }
 
 #[tauri::command]
+pub async fn tether_hot_folder(
+    window: WebviewWindow,
+    tether: State<'_, TetherManager>,
+    shoot_id: String,
+    watching: bool,
+) -> Result<Value, String> {
+    let tether = tether.inner().clone();
+    Ok(envelope(
+        async move {
+            tether.check(&shoot_id, None)?;
+            let picked = if watching {
+                let Some(folder) = window
+                    .dialog()
+                    .file()
+                    .set_parent(&window)
+                    .set_title("Choose the incoming Hot Folder")
+                    .blocking_pick_folder()
+                    .and_then(|p| p.into_path().ok())
+                else {
+                    return Ok(Value::Null);
+                };
+                Some(folder.into_os_string().into_string().map_err(|_| {
+                    TetherError::new(
+                        "UNSUPPORTED",
+                        "Choose an incoming folder with a Unicode path.",
+                    )
+                })?)
+            } else {
+                None
+            };
+            let _guard = tether.inner.shoot_lock.lock().await;
+            let binding = tether.check(&shoot_id, None)?;
+            let Some(picked) = picked else {
+                tether.stop_hot_folder(&binding).await?;
+                return Ok(Value::Null);
+            };
+            let (stop_tx, stop_rx) = oneshot::channel();
+            let (done_tx, done_rx) = oneshot::channel();
+            let stamp = Stamp {
+                shoot_id: shoot_id.clone(),
+                epoch: None,
+            };
+            let task = HotFolderTask {
+                stop: Some(stop_tx),
+                done: Some(done_rx),
+            };
+            tether
+                .ask(|reply| Cmd::ClaimHotFolder(stamp, task, reply))
+                .await?;
+            let result = node(
+                &tether.inner.app,
+                "tether-hot-folder",
+                json!([shoot_id, "start", picked]),
+            )
+            .await;
+            let result = match result {
+                Ok(result) => result,
+                Err(error) => {
+                    tether.inner.hot_folder.lock().unwrap().take();
+                    return Err(error);
+                }
+            };
+            let inner = tether.inner.clone();
+            tauri::async_runtime::spawn(async move {
+                run_hot_folder(inner, binding, stop_rx).await;
+                let _ = done_tx.send(());
+            });
+            Ok(result)
+        }
+        .await,
+    ))
+}
+
+async fn run_hot_folder(inner: Arc<Inner>, binding: Binding, mut stop: oneshot::Receiver<()>) {
+    while matches!(stop.try_recv(), Err(oneshot::error::TryRecvError::Empty)) {
+        match node(
+            &inner.app,
+            "tether-hot-folder",
+            json!([binding.shoot_id, "next"]),
+        )
+        .await
+        {
+            Ok(record) if record.is_null() => {}
+            Ok(record) => {
+                let plan = (|| -> TResult<MemberPlan> {
+                    Ok(MemberPlan {
+                        exposure_id: str_field(&record, "exposureId")?,
+                        member_id: str_field(&record, "memberId")?,
+                        stage_rel: str_field(&record, "stageRelPath")?,
+                        status: "staged".into(),
+                        name: str_field(&record, "originalName")?,
+                        declared: record["bytes"].as_u64(),
+                    })
+                })();
+                if let (Ok(plan), Some(receipt)) = (plan, journaled_receipt(&record)) {
+                    let epoch = inner.epoch.load(Ordering::SeqCst);
+                    inner.outstanding.fetch_add(1, Ordering::SeqCst);
+                    publish_member(
+                        inner.clone(),
+                        binding.clone(),
+                        plan,
+                        receipt,
+                        Value::Null,
+                        epoch,
+                    )
+                    .await;
+                    continue;
+                }
+                crate::logs::write("The Hot Folder returned an invalid stage receipt.");
+            }
+            Err(e) => {
+                crate::logs::write(&format!("Hot Folder {}: {}", e.code, e.message));
+                break;
+            }
+        }
+        if tokio::time::timeout(Duration::from_millis(500), &mut stop)
+            .await
+            .is_ok()
+        {
+            break;
+        }
+    }
+}
+
+#[tauri::command]
 pub async fn tether_backup_location(
     window: WebviewWindow,
     app: AppHandle,
@@ -5281,6 +5488,7 @@ pub async fn tether_backup_location(
                 "clear" | "enable" | "disable" | "retry" => None,
                 _ => return Err(TetherError::new("UNSUPPORTED", "Unknown backup operation.")),
             };
+            let _guard = tether.inner.shoot_lock.lock().await;
             tether.check(&shoot_id, None)?;
             node(
                 &app,
@@ -5840,6 +6048,7 @@ pub async fn tether_control(
                     tether.inner.abort_connect();
                     let _shoot_guard = tether.inner.shoot_lock.lock().await;
                     tether.check(&shoot_id, None)?;
+                    tether.stop_hot_folder(&binding).await?;
                     // The camera is remembered with the shoot so a resumed session can reconnect to it.
                     let mut camera = Value::Null;
                     if tether.inner.actor.lock().unwrap().is_some() {

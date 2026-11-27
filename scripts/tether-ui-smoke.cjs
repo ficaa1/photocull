@@ -66,6 +66,12 @@ function simulateCamera() {
       return { deviceId: `wifi:${address}` };
     },
     tetherState: async session => T.shoot?.session === session ? structuredClone(T.shoot) : null,
+    tetherHotFolder: async (shootId, watching) => {
+      log('hot-folder', shootId, watching);
+      if (watching && T.cancelHotFolder) return null;
+      T.shoot.hotFolder = watching ? { path: '/Studio/Incoming', message: '' } : null;
+      return T.shoot.hotFolder;
+    },
     tetherBackupLocation: async ({ op, shootId, expectedConfigRev }) => {
       const s = T.shoot;
       if (shootId !== s.shootId || expectedConfigRev !== s.configRev) throw new Error('Stale backup command');
@@ -154,7 +160,7 @@ function simulateCamera() {
     lensDatabase: async () => ({ installed: false }),
     onTetherConnection: on('tether-connection'), onTetherProperties: on('tether-properties'), onTetherConfig: on('tether-config-changed'), onTetherTransfer: on('tether-transfer'),
     onTetherLibrary: on('tether-library-delta'), onTetherLive: on('tether-live-state'), onTetherIssue: on('tether-issue'), onTetherComposition: on('tether-composition'),
-    onTetherBackfill: on('tether-backfill'), onTetherBackup: on('tether-backup-changed'),
+    onTetherBackfill: on('tether-backfill'), onTetherBackup: on('tether-backup-changed'), onTetherHotFolder: on('tether-hot-folder-status'),
   });
 }
 
@@ -198,6 +204,10 @@ async function main() {
     const histogramInk = () => page.evaluate(() => { const c = document.querySelector('#tether-inspector-histogram'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 3; i < d.length; i += 4) if (d[i]) n++; return n; });
 
     assert.equal(await page.locator('#tether-status-pill').textContent(), 'Desktop only');
+    assert.equal(await page.locator('#tether-hot-folder-watch').isDisabled(), true);
+    const rpc = new URL(page.url()); rpc.pathname = '/rpc';
+    const hotFolderRpc = await page.request.post(rpc.href, { data: { method: 'tether-hot-folder', params: ['shoot-1', 'start', '/Studio/Incoming'] } });
+    assert.match((await hotFolderRpc.json()).error, /Unknown request: tether-hot-folder/);
     assert.equal(await page.locator('#inspector-tabs').count(), 0, 'the inspector has no Details/Tether sub-tabs');
     for (const selector of ['#tether-dock', '#tether-stage-bar', '#tether-inspector-histogram-panel']) assert.equal(await visible(selector), false, `${selector} stays out of plain Review`);
     assert.equal(await visible('#sources'), true); assert.equal(await visible('#image-details'), true);
@@ -418,6 +428,43 @@ async function main() {
     await page.reload();
     await page.locator('#tether-sidebar-section').waitFor();
     await page.evaluate(async folder => { syncSettings(await photocull.settings({ tether: { follow: { mode: 'whenReady', pauseOnInspect: false, developedReview: false } } })); await window.loadTestFolder(folder); }, photos);
+    await page.waitForFunction(() => document.querySelector('#count-all').textContent === '4');
+    await page.evaluate(() => { __camera.devices = []; });
+    await page.locator('#tether-mode').click();
+    await page.locator('#tether-hot-folder-watch').click();
+    await page.locator('#tether-start-confirm').click();
+    await page.locator('#tether-hot-folder-stop').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#tether-hot-folder-path').textContent(), '/Studio/Incoming');
+    assert.equal(await page.locator('#tether-status-pill').textContent(), 'Watching Hot Folder');
+    assert.equal(await page.locator('#tether-capture').isDisabled(), true);
+    assert.equal(await visible('#tether-offline'), false);
+    assert.deepEqual(await page.evaluate(() => __camera.calls.filter(c => c[0] === 'connect' || c[0] === 'hot-folder')), [['hot-folder', 'shoot-1', true]]);
+    const followed = await page.evaluate(() => {
+      const item = state.session.items.find(i => i.id !== state.selected && !i.raw);
+      __camera.emit('tether-library-delta', { shootId: 'shoot-1', session: state.session.id, rev: 1, firstArrival: true, ordinal: 1,
+        exposureId: 'hot-exposure', itemId: item.id, upserts: [{ ...item, exposureId: 'hot-exposure', ordinal: 1 }] });
+      return item.id;
+    });
+    await page.waitForFunction(id => state.selected === id && tether.follow.shownOrdinal === 1, followed);
+    if (process.env.PHOTOCULL_TETHER_SCREENSHOTS) {
+      const screenshots = path.resolve(process.env.PHOTOCULL_TETHER_SCREENSHOTS);
+      await fs.mkdir(screenshots, { recursive: true });
+      await page.screenshot({ path: path.join(screenshots, 'hot-folder-watching.png') });
+    }
+    await page.evaluate(() => __camera.emit('tether-hot-folder-status', { shootId: 'shoot-1', path: '/Studio/Incoming', message: 'The incoming folder is unavailable.' }));
+    assert.equal(await page.locator('#tether-status-pill').textContent(), 'Hot Folder paused');
+    await page.locator('#tether-hot-folder-stop').click();
+    await page.locator('#tether-hot-folder-watch').waitFor({ state: 'visible' });
+    assert.deepEqual(await page.evaluate(() => [tether.active(), document.activeElement.id]), [true, 'tether-hot-folder-watch']);
+    await page.evaluate(() => { __camera.cancelHotFolder = true; });
+    await page.locator('#tether-hot-folder-watch').click();
+    await page.waitForFunction(() => !tether.hotFolderBusy);
+    assert.equal(await visible('#tether-hot-folder-status'), false);
+    check('Hot Folder starts without a camera, follows a new exposure, and stops independently of the session');
+
+    await page.reload();
+    await page.locator('#tether-sidebar-section').waitFor();
+    await page.evaluate(folder => window.loadTestFolder(folder), photos);
     await page.waitForFunction(() => document.querySelector('#count-all').textContent === '4');
     const calls = () => page.evaluate(() => __camera.calls);
     const clearCalls = () => page.evaluate(() => { __camera.calls = []; });

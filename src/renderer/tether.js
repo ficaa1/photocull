@@ -105,6 +105,7 @@
     constructor(host) {
       this.host = host; this.api = host.api;
       this.shoot = null; this.jobName = '';
+      this.hotFolderBusy = false;
       this.camera = { state: 'offline', epoch: 0, device: null, properties: new Map(), propRev: 0, actions: {}, capabilities: {}, devices: [], deviceId: null, paused: false, reason: '' };
       // wanted: the user asked for Live View, so a stream the camera restarts after a reconnect is adopted.
       this.live = { enabled: false, wanted: false, streamId: null, retired: new Set(), seq: 0, open: false, docked: false, loupe: false, center: { x: .5, y: .5 }, bitmap: null, fps: 0, frames: [], poll: 0, size: null };
@@ -162,6 +163,7 @@
     canCapture() {
       if (!this.api.canTether) return 'Tethering needs the PhotoCull desktop app.';
       if (!this.shoot) return 'Start a tethered session first.';
+      if (this.shoot.hotFolder) return 'Capture using the app that writes to the Hot Folder.';
       if (!this.connected()) return this.camera.state === 'lost' ? 'Camera connection lost. Reconnecting…' : 'Connect a camera to capture.';
       if (this.camera.paused || this.camera.state === 'paused') return 'Tether is paused. Resume to capture (Shift+T).';
       if (this.cameraOnly()) return 'The camera saves to its card only. Choose a destination that sends files to this computer.';
@@ -287,6 +289,13 @@
         if (this.shoot?.shootId !== event.shootId || this.shoot.session !== event.session) return;
         this.shoot.backup = event.backup;
         this.renderLocation();
+      });
+      api.onTetherHotFolder(event => {
+        if (event.shootId !== this.shoot?.shootId) return;
+        const current = this.shoot.hotFolder;
+        if (current ? event.path !== current.path : !this.hotFolderBusy) return;
+        this.shoot.hotFolder = { path: event.path, message: event.message };
+        this.render();
       });
       api.onTetherLibrary(delta => this.receiveDelta(delta));
       api.onTetherConnection(event => { if (this.shoot && event.shootId && event.shootId !== this.shoot.shootId) return; this.applyConnection(event); });
@@ -549,6 +558,8 @@
       $('tether-discover').onclick = () => void this.discover();
       // Wi-Fi: discovery is a user action because it can trigger the macOS Local Network prompt.
       $('tether-wifi-discover').onclick = () => void this.discoverWifi();
+      $('tether-hot-folder-watch').onclick = () => this.shoot ? void this.changeHotFolder(true) : this.openStart(true);
+      $('tether-hot-folder-stop').onclick = () => void this.changeHotFolder(false);
       $('tether-wifi-add').onclick = () => this.toggleWifiForm();
       $('tether-wifi-cancel').onclick = () => this.toggleWifiForm(false);
       $('tether-wifi-auth').onchange = () => { this.wifi.pending = null; $('tether-wifi-status').textContent = ''; this.renderWifi(); };
@@ -732,21 +743,26 @@
       this.syncDeveloped(); this.renderStatus(); this.renderResume(); this.renderCamera(); this.renderWifi(); this.renderLocation(); this.renderNaming(); this.renderAdjustments(); this.renderComposition(); this.renderFollow(); this.renderTelemetry(); this.renderIssues(); this.renderLive(); this.renderPill(); this.renderTest(); this.renderWhiteBalancePick(); this.renderBackfill();
     }
     renderStatus() {
-      const state = !this.api.canTether ? 'unavailable' : !this.shoot ? 'idle' : this.camera.state === 'offline' ? 'armed' : this.camera.paused ? 'paused' : this.camera.state;
+      const hot = this.shoot?.hotFolder;
+      const state = !this.api.canTether ? 'unavailable' : !this.shoot ? 'idle' : hot ? hot.message ? 'paused' : 'ready' : this.camera.state === 'offline' ? 'armed' : this.camera.paused ? 'paused' : this.camera.state;
       const labels = { unavailable: 'Desktop only', idle: 'Not tethered', armed: 'No camera', ready: this.camera.device?.model || 'Connected', paused: 'Paused', lost: 'Camera lost', reconnecting: 'Reconnecting…', discovering: 'Searching…', connecting: 'Connecting…', busy: 'Busy', draining: 'Finishing transfers…' };
-      for (const id of ['tether-status-pill', 'tether-dock-status']) { const pill = $(id); pill.dataset.state = state; pill.textContent = labels[state] || state; }
+      const label = hot ? hot.message ? 'Hot Folder paused' : 'Watching Hot Folder' : labels[state] || state;
+      for (const id of ['tether-status-pill', 'tether-dock-status']) {
+        const pill = $(id); pill.dataset.state = state; pill.title = label;
+        pill.textContent = hot && id === 'tether-dock-status' ? (hot.message ? 'Paused' : 'Watching') : label;
+      }
       const start = $('tether-sidebar-start');
       start.textContent = this.shoot ? 'Open Tether' : 'Start…';
       start.title = this.shoot ? 'Open the Tether workspace' : this.api.canTether ? 'Start tethered session…' : 'Open the Tether workspace; camera control needs the desktop app';
       $('tether-dock-start').hidden = !!this.shoot || !this.api.canTether;
       $('tether-stop').hidden = !this.shoot || !this.api.canTether;
-      const battery = this.battery(); $('tether-battery').hidden = !battery; $('tether-battery').textContent = battery;
+      const battery = hot ? '' : this.battery(); $('tether-battery').hidden = !battery; $('tether-battery').textContent = battery;
       this.renderTabSignal();
       $('tether-panel-note').textContent = !this.api.canTether ? 'Camera control needs the PhotoCull desktop app. Composition aids, naming and follow defaults still work here.' : !this.shoot ? 'Editing defaults for the next tethered session.' : '';
     }
     renderTabSignal() {
-      const signal = this.live.enabled ? 'live' : this.connected() ? 'connected' : this.shoot ? 'armed' : '';
-      const short = { live: 'Live', connected: 'Connected', armed: 'Armed' }[signal];
+      const signal = this.shoot?.hotFolder ? 'watching' : this.live.enabled ? 'live' : this.connected() ? 'connected' : this.shoot ? 'armed' : '';
+      const short = { watching: 'Hot Folder', live: 'Live', connected: 'Connected', armed: 'Armed' }[signal];
       const name = signal === 'live' ? 'Live View on' : short;
       const dot = $('tether-mode-dot');
       dot.hidden = !signal; dot.dataset.state = signal;
@@ -793,9 +809,20 @@
     }
     renderCamera() {
       this.host.emptyChanged();
+      const hot = this.shoot?.hotFolder, watch = $('tether-hot-folder-watch');
       const online = this.connected() || ['lost', 'reconnecting', 'paused'].includes(this.camera.state);
       for (const node of document.querySelectorAll('#tether-tool-camera .tether-online')) node.hidden = !online;
-      $('tether-offline').hidden = online;
+      $('tether-offline').hidden = online || !!hot;
+      watch.hidden = !!hot;
+      watch.disabled = !this.api.canTether || this.hotFolderBusy || !['offline', 'discovering'].includes(this.camera.state);
+      watch.title = !this.api.canTether ? 'Watching a Hot Folder needs the desktop app' : online ? 'Disconnect the camera to watch a Hot Folder' : '';
+      $('tether-hot-folder-stop').hidden = !hot;
+      $('tether-hot-folder-stop').disabled = this.hotFolderBusy;
+      $('tether-hot-folder-status').hidden = !hot;
+      const folderPath = $('tether-hot-folder-path'), message = $('tether-hot-folder-message');
+      if (folderPath.textContent !== (hot?.path || '')) folderPath.textContent = hot?.path || '';
+      if (message.textContent !== (hot?.message || '')) message.textContent = hot?.message || '';
+      message.hidden = !hot?.message;
       $('tether-offline-title').textContent = !this.api.canTether ? 'Camera control needs the desktop app' : this.camera.reason || (this.camera.state === 'discovering' ? 'Looking for cameras…' : 'No camera connected');
       $('tether-discover').disabled = !this.api.canTether || this.camera.state === 'discovering';
       $('tether-wifi-discover').disabled = !this.api.canTether || this.wifi.busy;
@@ -819,7 +846,7 @@
       $('tether-pause').disabled = !this.enabled('tether-pause');
       $('tether-pause').setAttribute('aria-pressed', String(this.camera.paused)); $('tether-pause').textContent = this.camera.paused ? 'Resume' : 'Pause';
       $('tether-live-toggle').disabled = !this.enabled('tether-live-view'); $('tether-live-toggle').setAttribute('aria-pressed', String(this.live.open));
-      $('tether-reconnect').disabled = !this.shoot || !this.camera.deviceId; $('tether-disconnect').disabled = !this.connected();
+      $('tether-reconnect').disabled = !this.shoot || !this.camera.deviceId; $('tether-disconnect').disabled = !online;
       for (const span of $('tether-lcd').children) {
         const key = span.dataset.lcd, p = this.camera.properties.get(key), text = p ? String(p.display ?? p.value ?? '—') : '—';
         span.textContent = key === 'iso' && !/iso/i.test(text) ? `ISO ${text}` : key === 'evComp' && p && !/ev/i.test(text) ? `${text} EV` : text;
@@ -831,7 +858,7 @@
     }
     renderDevices() {
       const devices = this.camera.devices.length ? this.camera.devices : this.camera.device ? [this.camera.device] : [], list = $('tether-device');
-      const busy = ['connecting', 'discovering'].includes(this.camera.state);
+      const busy = ['connecting', 'discovering'].includes(this.camera.state) || this.hotFolderBusy || !!this.shoot?.hotFolder;
       const signature = JSON.stringify([devices.map(d => [d.deviceId, d.model, d.transport, d.availability]), this.camera.deviceId, this.camera.state, !!this.shoot, busy]);
       if (list.dataset.signature !== signature) {
         list.dataset.signature = signature;
@@ -949,7 +976,7 @@
       $('tether-wifi-fingerprint-help').textContent = pending?.code === 'SSH_HOST_KEY_CHANGED'
         ? 'This camera presented a different key from the one PhotoCull trusted. Connect only if you reset its access authentication and the key matches Network Option → Access Authen. Info.'
         : 'Compare it with MENU → Network → Network Option → Access Authen. Info on the camera. Connect only if they match.';
-      $('tether-wifi-connect').disabled = this.wifi.busy || !this.api.canTether || !!pending;
+      $('tether-wifi-connect').disabled = this.wifi.busy || !this.api.canTether || !!pending || this.hotFolderBusy || !!this.shoot?.hotFolder;
       $('tether-wifi-trust').disabled = $('tether-wifi-trust-cancel').disabled = this.wifi.busy;
       if (!this.api.canTether && !$('tether-wifi-status').textContent) $('tether-wifi-status').textContent = 'Connecting over Wi-Fi needs the PhotoCull desktop app.';
     }
@@ -1228,11 +1255,12 @@
     }
 
     // ---- Session and camera ----
-    openStart() {
+    openStart(watchHotFolder = false) {
       if (this.host.blocked()) return;
       this.openPanel();
       if (!this.api.canTether) return this.host.toast('Tethering needs the PhotoCull desktop app. Composition aids, naming and follow defaults still work here.');
       if (document.querySelector('dialog[open]')) return;
+      this.watchAfterStart = watchHotFolder;
       const session = this.host.session();
       $('tether-start-open').disabled = !session || session.removable;
       $('tether-start-open-path').textContent = session ? ` · ${session.folder}` : '';
@@ -1251,6 +1279,7 @@
     endOpening() { this.opening = false; $('tether-start-confirm').disabled = false; this.renderResume(); }
     async start() {
       if (this.shoot || !this.beginOpening()) return;
+      const watch = this.watchAfterStart;
       const useOpenFolder = document.querySelector('input[name="tether-start-root"]:checked')?.value === 'open';
       const layout = document.querySelector('input[name="tether-start-layout"]:checked')?.value || 'single';
       $('tether-start-status').textContent = 'Preparing capture folder…';
@@ -1260,7 +1289,9 @@
         if (!result) { $('tether-start-status').textContent = ''; return; }
         $('tether-start-dialog').close();
         await this.opened(result);
-        this.openPanel(); void this.discover(true);
+        this.openPanel();
+        if (watch) await this.changeHotFolder(true);
+        else void this.discover(true);
       } catch (error) { $('tether-start-status').textContent = error.message; }
       finally { this.endOpening(); }
     }
@@ -1284,6 +1315,7 @@
     async resume(shootId) {
       const entry = this.recent.find(r => r.shootId === shootId), dialog = $('tether-start-dialog');
       if (!entry || this.shoot || this.opening || !this.api.canTether || !dialog.open && this.host.blocked()) return;
+      const watch = dialog.open && this.watchAfterStart;
       const report = message => { if (dialog.open) $('tether-start-status').textContent = message; else if (message) this.host.toast(message); };
       this.beginOpening();
       if (dialog.open) $('tether-start-status').textContent = `Reopening ${entry.name}…`;
@@ -1298,7 +1330,8 @@
         this.host.toast(entry.relative && location && location.relative !== entry.relative
           ? `Shot folder “${entry.shot}” is gone; capturing into ${location.leaf}. Next ${this.shoot.counters?.next ?? entry.next}.`
           : `Resumed ${location?.leaf || entry.name} · next ${this.shoot?.counters?.next ?? entry.next}`);
-        void this.discover(true, entry.camera);
+        if (watch) await this.changeHotFolder(true);
+        else void this.discover(true, entry.camera);
       } catch (error) { report(error.message); void this.loadRecent(); }
       finally { this.endOpening(); }
     }
@@ -1317,7 +1350,7 @@
         const result = await this.api.tetherDevices();
         this.camera.devices = result.devices || [];
         if (!this.connected()) this.camera.state = 'offline';
-        const pending = autoConnect && !!this.shoot && this.openSeq === open && !this.connected();
+        const pending = autoConnect && !!this.shoot && this.openSeq === open && !this.connected() && !this.hotFolderBusy && !this.shoot.hotFolder;
         const available = this.camera.devices.filter(d => !d.availability || d.availability === 'available'), usb = available.filter(d => transportOf(d) === 'usb');
         const preferred = pending ? this.preferredDevice(available, camera) : null;
         if (!this.camera.devices.length) this.camera.reason = 'No camera found. Check the setup steps below, then retry.';
@@ -1329,7 +1362,7 @@
       this.render();
     }
     async connect(deviceId, expect = null) {
-      if (!this.shoot || !deviceId) return;
+      if (!this.shoot || !deviceId || this.shoot.hotFolder || this.hotFolderBusy) return;
       const open = this.openSeq;
       const device = this.camera.devices.find(d => d.deviceId === deviceId);
       if (device && transportOf(device) === 'wifi' && (device.needsCredentials || device.auth === 'unknown' && device.address)) {
@@ -1346,6 +1379,23 @@
         if (device && transportOf(device) === 'wifi' && ['SSH_CREDENTIALS_REQUIRED', 'SSH_AUTH_FAILED', 'AUTH_CHOICE_REQUIRED', 'AUTH_MODE_REQUIRED', ...HOST_KEY].includes(error.code)) {
           this.carryExpect(deviceId, expect); this.openWifiForDevice(device, error);
         }
+      }
+    }
+    async changeHotFolder(watching) {
+      if (!this.shoot || this.hotFolderBusy) return;
+      const shootId = this.shoot.shootId, open = this.openSeq;
+      this.hotFolderBusy = true; this.render();
+      let changed = false;
+      try {
+        if (watching) await this.flush();
+        const result = await this.api.tetherHotFolder(shootId, watching);
+        if (this.openSeq !== open || watching && !result) return;
+        if (!watching || this.shoot.hotFolder?.path !== result.path) this.shoot.hotFolder = result;
+        changed = true;
+      } catch (error) { this.host.toast(error.message); }
+      finally {
+        this.hotFolderBusy = false; this.render();
+        if (changed && this.openSeq === open) $(watching ? 'tether-hot-folder-stop' : 'tether-hot-folder-watch').focus();
       }
     }
     // A resumed shoot's body check survives the Wi-Fi sign-in it needs, for that camera and open only.

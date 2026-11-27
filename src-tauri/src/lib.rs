@@ -584,6 +584,7 @@ pub fn run() {
             tether::tether_open,
             tether::tether_location,
             tether::tether_backup_location,
+            tether::tether_hot_folder,
             tether::tether_devices,
             tether::tether_discover_wifi,
             tether::tether_add_wifi,

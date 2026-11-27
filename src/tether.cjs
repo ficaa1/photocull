@@ -1,11 +1,12 @@
 // Tethered capture coordinator (docs/tether-c1-spec.md). The Tauri shell owns the camera, staging
-// downloads and exclusive publication; this side owns the durable shoot ledger, next-capture policy,
-// naming, collision-free stem reservation and incremental Library ingestion.
+// downloads and exclusive publication; this side owns folder arrivals, the durable shoot ledger,
+// next-capture policy, naming, stem reservation and incremental Library ingestion.
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const { hashFile } = require('./backup.cjs');
 const { backupState, identifies, hasAncestor, markRoot, checkRoot, backupDirectory, backupStem, reservedStems, availableStem, cleanPartial, sweepPartial, mirrorFile, publishedReceipts } = require('./tether-backup.cjs');
+const { HotFolder } = require('./tether-hot-folder.cjs');
 const { atomicWrite, normalizeCaptureMetadata, sidecarPaths } = require('./xmp.cjs');
 const { checkSettings } = require('./develop.cjs');
 const { TETHER, normalizeTether } = require('./preferences.cjs');
@@ -139,8 +140,8 @@ function copyGroups(base, source, groups) {
 }
 
 class TetherService {
-  constructor({ dataDir, library, settings, presets = () => [], recipes, send = () => {}, isCard = async () => false, dimensions = async () => null, onDelta = () => {}, renameExclusive, now = () => new Date() }) {
-    Object.assign(this, { library, settings, presets, recipes, send, isCard, dimensions, onDelta, renameExclusive, now });
+  constructor({ dataDir, library, settings, presets = () => [], recipes, send = () => {}, isCard = async () => false, dimensions = async () => null, onDelta = () => {}, renameExclusive, exif, now = () => new Date() }) {
+    Object.assign(this, { library, settings, presets, recipes, send, isCard, dimensions, onDelta, renameExclusive, exif, now });
     this.dir = path.join(dataDir, 'tether');
     this.ledgers = new Map(); this.queues = new Map(); this.primaries = new Map();
     this.cameraCounters = { version: 1, bodies: {} }; this.counterWrites = Promise.resolve();
@@ -185,8 +186,9 @@ class TetherService {
   }
   async close() {
     this.closing = true;
+    this.hotFolder?.cancel();
     this.stopBackupMonitor();
-    await Promise.allSettled([...this.queues.values(), this.counterWrites, this.backupWork]);
+    await Promise.allSettled([...this.queues.values(), this.counterWrites, this.backupWork, this.hotFolder?.running]);
   }
 
   ledgerFile(shootId) { return path.join(this.dir, 'shoots', shootId + '.json'); }
@@ -279,9 +281,10 @@ class TetherService {
     const list = [...newest.values()].sort((a, b) => b.stoppedAt.localeCompare(a.stoppedAt)).slice(0, RECENT_SHOOTS);
     return Promise.all(list.map(async ({ shoot, stoppedAt }) => {
       const stat = await fs.stat(shoot.canonicalRoot).catch(() => null);
+      const cameraModel = shoot.lastCaptureFromFolder ? null : shoot.lastCamera?.model;
       return { shootId: shoot.shootId, folder: shoot.canonicalRoot, name: path.basename(shoot.canonicalRoot), layout: shoot.layout, relative: shoot.activeRelDir,
         shot: shoot.activeRelDir.split('/').at(-1) || '', next: shoot.counters.next,
-        camera: shoot.lastDevice ? { ...shoot.lastDevice } : shoot.lastCamera?.model ? { deviceId: null, model: shoot.lastCamera.model } : null, stoppedAt, available: !!stat?.isDirectory() && `${stat.dev}:${stat.ino}` === shoot.folderId };
+        camera: shoot.lastDevice ? { ...shoot.lastDevice } : cameraModel ? { deviceId: null, model: cameraModel } : null, stoppedAt, available: !!stat?.isDirectory() && `${stat.dev}:${stat.ino}` === shoot.folderId };
     }));
   }
 
@@ -462,6 +465,7 @@ class TetherService {
   }
 
   async backupLocation(shootId, expectedRev, op, picked = null) {
+    const source = this.hotFolder?.shootId === shootId ? this.hotFolder : null;
     let destination;
     const primary = this.ledger(shootId).shoot;
     const enroll = op === 'enable' && primary.backup && !primary.backup.backupVolumeId;
@@ -471,6 +475,7 @@ class TetherService {
       if (await hasAncestor(root, capture.stat) || await hasAncestor(capture.canonicalRoot, stat)) {
         fail('DEST_CHANGED', 'Choose a backup folder separate from the capture location.');
       }
+      await source?.assertSeparate(root, 'backup location');
       this.checkRev(this.ledger(shootId).shoot, expectedRev);
       if (this.activeShoot !== shootId) fail('STALE_SESSION', 'This tethered shoot is no longer active.');
       destination = { root, folderId, backupVolumeId: await markRoot(root, stat), enabled: true, availability: 'online' };
@@ -884,6 +889,91 @@ class TetherService {
     return accepted;
   }
 
+  async hotFolderControl(shootId, op, picked = null) {
+    if (this.closing || this.ledger(shootId).shoot.closedAt || this.activeShoot !== shootId) fail('STALE_SESSION', 'This tethered shoot is no longer active.');
+    if (op === 'start') {
+      if (this.hotFolder) fail('CAMERA_BUSY', 'Stop watching the current Hot Folder first.');
+      const { shoot, members } = this.ledger(shootId);
+      const watch = await HotFolder.open(shoot, picked, STAGE, Object.values(members), this.exif);
+      this.hotFolder = watch;
+      return watch.snapshot();
+    }
+    const watch = this.hotFolder;
+    if (op === 'stop') {
+      if (watch?.shootId === shootId) {
+        watch.cancel();
+        await watch.running;
+        if (this.hotFolder === watch) this.hotFolder = null;
+      }
+      return null;
+    }
+    if (op !== 'next') fail('UNSUPPORTED', 'Unknown Hot Folder operation.');
+    if (watch?.shootId !== shootId || watch.cancelled || watch.running) return null;
+    watch.running = this.nextHotFolderMember(watch).finally(() => { watch.running = null; });
+    return watch.running;
+  }
+
+  async nextHotFolderMember(watch) {
+    const { shoot } = this.ledger(watch.shootId);
+    const status = message => {
+      if (watch.cancelled || message === watch.message) return;
+      watch.message = message;
+      this.send('tether-hot-folder-status', { v: 1, shootId: shoot.shootId, ...watch.snapshot() });
+    };
+    let file, member;
+    try {
+      file = await watch.next(performance.now(), shoot.folderId, SAFETY);
+      if (file && !watch.cancelled) {
+        const metadata = await watch.metadata(file.staged);
+        member = await this.tx(shoot.shootId, (ledger, events) =>
+          watch.cancelled ? null : this.acceptHotFolderMember(ledger, events, watch, file, metadata));
+        if (!watch.cancelled) watch.finish(file);
+      }
+      if (file || watch.observed.size === 0) status('');
+      return member;
+    } catch (error) {
+      status(error.detail?.message || `Could not import from the Hot Folder: ${error.code || error.message}.`);
+      return null;
+    } finally {
+      if (file && !member) await watch.discard(file);
+    }
+  }
+
+  async acceptHotFolderMember(ledger, events, watch, file, metadata) {
+    const { name, bytes, sha256, memberId } = file;
+    const role = photoRole(name), objectKey = watch.objectKey(file);
+    const members = Object.values(ledger.members);
+    const imported = members.find(m => m.providerObjectKey === objectKey);
+    if (imported) {
+      imported.hotFolderVersion = file.version;
+      return null;
+    }
+    const group = watch.groupKey(stemOf(name));
+    let exposure = Object.values(ledger.exposures).findLast(e => e.hotFolderGroup === group);
+    let separate = false;
+    if (exposure) {
+      const existing = members.find(m => m.exposureId === exposure.exposureId);
+      if (members.some(m => m.exposureId === exposure.exposureId && m.role === role)) exposure = null;
+      else if (exposure.currentItemId) {
+        const item = this.sessionItem(ledger.shoot, exposure.currentItemId);
+        const final = existing?.finalRelPath && this.absolute(ledger.shoot, existing.finalRelPath);
+        const info = final && await fs.lstat(final).catch(() => null);
+        separate = !item || item.trashed || !info?.isFile() || info.size !== existing.receivedBytes ||
+          (existing.fileIdentity?.ino != null && (existing.fileIdentity.ino !== info.ino || existing.fileIdentity.dev !== info.dev));
+      }
+    }
+    if (!exposure) {
+      const accepted = await this.acceptExposure(ledger, events, 0, null, { key: 'hot:' + memberId, originalName: name }, [role], metadata);
+      exposure = ledger.exposures[accepted.exposureId];
+      exposure.hotFolderGroup = group;
+    } else this.expectRoles(exposure, [role]);
+    const member = captureMember(exposure.exposureId, memberId, name, bytes, objectKey);
+    Object.assign(member, { status: 'staged', receivedBytes: bytes, sha256, separate, hotFolderVersion: file.version });
+    ledger.members[memberId] = member;
+    if (exposure.status === 'accepted') exposure.status = 'transferring';
+    return { exposureId: exposure.exposureId, memberId, originalName: name, stageRelPath: member.stageRelPath, bytes, sha256 };
+  }
+
   async acceptExposure(ledger, events, epoch, requestId, providerExposure, hostRoles, camera) {
     const shoot = ledger.shoot;
     only(providerExposure ?? {}, ['key', 'staged', 'target', 'originalName'], 'provider exposure');
@@ -933,7 +1023,7 @@ class TetherService {
     }
     c.next += c.step;
     if (binds) Object.assign(request, { exposureId, state: 'confirmed' });
-    Object.assign(shoot, { lastExposureId: exposureId, lastBodyKey: bodyKey, lastCamera: cameraInfo });
+    Object.assign(shoot, { lastExposureId: exposureId, lastBodyKey: bodyKey, lastCamera: cameraInfo, lastCaptureFromFolder: key?.startsWith('hot:') === true });
     shoot.configRev++;
     events.push(this.configEvent(ledger));
     return { ...receipt(exposure), boundRequestId: binds ? request.requestId : null };
@@ -1311,7 +1401,10 @@ class TetherService {
         await this.library.flushSidecars();
         shoot.closedAt = this.now().toISOString();
         await this.releaseClaims(ledger, claim => ledger.exposures[claim.exposureId]?.status !== 'complete');
-        if (this.activeShoot === shootId) { this.activeShoot = null; this.stopBackupMonitor(); }
+        if (this.activeShoot === shootId) {
+          this.activeShoot = null; this.stopBackupMonitor();
+          this.hotFolder?.cancel(); this.hotFolder = null;
+        }
         this.primaries.delete(shootId);
       } else fail('UNSUPPORTED', 'Unknown journal operation.', { field: 'op' });
       const pending = Object.values(ledger.members).filter(m => PENDING.has(m.status)).length;
@@ -1578,7 +1671,8 @@ class TetherService {
     const issues = members.filter(m => m.status === 'held').map(m => ({ exposureId: m.exposureId, memberId: m.memberId, code: m.code, message: m.reason, retryable: m.code !== UNPUBLISHABLE,
       actions: m.code === UNPUBLISHABLE ? [] : m.code === 'NAME_TAKEN' ? ['saveSeparate'] : m.code === 'NAME_INVALID' ? ['repairName'] : ['retry'] }));
     return { session: shoot.session, shootId: shoot.shootId, configRev: shoot.configRev, libraryRev: shoot.libraryRev, config: structuredClone(shoot.config), location: this.location(shoot),
-      counters: { ...shoot.counters, camera: shoot.lastBodyKey ? this.cameraCounters.bodies[shoot.lastBodyKey] ?? 0 : null }, queue, backup: backupState(ledger), space: await this.space(shoot), issues, overlayAsset: shoot.overlayAsset };
+      counters: { ...shoot.counters, camera: shoot.lastBodyKey ? this.cameraCounters.bodies[shoot.lastBodyKey] ?? 0 : null }, queue, backup: backupState(ledger), space: await this.space(shoot), issues, overlayAsset: shoot.overlayAsset,
+      hotFolder: this.hotFolder?.shootId === shoot.shootId ? this.hotFolder.snapshot() : null };
   }
 
   libraryState(shootId, sessionId) {

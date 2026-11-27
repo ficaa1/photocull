@@ -51,10 +51,11 @@ The desktop bundle includes its Node runtime and image tools; Node and Rust are 
 - JPEG, JPEG XL, TIFF, PNG, AVIF and WebP export; sizing, output sharpening, color spaces, metadata/location controls, filename templates and saved export presets. AVIF remains comparatively slow. Export runs at half the logical core count, rounded down, with a minimum of one and maximum of three simultaneous photos.
 - Generated previews are converted and tagged as sRGB; the system webview handles display color management. Original upright JPEG previews may pass through with their existing profile.
 
-### Tethered capture (macOS · Sony α7 III & α7C II)
+### Tethered capture
 
 - Dedicated **Tether** workspace alongside Grid, Review and Develop: camera controls, shot location, naming and next-capture adjustments sit in the left dock, studio review aids sit in a slim bar above the photo, and the live histogram, navigator and EXIF stay visible on the right.
 - USB tethering for the **Sony α7 III** and **Sony α7C II**, plus wireless Wi-Fi tethering (studio Wi-Fi or Wi-Fi Direct, with Access Authentication SSH or pairing) for the **Sony α7C II**. Native Mac and physical camera verification are still pending.
+- **Hot Folder** lets a desktop session ingest RAW and JPEG files from another capture app. Choose a separate incoming folder in **Tether → Capture source**. PhotoCull applies the shoot’s naming, adjustments, metadata and Follow settings while the incoming files stay intact.
 - **Missed shots from the card**: after a reconnect, or on request, photos the camera saved to its card but never sent are copied into the shoot with its naming and adjustments, RAW and JPEG kept together and nothing duplicated. The card is only read. Sony PC Remote connections may hide the card; PhotoCull then says so and carries on.
 - Single capture folder or four-folder Session (`Capture` / `Selects` / `Output` / `Trash`) layout, named shot subfolders, live free space and shot estimate, and collision-free saving that never overwrites an existing file.
 - **Next Capture Naming** (`{Name}`, `{Counter:4}`, `{CameraCounter}`, `{Date}`, `{Time}`, `{ISO}`, `{Shutter}`, `{Aperture}`, `{FocalLength}`, `{Camera}`, `{Subfolder}`, `{Original}`) with a live filename preview and editable counter/step controls.

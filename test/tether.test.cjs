@@ -1427,6 +1427,169 @@ test('a newly discovered card is protected across tether, backup drives and recu
   child.stdin.end();
 });
 
+test('the desktop sidecar imports stable external-app arrivals once and pairs either order across restart', { timeout: 45000 }, async t => {
+  const { spawn } = require('node:child_process');
+  const { once } = require('node:events');
+  const { setTimeout: delay } = require('node:timers/promises');
+  const readline = require('node:readline');
+  const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'photocull-hot-folder-')));
+  const incoming = path.join(base, 'Incoming'), capture = path.join(base, 'Capture'), stage = path.join(capture, '.photocull-tether');
+  const mirror = path.join(base, 'Mirror'), events = [];
+  await Promise.all([fs.mkdir(incoming), fs.mkdir(stage, { recursive: true }), fs.mkdir(mirror)]);
+  let child;
+  const exit = async () => {
+    if (child?.exitCode === null && child.signalCode === null) {
+      const exited = once(child, 'exit'); child.stdin.end(); await exited;
+    }
+  };
+  t.after(async () => {
+    if (child?.exitCode === null && child.signalCode === null) {
+      const exited = once(child, 'exit'); child.kill(); await exited;
+    }
+    await fs.rm(base, { recursive: true, force: true });
+  });
+  async function startBackend() {
+    child = spawn(process.execPath, [path.join(__dirname, '..', 'src', 'backend.cjs')], { stdio: ['pipe', 'pipe', 'ignore'],
+      env: { ...process.env, PHOTOCULL_SMOKE_TEST: '1', PHOTOCULL_DATA_DIR: path.join(base, 'data') } });
+    const lines = readline.createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+    const next = async () => JSON.parse((await lines.next()).value);
+    assert.ok((await next()).ready);
+    let seq = 0;
+    return async (method, ...params) => {
+      const id = ++seq;
+      child.stdin.write(JSON.stringify({ id, method, params }) + '\n');
+      for (;;) {
+        const message = await next();
+        if (message.id === id) return message;
+        if (message.event) events.push(message);
+      }
+    };
+  }
+  let rpc = await startBackend();
+  const call = async (method, ...params) => {
+    const result = await rpc(method, ...params);
+    assert.equal(result.ok, true, result.error);
+    return result.value;
+  };
+  await call('settings', { writeSidecars: 'except-cards' });
+  const { preset } = await call('save-preset', 'Client', { metadata: { creator: 'Client Studio' } });
+  const recipe = await call('save-recipe', { name: 'Capture Look', settings: { light: { exposure: 1.25 } } });
+  let bound = await call('tether-bind', capture, null, 'single', false);
+  const shootId = bound.shootId, watch = (...args) => call('tether-hot-folder', shootId, ...args);
+  const state = () => call('tether-state', bound.session.id);
+  const failure = async (method, ...args) => (await rpc(method, ...args)).errorDetail?.code;
+  assert.equal(await failure('tether-hot-folder', shootId, 'start', base), 'DEST_CHANGED');
+  await call('tether-backup-location', shootId, bound.configRev, 'choose', mirror);
+  assert.equal(await failure('tether-hot-folder', shootId, 'start', mirror), 'DEST_CHANGED');
+  await call('tether-backup-location', shootId, (await state()).configRev, 'clear');
+
+  await call('tether-config', shootId, (await state()).configRev, { namingTemplate: '{Original}_{Counter:3}', metadataPresetId: preset.id,
+    adjustments: { mode: 'recipe', recipeId: recipe.id }, initial: { pick: true, rating: 3 } });
+  const jpeg = await require('sharp')({ create: { width: 4, height: 3, channels: 3, background: '#226688' } }).jpeg().toBuffer();
+  const a = path.join(incoming, 'TakeA.jpg'), bTemp = path.join(incoming, 'TakeB.NEF.part'), b = path.join(incoming, 'TakeB.NEF');
+  const rawA = Buffer.from('II*\0\x08\0\0\0raw A'), rawB = Buffer.from('MM\0*\0\0\0\x08raw B');
+  await fs.writeFile(a, jpeg.subarray(0, 40));
+  await fs.writeFile(bTemp, rawB);
+  assert.deepEqual(await watch('start', incoming), { path: incoming, message: '' });
+  assert.equal((await state()).hotFolder.path, incoming);
+  assert.equal(await failure('tether-backup-location', shootId, (await state()).configRev, 'choose', incoming), 'DEST_CHANGED');
+  assert.equal(await watch('next'), null);
+  await delay(600);
+  await fs.appendFile(a, jpeg.subarray(40));
+  assert.equal(await watch('next'), null);
+  await delay(1000);
+  assert.equal(await watch('next'), null, 'the last write restarts the quiet period');
+  assert.equal((await state()).counters.next, 1);
+
+  // Rust normally publishes the stage. The harness links it exclusively and reports the result through the same RPCs.
+  async function publish(member, expectedName, bytes) {
+    const temp = path.join(capture, member.stageRelPath);
+    assert.equal(member.bytes, bytes.length);
+    assert.equal(member.sha256, sha(bytes));
+    assert.deepEqual(await fs.readFile(temp), bytes);
+    const plan = await call('tether-reserve', shootId, member.memberId, { bytes: member.bytes, sha256: member.sha256 });
+    assert.equal(plan.finalRelPath, expectedName);
+    const final = path.join(capture, plan.finalRelPath);
+    await fs.link(temp, final); await fs.unlink(temp);
+    return call('tether-ingest', shootId, member.memberId, plan.claimId, { finalRelPath: plan.finalRelPath, bytes: member.bytes });
+  }
+  async function arrival(name) {
+    const deadline = Date.now() + 8000;
+    do {
+      const member = await watch('next');
+      if (member) { assert.equal(member.originalName, name); return member; }
+      await delay(250);
+    } while (Date.now() < deadline);
+    assert.fail(`Hot Folder did not stage ${name}: ${(await state()).hotFolder?.message}`);
+  }
+  const deltas = () => events.filter(e => e.event === 'tether-library-delta').map(e => e.payload);
+  const first = await publish(await arrival('TakeA.jpg'), 'TakeA_001.jpg', jpeg);
+  assert.deepEqual(deltas().at(-1).upserts.map(i => [i.rating, i.flag, i.captureMetadata.creator]), [[3, 'pick', 'Client Studio']]);
+  await call('decide', bound.session.id, first.itemId, { rating: 5 });
+  await call('tether-config', shootId, (await state()).configRev, { metadataPresetId: null, adjustments: { mode: 'default' }, initial: { rating: 2 } });
+  assert.equal(await watch('next'), null, 'temporary suffix must stay out');
+  await fs.rename(bTemp, b);
+  const occupied = path.join(capture, 'TakeB_002.NEF');
+  await fs.writeFile(occupied, rawA);
+  const second = await publish(await arrival('TakeB.NEF'), 'TakeB_002-2.NEF', rawB);
+  assert.deepEqual(await fs.readFile(occupied), rawA);
+  assert.notEqual(second.exposureId, first.exposureId);
+  await watch('stop');
+  assert.equal((await state()).hotFolder, null);
+  await fs.writeFile(path.join(incoming, 'TakeA.ARW'), rawA);
+  assert.equal(await watch('next'), null);
+  await call('tether-journal', shootId, 'close', {});
+  await exit();
+  rpc = await startBackend();
+  bound = await call('tether-bind', capture, null, 'single', false, null, shootId);
+  assert.equal(bound.shootId, shootId);
+  assert.equal((await state()).hotFolder, null);
+  await watch('start', incoming);
+  const raw = await publish(await arrival('TakeA.ARW'), 'TakeA_001.ARW', rawA);
+  assert.equal(raw.exposureId, first.exposureId);
+  assert.deepEqual(deltas().at(-1).remap, [{ from: first.itemId, to: raw.itemId }]);
+  assert.deepEqual(deltas().at(-1).upserts.map(i => [i.rating, i.flag, i.paired, i.captureMetadata.creator, i.recipe]), [[5, 'pick', true, 'Client Studio', recipe.id]]);
+  const journal = JSON.parse(await fs.readFile(path.join(base, 'data', 'tether', 'shoots', shootId + '.json'), 'utf8'));
+  assert.deepEqual(journal.exposures[first.exposureId].frozenPolicy.adjustments.settings, { light: { exposure: 1.25 } });
+
+  await fs.writeFile(path.join(incoming, 'TakeB.JPEG'), jpeg);
+  const mate = await publish(await arrival('TakeB.JPEG'), 'TakeB_002-2.JPEG', jpeg);
+  assert.deepEqual([mate.exposureId, mate.itemId, deltas().at(-1).remap, deltas().at(-1).upserts[0].paired], [second.exposureId, second.itemId, [], true]);
+  await fs.rename(a, path.join(incoming, 'Renamed.jpg'));
+  await delay(550);
+  assert.equal(await watch('next'), null);
+  await delay(1700);
+  assert.equal(await watch('next'), null, 'renaming the same source object must not reimport it');
+  assert.equal((await state()).hotFolder.message, '');
+  assert.equal((await state()).counters.next, 3);
+  assert.deepEqual(deltas().filter(d => d.firstArrival).map(d => d.ordinal), [1, 2]);
+  assert.deepEqual((await fs.readdir(incoming)).sort(), ['Renamed.jpg', 'TakeA.ARW', 'TakeB.JPEG', 'TakeB.NEF'].sort());
+  assert.deepEqual(await fs.readFile(b), rawB);
+  assert.deepEqual(await fs.readFile(path.join(incoming, 'Renamed.jpg')), jpeg);
+
+  const moved = path.join(base, 'Moved');
+  await fs.rename(incoming, moved);
+  assert.equal(await watch('next'), null);
+  assert.match((await state()).hotFolder.message, /unavailable/);
+  await fs.rename(moved, incoming);
+  assert.equal(await watch('next'), null);
+  assert.equal((await state()).hotFolder.message, '');
+
+  await fs.writeFile(path.join(incoming, 'TakeC.JPG'), jpeg);
+  const staged = await arrival('TakeC.JPG');
+  await exit();
+  rpc = await startBackend();
+  bound = await call('tether-bind', capture, null, 'single', false, null, shootId);
+  const recovered = bound.recoveries.find(record => record.memberId === staged.memberId);
+  assert.deepEqual([recovered?.state, recovered?.action, recovered?.sha256], ['staged', 'reserve', staged.sha256]);
+  assert.equal((await publish(staged, 'TakeC_003.JPG', jpeg)).exposureId, staged.exposureId);
+  await watch('start', incoming);
+  assert.equal(await watch('next'), null);
+  assert.equal((await state()).counters.next, 4);
+  await watch('stop');
+  await exit();
+});
+
 test('opening another folder while a shoot binds waits and is refused', async t => {
   const { spawn } = require('node:child_process');
   const readline = require('node:readline');

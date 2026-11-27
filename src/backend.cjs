@@ -126,7 +126,7 @@ async function start() {
     backupRename = { resolve, reject };
     process.stdout.write(JSON.stringify({ backupRename: { from, to } }) + '\n');
   });
-  tether = new TetherService({ dataDir, library, recipes, settings: () => settings.value, presets: () => settings.presets, send, isCard: onCard, renameExclusive,
+  tether = new TetherService({ dataDir, library, recipes, settings: () => settings.value, presets: () => settings.presets, send, isCard: onCard, renameExclusive, exif: previews.exif,
     dimensions: (session, id) => previews.dimensions(previewPhoto(library.item(session, id))),
     onDelta: delta => { for (const id of [...delta.upserts.map(i => i.id), ...delta.remap.map(r => r.from)]) previews.invalidatePhoto({ id }); } });
   await tether.init();
@@ -406,6 +406,7 @@ async function start() {
       'tether-resume-target': shootId => tether.resumeTarget(shootId),
       'tether-bind': (...args) => bindTether(args),
       'tether-backup-location': (...args) => tether.backupLocation(...args),
+      'tether-hot-folder': (...args) => tether.hotFolderControl(...args),
       'tether-set-location': (...args) => tether.setLocation(...args),
       'tether-request': (...args) => tether.request(...args),
       'tether-accept': (...args) => tether.accept(...args),

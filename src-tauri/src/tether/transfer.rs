@@ -541,15 +541,22 @@ pub fn stage_complete(path: PathBuf, data: &[u8]) -> Result<StageReceipt> {
     writer.finish()
 }
 
-/// Checks that a capture starts with the signature its file name promises. Only the types a Sony
-/// body delivers can pass; anything else stays in staging.
+/// Rejects unrecognized capture headers before the staged file is published.
 pub fn validate_capture_signature(name: &str, head: &[u8]) -> Result<()> {
     let extension = name
         .rsplit_once('.')
         .map(|(_, e)| e.to_ascii_uppercase())
         .unwrap_or_default();
+    let tiff = head.starts_with(b"II*\0") || head.starts_with(b"MM\0*");
     let valid = match extension.as_str() {
-        "ARW" => head.starts_with(b"II*\0") || head.starts_with(b"MM\0*"),
+        "ARW" | "CR2" | "NEF" | "NRW" | "DNG" | "PEF" | "SRW" | "3FR" | "FFF" | "RWL" => tiff,
+        "IIQ" => tiff || head.starts_with(b"IIII") || head.starts_with(b"MMMM"),
+        "CR3" => head.get(4..12) == Some(&b"ftypcrx "[..]),
+        "RAF" => head.starts_with(b"FUJIFILMCCD-RAW "),
+        "ORF" => {
+            head.starts_with(b"IIRO") || head.starts_with(b"IIRS") || head.starts_with(b"MMOR")
+        }
+        "RW2" => head.starts_with(b"IIU\0"),
         "JPG" | "JPEG" => head.starts_with(&[0xFF, 0xD8, 0xFF]),
         "HIF" | "HEIF" | "HEIC" => {
             head.len() >= 12
@@ -1245,6 +1252,11 @@ mod tests {
             ("DSC00001.JPG", &jpeg[..]),
             ("DSC00001.jpeg", &jpeg[..]),
             ("DSC00001.HIF", &heif[..]),
+            ("Take1.NEF", &tiff[..]),
+            ("Take2.CR3", b"\0\0\0\x18ftypcrx "),
+            ("Take3.RAF", b"FUJIFILMCCD-RAW "),
+            ("Take4.ORF", b"IIRO\x08\0\0\0"),
+            ("Take5.RW2", b"IIU\0\x18\0\0\0"),
         ] {
             assert!(validate_capture_signature(name, head).is_ok(), "{name}");
         }
@@ -1255,6 +1267,7 @@ mod tests {
             ("DSC00001.HIF", &tiff[..]),
             ("DSC00001.ARW", &[][..]),
             ("DSC00001.MP4", &heif[..]),
+            ("Take2.CR3", &heif[..]),
             ("DSC00001", &jpeg[..]),
         ] {
             assert!(

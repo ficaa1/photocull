@@ -12,6 +12,12 @@ Run `npm ci`, `npm test`, `npm run test:ui`, `node scripts/develop-ui-smoke.cjs`
 
 `node scripts/prepare-raw-cases.cjs PHOTO_FIXTURE_FOLDER` makes preview-stripped copies after checking that JPEG ranges do not overlap sensor data. Set `PHOTOCULL_RAW_CASES` to the resulting `photocull-cases` folder for Node tests, or pass it to `raw-ui-smoke.cjs`. This helper is specific to the documented Sony fixture, not a general RAW editor.
 
+## Tether Hot Folder
+
+Run `node --test --test-name-pattern='stable external-app arrivals' test/tether.test.cjs` for the private desktop sidecar path with synthetic arrivals and a stand-in for native exclusive publication. Run `PHOTOCULL_TETHER_SCREENSHOTS=artifacts/tether node scripts/tether-ui-smoke.cjs` to exercise the dock and Follow in Chromium and save `artifacts/tether/hot-folder-watching.png`.
+
+In the native desktop app, use separate temporary incoming and capture directories. With no camera connected, start by choosing **Watch Hot Folder…**. Cancel one native pick, then select the incoming folder and confirm the dock shows it. Copy a disposable JPEG in chunks and rename a disposable RAW from a temporary extension. Try RAW first and JPEG first with matching stems, change a JPEG’s rating before its RAW arrives, and verify one counter advance and one Library item per completed pair. Confirm Follow, configured naming, initial ratings, capture metadata and Develop settings. Compare incoming names and hashes before and after. Try an overlapping capture or backup directory, a missing source, **Stop Watching**, and resuming the shoot after restarting the app. Check that USB and Wi-Fi still connect after the watch stops.
+
 ## Develop, Dehancer and export (2026-11-05)
 
 Renderer smokes cover recipes, preview scheduling, histogram interaction, loupe geometry and export options. Native export checks exercise JPEG, JPEG XL, TIFF, PNG, AVIF and WebP; resizing, color spaces, metadata policies, skip-existing behavior and cancellation. Source hashes must remain unchanged. Develop and finished-image export require the desktop shell.
