@@ -271,13 +271,22 @@
           <button id="tether-live-close" class="button quiet" type="button" title="Close Live View (L)">Close</button>
           <button id="tether-live-capture" class="button primary" type="button" title="Capture (T)" aria-describedby="tether-capture-reason"><span class="tether-capture-label">Capture</span><span class="tether-recycle tabular"></span></button>
         </div>
-        <div id="tether-live-viewport" class="tether-live-viewport" tabindex="0" aria-label="Live View image. Drag to pan at 1:1."><canvas id="tether-live-canvas"></canvas><p id="tether-live-empty" class="tether-live-empty">Waiting for frames…</p></div>
+        <div id="tether-live-viewport" class="tether-live-viewport" tabindex="0" aria-label="Live View image. Drag to pan at 1:1."><canvas id="tether-live-canvas"></canvas><p id="tether-live-empty" class="tether-live-empty">Waiting for frames…</p>
+          <div id="tether-meter-region" class="tether-meter-region" hidden></div>
+          <div id="tether-meter-points" class="tether-meter-points"></div>
+          <section id="tether-meter" class="tether-meter" hidden aria-labelledby="tether-meter-title">
+            <div class="tether-meter-head"><h3 id="tether-meter-title">Focus meter</h3><span id="tether-meter-note" class="tether-meter-note" role="status"></span><button id="tether-meter-add" class="button quiet" type="button">Add point</button><button id="tether-meter-reset" class="button quiet" type="button" title="Start the graph and peaks over">Reset</button></div>
+            <div class="tether-meter-plot"><span class="tether-meter-peak" aria-hidden="true">peak</span><canvas id="tether-meter-graph" class="tether-meter-graph" role="img" aria-label="Focus meter graph"></canvas></div>
+            <ul id="tether-meter-legend" class="tether-meter-legend" aria-label="Relative detail, percent of peak"></ul>
+          </section>
+        </div>
         <div class="tether-live-bar bottom">
           <div class="tether-live-group" role="group" aria-label="Loupe"><button id="tether-live-loupe" class="button toggle" type="button" aria-pressed="false" title="1:1 loupe">1:1</button><button id="tether-live-reset" class="button quiet" type="button" title="Center the loupe">Reset</button></div>
           <div class="tether-live-group tether-focus-steps" role="group" aria-label="Focus">
             <button class="button quiet" type="button" data-focus="near" data-size="3" aria-label="Focus nearer, large step">&lt;&lt;&lt;</button><button class="button quiet" type="button" data-focus="near" data-size="2" aria-label="Focus nearer, medium step">&lt;&lt;</button><button class="button quiet" type="button" data-focus="near" data-size="1" aria-label="Focus nearer, small step">&lt;</button>
             <button class="button" type="button" data-focus="af" aria-label="Autofocus">AF</button>
             <button class="button quiet" type="button" data-focus="far" data-size="1" aria-label="Focus farther, small step">&gt;</button><button class="button quiet" type="button" data-focus="far" data-size="2" aria-label="Focus farther, medium step">&gt;&gt;</button><button class="button quiet" type="button" data-focus="far" data-size="3" aria-label="Focus farther, large step">&gt;&gt;&gt;</button>
+            <button id="tether-live-meter" class="button toggle tether-meter-toggle" type="button" aria-pressed="false" aria-controls="tether-meter" aria-label="Focus meter" title="Focus meter: relative detail at the loupe area or up to three pinned points"><svg class="icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h18" stroke-dasharray="2 3"/><path d="M3 20h18"/><path d="M3 17c3.5 0 5-10 9-10s5.5 10 9 10"/></svg></button>
           </div>
           <div class="tether-live-group" role="group" aria-label="Focus peaking"><button id="tether-live-peaking" class="button toggle" type="button" aria-pressed="false">Peaking</button><input id="tether-peaking-color" type="color" value="#ffff00" aria-label="Peaking color"><input id="tether-peaking-sensitivity" type="range" min="0" max="1" step="0.05" aria-label="Peaking sensitivity"></div>
           <button id="tether-live-zebra" class="button toggle" type="button" aria-pressed="false" title="Exposure warning zebras (J)">Zebra</button>
@@ -553,6 +562,7 @@
   <script src="histogram.js"></script>
   <script src="develop.js"></script>
   <script src="overlays.js"></script>
+  <script src="focus-meter.js"></script>
   <script src="tether.js"></script>
   <script src="metadata-filter.js"></script>
   <script src="app.js"></script>

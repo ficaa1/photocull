@@ -1,7 +1,7 @@
 // Tethered capture: the Tether workspace (dock, stage bar, aids drawer, inspector histogram), Live View, follow policy and review aids.
 // Camera control needs the desktop shell (api.canTether); composition aids work everywhere.
 (root => {
-  const O = root.PhotoCullOverlays, N = root.PhotoCullNaming, D = root.PhotoCullDevelop;
+  const O = root.PhotoCullOverlays, N = root.PhotoCullNaming, D = root.PhotoCullDevelop, F = root.PhotoCullFocusMeter;
   const $ = id => document.getElementById(id);
   const el = (tag, className, text) => { const node = document.createElement(tag); if (className) node.className = className; if (text != null) node.textContent = text; return node; };
   const clone = value => structuredClone(value);
@@ -134,6 +134,7 @@
         pixels: max => this.reviewPixels(max), onMove: (position, done) => this.overlayMoved(position, done), onStatus: text => this.compositionStatus(text),
       });
       this.liveLayer = new O.OverlayLayer($('tether-live-viewport'), { geometry: () => this.liveGeometry(), live: true, onMove: (position, done) => this.overlayMoved(position, done) });
+      this.meter = new F.FocusMeter($('tether-live-viewport'), { view: () => ({ geometry: this.liveGeometry(), size: this.live.size, center: this.live.center, bitmap: this.live.bitmap }), toast: text => this.host.toast(text) });
       this.subscribe();
       this.render();
       void this.loadRecent();
@@ -1596,7 +1597,7 @@
       const { retired, streamId } = this.live;
       if (streamId) { retired.add(streamId); if (retired.size > 32) retired.delete(retired.values().next().value); }
       this.live.poll++; this.live.streamId = null; this.live.seq = 0; this.live.frames = [];
-      this.live.bitmap?.close?.(); this.live.bitmap = null;
+      this.live.bitmap?.close?.(); this.live.bitmap = null; this.meter.restart();
     }
     async stopLive() {
       const { streamId } = this.live; this.live.wanted = false; this.retireStream(); this.live.enabled = false; this.histogramKey = ''; void this.renderHistogram();
@@ -1649,11 +1650,12 @@
       if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); canvas.style.width = w + 'px'; canvas.style.height = h + 'px'; }
       const ctx = canvas.getContext('2d'); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, canvas.width, canvas.height);
       $('tether-live-empty').hidden = !!this.live.bitmap;
+      if (this.meter.on && this.meter.visible) this.meter.layout();
       const g = this.liveGeometry(); if (!g || !this.live.bitmap) return;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.imageSmoothingEnabled = !this.live.loupe;
       ctx.drawImage(this.live.bitmap, g.rect.x, g.rect.y, g.rect.width, g.rect.height);
       $('tether-live-fps').textContent = `${this.live.frames.length} fps · ${this.live.size.width} × ${this.live.size.height}`;
-      if (fresh) this.analyzeLive();
+      if (fresh) { this.analyzeLive(); this.meter.frame(); }
       this.liveLayer.invalidate();
     }
     analyzeLive() {
@@ -1706,7 +1708,7 @@
     }
     bindLivePan() {
       const viewport = $('tether-live-viewport'); let drag = null;
-      viewport.addEventListener('pointerdown', event => { if (!this.live.loupe || event.button !== 0 || event.target !== $('tether-live-canvas')) return; drag = { x: event.clientX, y: event.clientY, center: { ...this.live.center } }; viewport.setPointerCapture(event.pointerId); });
+      viewport.addEventListener('pointerdown', event => { if (!this.live.loupe || event.button !== 0 || event.target !== $('tether-live-canvas') || event.shiftKey && this.meter.active()) return; drag = { x: event.clientX, y: event.clientY, center: { ...this.live.center } }; viewport.setPointerCapture(event.pointerId); });
       viewport.addEventListener('pointermove', event => {
         if (!drag) return; const g = this.liveGeometry(); if (!g) return;
         this.live.center = { x: Math.max(0, Math.min(1, drag.center.x - (event.clientX - drag.x) / g.rect.width)), y: Math.max(0, Math.min(1, drag.center.y - (event.clientY - drag.y) / g.rect.height)) };
@@ -1714,10 +1716,10 @@
       });
       for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) viewport.addEventListener(type, () => { drag = null; });
       viewport.addEventListener('keydown', event => {
-        if (!this.live.loupe) return; const d = { ArrowLeft: [-.05, 0], ArrowRight: [.05, 0], ArrowUp: [0, -.05], ArrowDown: [0, .05] }[event.key]; if (!d) return;
+        if (!this.live.loupe || event.target !== viewport) return; const d = { ArrowLeft: [-.05, 0], ArrowRight: [.05, 0], ArrowUp: [0, -.05], ArrowDown: [0, .05] }[event.key]; if (!d) return;
         event.preventDefault(); event.stopPropagation(); this.live.center = { x: Math.max(0, Math.min(1, this.live.center.x + d[0])), y: Math.max(0, Math.min(1, this.live.center.y + d[1])) }; this.paintLive();
       });
-      viewport.addEventListener('dblclick', () => { this.live.loupe = !this.live.loupe; this.renderLive(); this.paintLive(); });
+      viewport.addEventListener('dblclick', event => { if (event.target.closest('.tether-meter, .tether-meter-point')) return; this.live.loupe = !this.live.loupe; this.renderLive(); this.paintLive(); });
     }
     renderLive() {
       this.renderTabSignal();
@@ -1728,6 +1730,7 @@
       $('tether-live-dock').disabled = this.live.docked && this.test.active && this.test.hasShot;
       $('tether-live-dock').setAttribute('aria-pressed', String(this.live.docked)); $('tether-live-dock').textContent = this.live.docked ? 'Expand' : 'Dock';
       $('tether-live-loupe').setAttribute('aria-pressed', String(this.live.loupe)); $('tether-live-reset').disabled = !this.live.loupe;
+      this.meter.setVisible(this.stageExpanded());
       $('tether-live-toggle')?.setAttribute('aria-pressed', String(this.live.open));
       $('tether-stage-live').setAttribute('aria-pressed', String(this.live.open)); $('tether-stage-live').disabled = !this.enabled('tether-live-view');
       if (!this.live.enabled && this.live.open && !$('tether-live-status').textContent) $('tether-live-status').textContent = 'Live View stopped';

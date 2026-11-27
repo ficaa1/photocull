@@ -1070,6 +1070,30 @@ dialog details > summary:hover { color: var(--text); }
 .tether-live-empty[hidden] { display: none; }
 .tether-live-histogram { width: 128px; height: 40px; background: var(--canvas); border-radius: var(--r1); }
 .tether-live-histogram[hidden] { display: none; }
+/* Focus meter: a graph over the live frame's lower left, with pinned measuring points drawn as their regions. */
+.tether-focus-steps .tether-meter-toggle { margin-left: 4px; }
+.tether-meter { position: absolute; left: var(--s2); bottom: var(--s2); z-index: 4; width: min(272px, calc(100% - 16px)); display: flex; flex-direction: column; gap: 6px; padding: 7px 8px 8px; background: var(--overlay); border: 1px solid var(--line-strong); border-radius: var(--r2); box-shadow: 0 2px 8px #0006; color: var(--text-2); font-size: var(--fs-s); }
+.tether-meter[hidden] { display: none; }
+.tether-meter-head { display: flex; align-items: center; gap: 2px; min-height: 22px; }
+.tether-meter-head h3 { margin: 0 6px 0 0; color: var(--text); font-size: var(--fs-m); font-weight: 600; }
+.tether-meter-note { margin-right: auto; color: var(--warn); white-space: nowrap; }
+.tether-meter .button { height: 22px; padding: 0 7px; font-size: var(--fs-s); }
+.tether-meter-plot { position: relative; height: 60px; }
+.tether-meter-graph { display: block; width: 100%; height: 100%; }
+.tether-meter-peak { position: absolute; z-index: 1; top: 0; right: 0; color: var(--muted); font-size: var(--fs-xs); line-height: 10px; }
+.tether-meter-legend { display: flex; flex-wrap: wrap; gap: 2px 5px; min-height: 20px; margin: 0; padding: 0; list-style: none; }
+.tether-meter-trace { display: inline-flex; align-items: center; gap: 3px; }
+.tether-meter-trace b { color: var(--text); font-weight: 600; }
+.tether-meter-value { min-width: 30px; }
+.tether-meter-trace.at-peak .tether-meter-value { color: var(--text); font-weight: 600; }
+.tether-meter .tether-meter-remove { width: 18px; height: 18px; margin-left: -4px; padding: 0; color: var(--muted); }
+.tether-meter.stale .tether-meter-graph, .tether-meter.stale .tether-meter-value { opacity: .45; }
+.tether-meter-points { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+.tether-meter-point { position: absolute; padding: 0; border: 1.5px solid var(--trace); border-radius: 2px; background: transparent; box-shadow: 0 0 0 1px #000b, inset 0 0 0 1px #000b; cursor: move; pointer-events: auto; touch-action: none; }
+.tether-meter-point span { position: absolute; left: -1.5px; bottom: calc(100% + 2px); padding: 0 4px; border-radius: 2px; background: var(--trace); color: #111214; font-size: var(--fs-xs); font-weight: 700; line-height: 14px; }
+.tether-meter-point:focus-visible { outline: 2px solid var(--ivory); outline-offset: 2px; }
+.tether-meter-point[hidden], .tether-meter-region[hidden] { display: none; }
+.tether-meter-region { position: absolute; z-index: 3; border: 1px dashed #e6e3dab3; box-shadow: 0 0 0 1px #0007; pointer-events: none; }
 .tether-arrival-pill { position: absolute; left: 50%; bottom: 44px; transform: translateX(-50%); z-index: 10; height: var(--control); padding: 0 14px; border: 1px solid var(--accent-line); border-radius: 14px; background: var(--accent-bg); color: #e3eef5; font-size: var(--fs-m); font-weight: 500; box-shadow: var(--shadow); white-space: nowrap; }
 .tether-arrival-pill:hover { background: #33485a; }
 .tether-arrival-pill[hidden] { display: none; }

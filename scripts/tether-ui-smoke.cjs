@@ -2,7 +2,7 @@
 // temporary settings and synthetic photos. Browser mode has no camera, so the first phase covers the Tether
 // workspace layout, Wi-Fi form, composition aids, pinned reference Compare and Settings → Tether
 // with camera control disabled. A second phase simulates the desktop camera shell to cover capture,
-// Live View, follow, studio flash guards, Test Shot Mode, the WB eyedropper, Stop session, resuming a stopped
+// Live View and its Focus Meter, follow, studio flash guards, Test Shot Mode, the WB eyedropper, Stop session, resuming a stopped
 // session and capture metadata.
 const { launch } = require('./launch.cjs');
 const assert = require('node:assert/strict');
@@ -17,6 +17,29 @@ function simulateCamera() {
   const log = (...entry) => T.calls.push(entry), wait = ms => new Promise(resolve => setTimeout(resolve, ms));
   const on = name => callback => { (T.handlers[name] ||= new Set()).add(callback); return () => T.handlers[name].delete(callback); };
   const jpeg = color => new Promise(resolve => { const canvas = document.createElement('canvas'); canvas.width = 640; canvas.height = 427; const ctx = canvas.getContext('2d'); ctx.fillStyle = color; ctx.fillRect(0, 0, 640, 427); canvas.toBlob(resolve, 'image/jpeg'); });
+  // A studio detail target for Live View: a Siemens star, line pairs and a checker at lens depths 2, 5 and 8,
+  // each blurred by its distance from T.scene.lens. Lens steps move T.scene.lens; T.gate holds frames until released.
+  const cards = [];
+  const card = kind => {
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 180; const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#d8d4cb'; ctx.fillRect(0, 0, 180, 180); ctx.fillStyle = '#1b1b1d';
+    if (kind === 0) for (let i = 0; i < 36; i += 2) { ctx.beginPath(); ctx.moveTo(90, 90); ctx.arc(90, 90, 80, i * Math.PI / 18, (i + 1) * Math.PI / 18); ctx.fill(); }
+    if (kind === 1) [2, 4, 6, 8].forEach((period, q) => { const x0 = 10 + (q % 2) * 80, y0 = 10 + (q >> 1) * 80; for (let t = 0; t < 80; t += period) q % 3 ? ctx.fillRect(x0 + t, y0, period / 2, 80) : ctx.fillRect(x0, y0 + t, 80, period / 2); });
+    if (kind === 2) for (let row = 0; row < 26; row++) for (let col = 0; col < 26; col++) if ((row + col) % 2) ctx.fillRect(12 + col * 6, 12 + row * 6, 6, 6);
+    return canvas;
+  };
+  const sceneJpeg = lens => new Promise(resolve => {
+    if (!cards.length) for (let kind = 0; kind < 3; kind++) cards.push(card(kind));
+    const canvas = document.createElement('canvas'); canvas.width = 960; canvas.height = 640; const ctx = canvas.getContext('2d');
+    const backdrop = ctx.createLinearGradient(0, 0, 0, 640);
+    backdrop.addColorStop(0, '#62666b'); backdrop.addColorStop(0.7, '#3d4044'); backdrop.addColorStop(0.7, '#4a4138'); backdrop.addColorStop(1, '#2e2924');
+    ctx.fillStyle = backdrop; ctx.fillRect(0, 0, 960, 640);
+    cards.forEach((image, i) => { ctx.filter = `blur(${Math.min(12, Math.abs(lens - [2, 5, 8][i]) * 1.2)}px)`; ctx.drawImage(image, [192, 480, 768][i] - 90, 230); });
+    ctx.filter = 'none'; canvas.toBlob(resolve, 'image/jpeg', 0.92);
+  });
+  T.scene = null; T.gate = null;
+  T.release = async () => { while (!T.gate.length) await wait(5); T.gate.shift()(); };
+  T.openGate = () => { const waiting = T.gate || []; T.gate = null; waiting.forEach(resolve => resolve()); };
   T.emit = (name, payload) => { for (const callback of T.handlers[name] || []) callback(payload); };
   T.finishRender = () => (T.renderWaiters || []).splice(0).forEach(resolve => resolve());
   T.finishReview = () => (T.reviewWaiters || []).splice(0).forEach(resolve => resolve());
@@ -138,7 +161,13 @@ function simulateCamera() {
       T.frames[streamId] = (T.frames[streamId] || 0) + 1;
       if (streamId === 'stream-a' && T.holdA) return new Promise((resolve, reject) => { T.rejectA = () => reject(Object.assign(new Error('Live View stream closed.'), { code: 'STREAM_CLOSED' })); });
       await wait(30);
-      return { streamId, seq: afterSeq + 1, jpegBytes: 1, blob: await jpeg(streamId === 'stream-a' ? '#446688' : '#886644') };
+      if (T.gate) await new Promise(resolve => T.gate.push(resolve));
+      return { streamId, seq: afterSeq + 1, jpegBytes: 1, blob: await (T.scene ? sceneJpeg(T.scene.lens) : jpeg(streamId === 'stream-a' ? '#446688' : '#886644')) };
+    },
+    tetherFocus: async ({ action, direction, size }) => {
+      log('focus', action, direction, size);
+      if (action === 'step' && T.scene) T.scene.lens += (direction === 'far' ? 1 : -1) * [0, 1, 3, 7][size];
+      return {};
     },
     developGet: async (session, id) => ({ settings: structuredClone(T.saved?.[id] || {}) }),
     developInfo: async () => ({ asShot: { temp: 5500, tint: 0 }, base: { wb: { mode: 'asShot', temp: 5500, tint: 0 } } }),
@@ -643,6 +672,120 @@ async function main() {
     assert.equal(await page.evaluate(() => document.getElementById('image-stage').inert), false);
     assert.equal(await page.locator('#tether-tab-state').textContent(), '· Connected');
     check('Live View: stage over the photo only, inert controls, restarted stream adopted, stale poll ignored');
+
+    // Focus Meter on the synthetic target: Siemens star (left, depth 2), line pairs (centre, 5) and checker (right, 8).
+    await page.evaluate(() => { __camera.scene = { lens: 0 }; });
+    await press('l');
+    await page.waitForFunction(() => tether.live.size?.width === 960 && tether.live.bitmap && !document.querySelector('#tether-live-stage').hidden);
+    assert.equal(await visible('#tether-meter'), false, 'the meter starts off');
+    await page.locator('#tether-live-meter').click();
+    assert.equal(await pressed('#tether-live-meter'), 'true');
+    await page.locator('#tether-meter').waitFor({ state: 'visible' });
+    const samples = id => page.evaluate(id => tether.meter.traces.get(id)?.series.values.length ?? 0, id);
+    const traces = () => page.evaluate(() => Object.fromEntries([...tether.meter.traces].map(([id, t]) => [id, t.series.values.slice()])));
+    const legend = () => page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#tether-meter-legend .tether-meter-trace')].map(li => [li.dataset.trace, { value: li.querySelector('.tether-meter-value').textContent, peak: li.classList.contains('at-peak') }])));
+    const liveBox = selector => page.evaluate(selector => {
+      const viewport = document.getElementById('tether-live-viewport'), v = viewport.getBoundingClientRect(), b = document.querySelector(selector).getBoundingClientRect();
+      return { x: b.x - v.x, y: b.y - v.y, width: b.width, height: b.height, w: viewport.clientWidth, h: viewport.clientHeight, dpr: devicePixelRatio, rect: tether.liveGeometry().rect };
+    }, selector);
+    const near = (actual, expected, what) => { for (const key of Object.keys(expected)) assert.ok(Math.abs(actual[key] - expected[key]) <= 1.5, `${what} ${key}: ${actual[key]} vs ${expected[key]}`); };
+    await page.waitForFunction(() => (tether.meter.traces.get('Loupe')?.series.values.length || 0) >= 2);
+    assert.match(await page.locator('#tether-meter-legend').textContent(), /^Loupe\d{1,3}%$/, 'with no pinned point the loupe area is measured');
+    // At fit the outline shows the frame pixels the 1:1 loupe would show, capped at 640 px around their middle.
+    const fit = await liveBox('#tether-meter-region'), scale = fit.rect.width / 960;
+    const seen = { width: Math.min(640, Math.min(960, fit.w * fit.dpr)), height: Math.min(640, Math.min(640, fit.h * fit.dpr)) };
+    near(fit, { x: fit.rect.x + (960 - seen.width) / 2 * scale, y: fit.rect.y + (640 - seen.height) / 2 * scale, width: seen.width * scale, height: seen.height * scale }, 'loupe outline at fit');
+    const fitSamples = await samples('Loupe');
+    // Read at the first measurement after switching to 1:1: a cleared trace would hold one sample.
+    await page.locator('#tether-live-loupe').click();
+    await page.evaluate(() => { window.__measured = tether.meter.lastBitmap; });
+    await page.waitForFunction(() => tether.meter.lastBitmap !== window.__measured);
+    const oneToOne = await liveBox('#tether-meter-region');
+    near(oneToOne, { x: oneToOne.w / 2 - seen.width / oneToOne.dpr / 2, y: oneToOne.h / 2 - seen.height / oneToOne.dpr / 2, width: seen.width / oneToOne.dpr, height: seen.height / oneToOne.dpr }, 'loupe outline at 1:1');
+    assert.ok(await samples('Loupe') > fitSamples, 'fit and 1:1 measure the same pixels, so the trace carries on');
+    await page.locator('#tether-live-loupe').click();
+
+    await page.locator('#tether-meter-add').focus(); await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(() => document.activeElement.dataset.point), 'A', 'a new point takes the keyboard');
+    for (let i = 0; i < 6; i++) await page.keyboard.press('Shift+ArrowLeft');
+    let marker = await liveBox('[data-point="A"]');
+    near({ x: marker.x + marker.width / 2, y: marker.y + marker.height / 2 }, { x: marker.rect.x + 0.2 * marker.rect.width, y: marker.rect.y + 0.5 * marker.rect.height }, 'point A over the star');
+    assert.equal(await visible('#tether-meter-region'), false, 'pinned points replace the loupe area');
+    await page.locator('#tether-live-canvas').click({ position: { x: marker.rect.x + 0.8 * marker.rect.width, y: marker.rect.y + 0.5 * marker.rect.height }, modifiers: ['Shift'] });
+    marker = await liveBox('[data-point="B"]');
+    near({ x: marker.x + marker.width / 2, y: marker.y + marker.height / 2 }, { x: marker.rect.x + 0.8 * marker.rect.width, y: marker.rect.y + 0.5 * marker.rect.height }, 'Shift+click pins point B over the checker');
+    await page.locator('#tether-meter-add').click();
+    assert.equal(await page.locator('#tether-meter-add').isDisabled(), true, 'three points at most');
+    assert.equal(await page.evaluate(() => document.activeElement.dataset.point), 'C');
+    const photoCount = await page.locator('#count-all').textContent();
+    await page.keyboard.press('Delete');
+    assert.deepEqual(await page.evaluate(() => [document.activeElement.id, document.getElementById('delete-prompt').hidden, document.querySelector('#count-all').textContent]), ['tether-meter-add', true, photoCount], 'Delete removes the point, never a photo');
+    await page.keyboard.press('Enter');
+    marker = await liveBox('[data-point="C"]');
+    near({ x: marker.x + marker.width / 2, y: marker.y + marker.height / 2 }, { x: marker.rect.x + 0.5 * marker.rect.width, y: marker.rect.y + 0.5 * marker.rect.height }, 'point C over the line pairs');
+    assert.deepEqual(Object.keys(await legend()), ['A', 'B', 'C']);
+
+    // Frame by frame, the lens steps sweep focus from 0 to 10, then come back to the line pairs.
+    await page.evaluate(() => { __camera.gate = []; });
+    await page.waitForFunction(() => __camera.gate.length > 0 && tether.meter.lastBitmap === tether.live.bitmap);
+    await page.locator('#tether-meter-reset').click();
+    const frame = async () => {
+      const n = await samples('A');
+      await page.evaluate(() => __camera.release());
+      await page.waitForFunction(n => tether.meter.traces.get('A').series.values.length === n + 1, n);
+    };
+    const lens = async (selector, frames = 1) => { await page.locator(selector).click(); for (let i = 0; i < frames; i++) await frame(); };
+    const far = '[data-focus="far"][data-size="1"]';
+    const framesPerStep = process.env.PHOTOCULL_TETHER_SCREENSHOTS ? 7 : 1;
+    await frame();
+    for (let i = 0; i < 10; i++) await lens(far, framesPerStep);
+    await lens('[data-focus="near"][data-size="3"]'); await lens(far); await lens(far, 3);
+    assert.equal(await page.evaluate(() => __camera.scene.lens), 5);
+    const sweepSamples = 1 + 10 * framesPerStep;
+    const swept = await traces(), peakAt = values => values.indexOf(Math.max(...values.slice(0, sweepSamples)));
+    assert.ok(Object.values(swept).every(values => values.length === sweepSamples + 5));
+    assert.ok(peakAt(swept.A) < peakAt(swept.C) && peakAt(swept.C) < peakAt(swept.B), `each point peaks as focus passes its card: ${[peakAt(swept.A), peakAt(swept.C), peakAt(swept.B)]}`);
+    const readout = await legend();
+    assert.deepEqual(readout.C, { value: '100%', peak: true }, 'the card in focus reads at its peak');
+    for (const id of ['A', 'B']) assert.ok(parseInt(readout[id].value, 10) < 60 && !readout[id].peak, `point ${id} reads soft: ${readout[id].value}`);
+    if (process.env.PHOTOCULL_TETHER_SCREENSHOTS) {
+      const screenshots = path.resolve(process.env.PHOTOCULL_TETHER_SCREENSHOTS);
+      await fs.mkdir(screenshots, { recursive: true });
+      await page.screenshot({ path: path.join(screenshots, 'focus-meter.png') });
+    }
+    await page.waitForFunction(() => document.querySelector('#tether-meter-note').textContent === 'No new frames' && document.querySelector('#tether-meter').classList.contains('stale'));
+    await page.evaluate(() => __camera.openGate());
+    await page.waitForFunction(() => document.querySelector('#tether-meter-note').textContent === '');
+
+    const settled = await samples('C');
+    await page.evaluate(() => __camera.emit('tether-live-state', { shootId: tether.shoot.shootId, epoch: tether.camera.epoch, streamId: 'stream-d', state: 'streaming' }));
+    await page.waitForFunction(() => tether.live.streamId === 'stream-d' && (tether.meter.traces.get('C')?.series.values.length || 0) >= 2);
+    const [restarted, delivered] = await page.evaluate(() => [tether.meter.traces.get('C').series.values.length, __camera.frames['stream-d']]);
+    assert.ok(restarted < settled && restarted <= delivered, `a replaced stream starts the traces over: ${restarted} samples from ${delivered} frames`);
+    assert.equal(await page.locator('.tether-meter-point').count(), 3, 'pinned points survive a stream change');
+    await page.locator('#tether-live-dock').click();
+    assert.deepEqual([await visible('#tether-meter'), await page.locator('.tether-meter-point').count()], [false, 0], 'the docked stage hides the meter');
+    await page.locator('#tether-live-dock').click();
+    await page.locator('#tether-meter').waitFor({ state: 'visible' });
+    await page.evaluate(() => document.getElementById('tether-live-viewport').focus());
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.querySelector('#tether-live-stage').hidden);
+    const reopened = await page.evaluate(() => __camera.frames['stream-c']);
+    await press('l');
+    await page.waitForFunction(() => tether.live.bitmap && (tether.meter.traces.get('A')?.series.values.length || 0) >= 1);
+    assert.equal(await pressed('#tether-live-meter'), 'true', 'the meter stays on when Live View reopens');
+    assert.equal(await page.locator('.tether-meter-point').count(), 3, 'and keeps its points');
+    assert.ok(await page.evaluate(start => tether.meter.traces.get('A').series.values.length <= __camera.frames['stream-c'] - start, reopened), 'with fresh traces');
+    await page.locator('#tether-live-meter').click();
+    assert.deepEqual([await pressed('#tether-live-meter'), await visible('#tether-meter'), await page.locator('.tether-meter-point').count()], ['false', false, 0]);
+    const measured = () => page.evaluate(() => [...tether.meter.traces.values()].reduce((n, t) => n + t.series.values.length, 0));
+    const offAt = await page.evaluate(() => __camera.frames['stream-c']);
+    await page.waitForFunction(start => __camera.frames['stream-c'] >= start + 5, offAt);
+    assert.equal(await measured(), 0, 'nothing is measured while the meter is off');
+    await page.evaluate(() => { __camera.scene = null; document.getElementById('tether-live-viewport').focus(); });
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.querySelector('#tether-live-stage').hidden);
+    check('Focus Meter: loupe area tracked at fit and 1:1, keyboard and Shift+click points, lens sweep peaks in depth order, stale, stream change, dock, reopen and off');
 
     await page.evaluate(() => select(filtered()[0].id));
     await page.locator('#tether-pin').click(); await page.locator('.compare.pinned').waitFor({ state: 'visible' });
