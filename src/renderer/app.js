@@ -275,7 +275,12 @@ function imageUrl(item, kind = 'thumb', prefetch = false, original = state.showO
   return api.imageUrl(state.session.id, item.id, kind, `&d=${item.developRevision || 0}&edit=${item.externalEdit ? 1 : 0}&v=${state.previewRevision}${original ? '&original=1' : ''}${item.contentRev ? `&cr=${item.contentRev}` : ''}${prefetch ? '&prefetch=1' : ''}`);
 }
 const xmpEligible = item => item.edited || item.adjusted || item.developed || item.externalEdit || item.recipe || item.developRevision > 0 || !!item.captureMetadata || Object.hasOwn(item, 'metadataOverrides');
-function fileSize(bytes) { return bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`; }
+const { count: formatCount, quantity, filename: showFilename } = PhotoCullPresentation;
+function fileSize(bytes) {
+  if (bytes < 1024) return quantity(bytes, 'byte');
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
+  return bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+}
 function setStatus(text, error = false) {
   if (text === 'Saved' && (outstandingDecisions.size || state.saveError)) {
     error = state.saveError || [...outstandingDecisions.values()].some(fields => [...fields.values()].some(entry => entry.error));
@@ -307,6 +312,7 @@ async function openFolder(includeSubfolders = false) {
 }
 
 function loadSession(session) {
+  if ($('export-dialog').open && state.session?.id !== session?.id) $('export-dialog').close();
   if(state.mode==='compare')state.mode=stageMode();
   clearTimeout(metadataTimer);
   cancelCulling();culling.metadata.clear();culling.jobs.clear();culling.scores.clear();culling.expanded.clear();culling.bursts=[];culling.byId.clear();
@@ -326,7 +332,7 @@ function loadSession(session) {
   const folder = session?.folder || '';
   $('folder-name').textContent = folder.split(/[\\/]/).filter(Boolean).pop() || folder || 'No folder open';
   $('folder-name').title = folder;
-  $('folder-detail').textContent = session ? `${session.items.length} photos` : '';
+  $('folder-detail').textContent = session ? quantity(session.items.length, 'photo') : '';
   $('breadcrumb').textContent = folder; $('breadcrumb').title = folder;
   $('export').disabled = !session?.items.length;
   gridNodes.clear(); filmNodes.clear(); $('grid-content').replaceChildren(); $('filmstrip').replaceChildren();
@@ -388,15 +394,15 @@ void api.devices().then(receiveDevices).catch(error => { state.deviceError = err
 function renderCounts() {
   const all = state.session?.items ?? [], items = all.filter(i => !i.trashed);
   const count = items.filter(reviewed).length;
-  $('count-trash').textContent = all.length - items.length;
-  $('count-all').textContent = items.length;
-  $('count-unreviewed').textContent = items.length - count;
-  for (const flag of ['pick', 'reject']) $(`count-${flag}`).textContent = items.filter(i => i.flag === flag).length;
+  $('count-trash').textContent = formatCount(all.length - items.length);
+  $('count-all').textContent = formatCount(items.length);
+  $('count-unreviewed').textContent = formatCount(items.length - count);
+  for (const flag of ['pick', 'reject']) $(`count-${flag}`).textContent = formatCount(items.filter(i => i.flag === flag).length);
   const proposed = pendingProposals().length;
-  $('count-external').textContent = `${items.filter(i => i.externalEdit).length}${proposed ? ` (${proposed})` : ''}`;
+  $('count-external').textContent = `${formatCount(items.filter(i => i.externalEdit).length)}${proposed ? ` (${formatCount(proposed)})` : ''}`;
   $('count-external').title = proposed ? `${proposed} proposed matches awaiting review` : '';
-  $('count-rated').textContent = items.filter(i => i.rating > 0).length;
-  $('progress-text').textContent = `${count} of ${items.length}`;
+  $('count-rated').textContent = formatCount(items.filter(i => i.rating > 0).length);
+  $('progress-text').textContent = `${formatCount(count)} of ${formatCount(items.length)}`;
   $('progress-fill').style.width = `${items.length ? count / items.length * 100 : 0}%`;
   document.querySelectorAll('.filter').forEach(button => { const active = button.dataset.filter === state.filter; button.classList.toggle('active', active); button.setAttribute('aria-pressed', String(active)); });
 }
@@ -439,7 +445,7 @@ function render(reset = false) {
   document.body.classList.toggle('tether-active', state.studio);
   const titles = { all: 'Photos', unreviewed: 'Unreviewed', pick: 'Picks', reject: 'Rejects', rated: 'Rated', external: 'External edits', trash: 'Trash' };
   $('view-title').textContent = loaded ? titles[state.filter] : 'Photos';
-  $('view-count').textContent = loaded ? `${items.length}${state.marked.size > 1 ? ` · ${state.marked.size} selected` : ''}` : '';
+  $('view-count').textContent = loaded ? `${formatCount(items.length)}${state.marked.size > 1 ? ` · ${formatCount(state.marked.size)} selected` : ''}` : '';
   renderBulkActions();
   if (deletePrompt && (state.session?.id !== deletePrompt.session || viewKey() !== deletePrompt.view || !sameIds(deletePrompt.ids))) hideDeletePrompt();
   renderSelection();
@@ -560,7 +566,7 @@ function renderDecision(item) {
   }
   [...$('rating').children].forEach((button, i) => { button.classList.toggle('selected', i < item.rating); button.setAttribute('aria-pressed', String(i < item.rating)); });
   $('pick').setAttribute('aria-pressed', String(item.flag === 'pick')); $('reject').setAttribute('aria-pressed', String(item.flag === 'reject'));
-  $('detail-decision').textContent = state.marked.size > 1 ? `${state.marked.size} photos selected` : `${item.flag === 'pick' ? '⚑ Pick' : item.flag === 'reject' ? '× Rejected' : item.rating ? 'Rated' : 'Unreviewed'}${item.rating ? ` · ${'★'.repeat(item.rating)}` : ''}`;
+  $('detail-decision').textContent = state.marked.size > 1 ? `${quantity(state.marked.size, 'photo')} selected` : `${item.flag === 'pick' ? '⚑ Pick' : item.flag === 'reject' ? '× Rejected' : item.rating ? 'Rated' : 'Unreviewed'}${item.rating ? ` · ${'★'.repeat(item.rating)}` : ''}`;
   $('flag-overlay').hidden = item.flag === 'none';
   $('flag-overlay').textContent = item.flag === 'pick' ? 'Picked' : 'Rejected';
   $('flag-overlay').classList.toggle('rejected', item.flag === 'reject');
@@ -631,6 +637,20 @@ async function loadMetadata(item) {
   } catch { if (state.selected === imageId) $('metadata').textContent = 'Metadata unavailable'; }
 }
 
+function thumbnail(item, container) {
+  const image = document.createElement('img');
+  image.alt = ''; image.decoding = 'async';
+  image.onerror = () => {
+    const note = document.createElement('span');
+    note.className = 'thumbnail-error'; note.textContent = 'Preview unavailable';
+    image.hidden = true; container.append(note);
+    const card = container.closest('button');
+    if (card) card.setAttribute('aria-description', [thumbStatus(item), note.textContent].filter(Boolean).join(' · '));
+  };
+  image.src = imageUrl(item);
+  return image;
+}
+
 function renderFilmstrip(items, index) {
   items=stackItems(items);index=items.findIndex(i=>i.id===state.selected);
   const start = Math.max(0, index - 3), nearby = items.slice(start, Math.min(items.length, index + 5));
@@ -640,14 +660,13 @@ function renderFilmstrip(items, index) {
     if (!button || button.dataset.revision !== String(state.previewRevision)) {
       button = document.createElement('button'); button.dataset.revision = state.previewRevision; button.className = 'film-card';
       button.title = item.name; button.setAttribute('aria-label', item.name);
-      const image = document.createElement('img'); image.src = imageUrl(item); image.alt = ''; image.decoding = 'async';
-      image.onerror = () => { image.style.opacity = '0'; };
+      const image = thumbnail(item, button);
       const label = document.createElement('span'); label.className = 'film-label'; button.append(image, label);
       button.onclick = event => { select(item.id, event); if (state.fullscreen && event.detail) button.blur(); }; filmNodes.set(item.id, button);
     }
     button.classList.toggle('selected', state.marked.has(item.id)); button.classList.toggle('current', item.id === state.selected); button.setAttribute('aria-current', String(item.id === state.selected));
     button.querySelector('.film-label').textContent = String(start + i + 1).padStart(2, '0');
-    button.querySelectorAll('.badge-row').forEach(node => node.remove()); addFlag(button, item); button.setAttribute('aria-description', thumbStatus(item) || 'Unreviewed'); return button;
+    button.querySelectorAll('.badge-row').forEach(node => node.remove()); addFlag(button, item); button.setAttribute('aria-description', [thumbStatus(item) || 'Unreviewed', button.querySelector('.thumbnail-error')?.textContent].filter(Boolean).join(' · ')); return button;
   });
   // Only when the cards differ: re-inserting a card drops its hover state, so a card under the
   // pointer or a finger blinked on every analysis tick.
@@ -714,15 +733,14 @@ function renderGrid() {
     if (!node || node.dataset.signature !== signature) {
       node?.remove(); node = document.createElement('button'); node.className = 'grid-card'; node.dataset.signature = signature;
       const wrap = document.createElement('div'); wrap.className = 'thumb-wrap';
-      const img = document.createElement('img'); img.alt = item.name; img.src = imageUrl(item); img.decoding = 'async';
-      img.onerror = () => { img.style.opacity = '0'; wrap.title = 'Preview unavailable'; };
+      const img = thumbnail(item, wrap);
       wrap.append(img); addFlag(wrap, item);
       const caption = document.createElement('div'); caption.className = 'grid-caption';
-      const name = document.createElement('span'); name.textContent = item.name;
+      const name = document.createElement('span'); showFilename(name, item.name);
       const type = document.createElement('span'); type.textContent = item.raw ? 'RAW' : item.name.split('.').pop().toUpperCase(); type.className = 'subtle';
       caption.append(name, type); node.append(wrap, caption);
       node.onclick = event => { select(item.id, event); if (gridPointer === 'touch' && !event.shiftKey && !additive(event)) setMode('review'); }; node.ondblclick = () => setMode('review');
-      node.setAttribute('aria-label', item.name); node.setAttribute('aria-description', thumbStatus(item) || 'Unreviewed'); container.append(node); gridNodes.set(item.id, node);
+      node.title = item.name; node.setAttribute('aria-label', item.name); node.setAttribute('aria-description', thumbStatus(item) || 'Unreviewed'); container.append(node); gridNodes.set(item.id, node);
     }
     node.classList.toggle('selected', state.marked.has(item.id)); node.classList.toggle('current', item.id === state.selected);
     node.style.left = `${(i % columns) * width}px`; node.style.top = `${Math.floor(i / columns) * rowHeight}px`;
@@ -1091,7 +1109,7 @@ function renderIndexStatus() {
   const run = metadataIndex;
   const active = !filterPanel.hidden || state.query || Object.keys(state.metadataFilters).length;
   status.hidden = !active || !run || run.session !== state.session || run.done && !run.failures;
-  if (!status.hidden) status.textContent = run.done ? `Metadata unavailable for ${run.failures} photos` : `Indexing metadata (${run.processed}/${run.total})…`;
+  if (!status.hidden) status.textContent = run.done ? `Metadata unavailable for ${quantity(run.failures, 'photo')}` : `Indexing metadata (${formatCount(run.processed)}/${formatCount(run.total)})…`;
 }
 function renderMetadataFilters() {
   renderIndexStatus();
@@ -1301,17 +1319,52 @@ api.onFullscreen(status => {
 api.onFullscreenToggle(() => hideDeletePrompt());
 api.onFullscreenToggle(() => { if (!document.querySelector('dialog[open]')) void setFullscreen(); });
 $('shortcuts').onclick = () => openHelp();
+const copyPageSize = 12;
+let copyChoices = null, copyPage = 0;
+function copyItems() { return copyChoices?.[$('copy-source').value] ?? []; }
+function renderCopyPhotos() {
+  const items = copyItems(), start = copyPage * copyPageSize;
+  $('copy-photos').replaceChildren(...items.slice(start, start + copyPageSize).map(item => {
+    const tile = document.createElement('li'), label = document.createElement('span');
+    tile.title = item.name; tile.tabIndex = 0;
+    const image = thumbnail(item, tile);
+    showFilename(label, item.name);
+    tile.append(image, label);
+    return tile;
+  }));
+  $('copy-pages').hidden = items.length <= copyPageSize;
+  $('copy-page').textContent = items.length ? `${formatCount(start + 1)}–${formatCount(Math.min(start + copyPageSize, items.length))} of ${formatCount(items.length)}` : '';
+  $('copy-previous').disabled = start === 0;
+  $('copy-next').disabled = start + copyPageSize >= items.length;
+}
+$('copy-previous').onclick = () => { copyPage--; renderCopyPhotos(); };
+$('copy-next').onclick = () => { copyPage++; renderCopyPhotos(); };
+$('copy-source').onchange = () => {
+  copyPage = 0; renderCopyPhotos(); renderCopyOptions(); void updateNamePreview();
+};
 $('export').onclick = () => {
-  if (state.busy) return;
+  if (state.busy || !state.session || state.copy.running) return;
+  copyChoices = {
+    session: state.session.id,
+    picks: state.session.items.filter(i => i.flag === 'pick' && !i.trashed),
+    selection: state.session.items.filter(i => state.marked.has(i.id) && !i.trashed)
+  };
+  const source = $('copy-source');
+  source.options[0].textContent = `All picks (${formatCount(copyChoices.picks.length)})`;
+  source.options[1].textContent = `Selected photos (${formatCount(copyChoices.selection.length)})`;
+  const useSelection = copyChoices.selection.length > 1 || (!copyChoices.picks.length && copyChoices.selection.length === 1);
+  source.value = useSelection ? 'selection' : 'picks';
+  copyPage = 0; renderCopyPhotos();
   $('export-results').hidden = true;
   $('export-xmp').disabled = !state.session.items.some(xmpEligible);
   renderCopyOptions(); void updateNamePreview();
   $('export-dialog').showModal();
 };
 function renderCopyOptions() {
-  const picks = state.session?.items.filter(i => i.flag === 'pick' && !i.trashed) || [];
+  const picks = copyItems();
+  $('copy-source').disabled = state.copy.running;
   const total = picks.reduce((bytes, i) => bytes + i.size, 0);
-  $('copy-scope').textContent = `${picks.length} pick${picks.length === 1 ? '' : 's'} · ${fileSize(total)}${$('copy-jpeg').checked ? ' + JPEGs' : ''}`;
+  $('copy-scope').textContent = `${quantity(picks.length, $('copy-source').value === 'picks' ? 'pick' : 'photo')} · ${fileSize(total)}${$('copy-jpeg').checked ? ' + JPEGs' : ''}`;
   $('copy-start').disabled = state.copy.running || state.deleting || state.pendingSaves > 0 || !picks.length || !state.copy.destination || $('copy-folder-mode').value === 'named' && !$('copy-folder-name').value.trim();
   $('copy-destination').disabled = state.copy.running;
   $('copy-jpeg').disabled = state.copy.running;
@@ -1343,19 +1396,19 @@ function showCopyProgress(progress) {
   $('copy-progress').hidden = false;
   $('copy-progress').max = Math.max(1, progress.totalBytes);
   $('copy-progress').value = progress.bytesCopied;
-  $('copy-status').textContent = progress.state === 'planning' ? 'Checking picked originals…' : progress.state === 'metadata' ? `Writing metadata · ${progress.file}` :
-    `${progress.completed} / ${progress.total} photos · ${fileSize(progress.bytesCopied)} / ${fileSize(progress.totalBytes)}${progress.file ? ` · ${progress.file}` : ''}`;
+  $('copy-status').textContent = progress.state === 'planning' ? 'Checking originals…' : progress.state === 'metadata' ? `Writing metadata · ${progress.file}` :
+    `${formatCount(progress.completed)} / ${quantity(progress.total, 'photo')} · ${fileSize(progress.bytesCopied)} / ${fileSize(progress.totalBytes)}${progress.file ? ` · ${progress.file}` : ''}`;
 }
 api.onCopyProgress(progress => { if (state.copy.running) showCopyProgress(progress); });
 $('copy-start').onclick = async () => {
   if (state.busy || state.copy.running || state.pendingSaves || state.deleting) return;
   state.copy.running = true; state.copy.copiedTo = null;
   $('export-results').hidden = true;
-  $('copy-status').textContent = 'Checking picked originals…';
+  $('copy-status').textContent = 'Checking originals…';
   $('open-folder').disabled = true; $('empty-open').disabled = true;
   renderCopyOptions(); renderDevices();
   try {
-    const result = await api.copyPicks(state.session.id, state.copy.destination, { verify: $('copy-verify').checked, includeJpeg: $('copy-jpeg').checked, includeXmp: $('copy-xmp').checked, embedMetadata: $('copy-metadata').checked, naming: readNaming('copy'), folders: readFolders('copy') });
+    const result = await api.copyPicks(copyChoices.session, state.copy.destination, { ids: copyItems().map(i => i.id), verify: $('copy-verify').checked, includeJpeg: $('copy-jpeg').checked, includeXmp: $('copy-xmp').checked, embedMetadata: $('copy-metadata').checked, naming: readNaming('copy'), folders: readFolders('copy') });
     state.copy.copiedTo = result.destination;
     showCopyProgress(result);
     const heading = `${result.state === 'canceled' ? 'Canceled · ' : ''}${result.copied} copied · ${result.skipped.length} skipped · ${result.failures.length} failed`;
@@ -1489,7 +1542,7 @@ function removeFromSession(ids) {
   renderUnsavedDecisions();
   for (const id of gone) { gridNodes.get(id)?.remove(); gridNodes.delete(id); filmNodes.delete(id); }
   $('review-image').dataset.itemId = ''; $('review-image').dataset.stamp = '';
-  $('folder-detail').textContent = `${state.session.items.length} photos`;
+  $('folder-detail').textContent = quantity(state.session.items.length, 'photo');
   $('export').disabled = !state.session.items.length;
 }
 // Tethered captures arrive as library deltas; a remap moves a provisional JPEG id onto its RAW pair.
@@ -1527,7 +1580,7 @@ function applyTetherDelta(delta) {
   reconcileOutstandingDecisions(items); renderUnsavedDecisions();
   state.session.items = items.sort((a, b) => nameOrder.compare(a.name, b.name));
   regroupBursts();
-  $('folder-detail').textContent = `${items.length} photos`; $('export').disabled = !items.length || state.deleting;
+  $('folder-detail').textContent = quantity(items.length, 'photo'); $('export').disabled = !items.length || state.deleting;
   if (refresh) loupe.invalidate();
   render();
   for (const patch of delta.upserts || []) void cullingMetadata(patch.id, delta.session).then(() => { if (state.session?.id === delta.session) { regroupBursts(); render(); } }).catch(() => {});
@@ -1539,7 +1592,7 @@ function replaceTetherLibrary(session) {
   reconcileOutstandingDecisions(session.items, false); renderUnsavedDecisions();
   state.session.items = session.items; state.session.warnings = session.warnings ?? state.session.warnings;
   if (!ids.has(state.selected)) { state.selected = filtered()[0]?.id ?? null; resetSelection(); }
-  regroupBursts(); $('folder-detail').textContent = `${session.items.length} photos`; $('export').disabled = !session.items.length;
+  regroupBursts(); $('folder-detail').textContent = quantity(session.items.length, 'photo'); $('export').disabled = !session.items.length;
   loupe.invalidate(); render();
 }
 async function moveToTrash() {
@@ -1726,8 +1779,8 @@ function readNaming(prefix) { return { template: $(`${prefix}-name-template`).va
 async function updateNamePreview() {
   const generation = ++namingGeneration; clearTimeout(namingTimer);
   namingTimer = setTimeout(async () => {
-    if (!state.session || !$('copy-name-template')) { $('copy-name-preview').textContent = ''; return; }
-    try { const name = await api.namingPreview(state.session.id, readNaming('copy')); if (generation === namingGeneration) $('copy-name-preview').textContent = name; }
+    if (!copyItems().length || !$('copy-name-template')) { $('copy-name-preview').textContent = ''; return; }
+    try { const name = await api.namingPreview(copyChoices.session, readNaming('copy'), copyItems()[0].id); if (generation === namingGeneration) $('copy-name-preview').textContent = name; }
     catch (error) { if (generation === namingGeneration) $('copy-name-preview').textContent = error.message; }
   }, 180);
 }
@@ -1860,7 +1913,7 @@ $('copy-preset').onchange = async () => {
     syncSettings(await api.settings({ activePreset: preset.id, metadata: preset.metadata, colors: preset.colors, naming: preset.naming, folders: preset.folders })); renderCopyOptions();
   } catch (error) { $('copy-status').textContent = error.message; }
 };
-$('export-dialog').addEventListener('close', () => { $('copy-progress').hidden = true; $('copy-status').textContent = ''; });
+$('export-dialog').addEventListener('close', () => { copyChoices = null; $('copy-photos').replaceChildren(); $('copy-progress').hidden = true; $('copy-status').textContent = ''; });
 const imageExport = PhotoCullExport.init({ api, state, selection, buildNaming, readNaming, toast, updateItems: developView.host.updateItems });
 void api.settings().then(value => {
   syncSettings(value);
@@ -2349,7 +2402,7 @@ function indexSessionMetadata(session, items) {
       run.processed++;
       if (run.processed % 8 === 0 || run.processed === 1 || run.processed === run.total) {
         regroupBursts(); render();
-        if (culling.running) setAnalysis(`Metadata ${run.processed}/${run.total}`, 'running');
+        if (culling.running) setAnalysis(`Metadata ${formatCount(run.processed)}/${formatCount(run.total)}`, 'running');
       }
       await new Promise(resolve => setTimeout(resolve, 35));
     }

@@ -61,6 +61,7 @@
       if(this.state.ids.length<2)this.state.ids=C.compareState(this.state.ids.length?this.state.ids:[items[0].id],items).ids;
       this.state.active=Math.min(this.state.active,Math.max(0,this.state.ids.length-1));
       this.layout(this.state.ids);
+      this.host.activate(this.state.ids[this.state.active]);
     }
     syncPage() {
       const available = new Set(this.host.library().map(item => item.id));
@@ -135,14 +136,14 @@
     }
     // Loads `id` into an existing pane; the view keeps its zoom and center, so linked panes stay aligned.
     show(record,id) {
-      const item=id && this.host.item(id),request=++record.request;record.id=item ? id : null;record.key=this.key(id);record.kind='preview';
+      const item=id && this.host.item(id),request=++record.request;record.previewUnavailable=false;record.id=item ? id : null;record.key=this.key(id);record.kind='preview';
       record.waiting.hidden=!!item;record.pane.classList.toggle('waiting',!item);
       record.pane.setAttribute('aria-label',item ? `${record.reference?'Reference':this.pin?'Incoming':'Compare '+(this.panes.indexOf(record)+1)}: ${item.name}` : 'Incoming: waiting for next capture');
       record.rating.disabled=!item;record.rating.setAttribute('aria-label',item ? `Rating for ${item.name}` : 'Rating');
-      if(!item) {record.image.removeAttribute('src');record.image.alt='';record.view.setVisible(false);record.name.textContent='Incoming';return;}
+      if(!item) {record.image.removeAttribute('src');record.image.alt='';record.view.setVisible(false);PhotoCullPresentation.filename(record.name, 'Incoming');return;}
       record.image.alt=item.name;
       record.image.onload=()=>{if(request!==record.request)return;record.view.setSource({width:record.image.naturalWidth,height:record.image.naturalHeight});record.view.setVisible(true);};
-      record.image.onerror=()=>{if(request===record.request)record.name.textContent=`${item.name} · preview unavailable`;};record.image.src=this.host.url(item,'preview');
+      record.image.onerror=()=>{if(request===record.request){record.previewUnavailable=true;this.refresh();}};record.image.src=this.host.url(item,'preview');
       const session=this.host.session();
       void this.host.api.previewStatus(session,id,'preview').then(status=>{if(request===record.request && this.panes.includes(record) && status.size)record.view.setSource(status.size,true);}).catch(()=>{});
       void this.host.metadata(id).then(()=>{if(this.panes.includes(record))this.refresh();}).catch(()=>{});
@@ -152,7 +153,9 @@
       for(const [i,p] of this.panes.entries()) {
         p.pane.classList.toggle('active',i===this.state.active);
         const item=p.id && this.host.item(p.id);if(!item)continue;
-        p.name.textContent=`${item.name}${item.flag==='pick'?' · Pick':item.flag==='reject'?' · Reject':''}`;p.name.title=p.name.textContent;p.rating.value=item.rating;
+        const decision = item.flag === 'pick' ? ' · Pick' : item.flag === 'reject' ? ' · Reject' : '';
+        PhotoCullPresentation.filename(p.name, item.name, decision + (p.previewUnavailable ? ' · Preview unavailable' : ''));
+        p.rating.value=item.rating;
         p.view.setFocus(this.host.focus(p.id),this.host.overlay());
       }
     }

@@ -92,6 +92,8 @@
         this.on = false; this.visible = false; this.points = []; this.traces = new Map(); this.drag = null;
         this.lastBitmap = null; this.nextAt = 0; this.timer = 0; this.staleTimer = 0; this.stale = false; this.sizeKey = ''; this.labelAt = 0; this.legendKey = null;
         this.el = { toggle: $('tether-live-meter'), panel: $('tether-meter'), add: $('tether-meter-add'), reset: $('tether-meter-reset'), graph: $('tether-meter-graph'), legend: $('tether-meter-legend'), note: $('tether-meter-note'), region: $('tether-meter-region'), points: $('tether-meter-points') };
+        const placement = new ResizeObserver(() => this.placePanel());
+        placement.observe(viewport); placement.observe($('inspector'));
         this.scratch = document.createElement('canvas'); this.scratch.width = this.scratch.height = CAP;
         this.ctx = this.scratch.getContext('2d', { willReadFrequently: true });
         this.el.toggle.onclick = () => this.toggle();
@@ -102,6 +104,14 @@
           const g = this.view().geometry, r = this.viewport.getBoundingClientRect(), at = g && viewToFrame(event.clientX - r.left, event.clientY - r.top, g.rect);
           if (at) this.add(at);
         });
+      }
+      placePanel() {
+        if (!this.on || !this.visible || !this.viewport.clientHeight) return;
+        const tray = $('meter-stage-slot'), inspector = $('meter-inspector-slot');
+        const available = this.viewport.clientHeight + tray.offsetHeight;
+        const compact = available < 300 && this.viewport.clientWidth < 600;
+        const parent = compact ? (inspector.getClientRects().length ? inspector : tray) : this.viewport;
+        if (this.el.panel.parentElement !== parent) parent.append(this.el.panel);
       }
       active() { return this.on && this.visible && !document.hidden && this.viewport.offsetParent !== null; }
       toggle(on = !this.on) { this.on = on; this.restart(); return on; }
@@ -168,7 +178,7 @@
       render() {
         const shown = this.on && this.visible, { el } = this;
         el.toggle.setAttribute('aria-pressed', String(this.on));
-        el.panel.hidden = !shown; el.panel.classList.toggle('stale', this.stale);
+        el.panel.hidden = !shown; this.placePanel(); el.panel.classList.toggle('stale', this.stale);
         el.note.textContent = shown && this.stale ? 'No new frames' : '';
         el.add.disabled = this.points.length >= POINTS.length;
         el.add.title = el.add.disabled ? 'Up to three focus points' : 'Pin a focus point (or Shift+click the image)';

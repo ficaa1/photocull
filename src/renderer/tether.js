@@ -1118,6 +1118,12 @@
         if (result.warning) sample.append(el('span', 'tether-sample-warning', ' ' + result.warning));
         summary.replaceChildren(...[...sample.children].map(node => node.cloneNode(true)));
         summary.title = sample.textContent;
+        const names = summary.querySelector('strong');
+        names.replaceChildren(...result.filenames.map(name => {
+          const label = el('span');
+          PhotoCullPresentation.filename(label, name);
+          return label;
+        }));
       }, 120);
     }
     async counter(op, value) {
@@ -1738,7 +1744,7 @@
         const size = button.dataset.size, dir = button.dataset.focus;
         const action = dir === 'af' ? (this.actionState('halfPress').available ? this.actionState('halfPress') : this.actionState('af')) : this.actionState(`focus${dir === 'near' ? 'Near' : 'Far'}${size}`);
         button.disabled = !this.connected() || !action.available;
-        if (!action.available && action.reason) button.title = action.reason;
+        button.title = !action.available && action.reason ? action.reason : button.getAttribute('aria-label');
       }
     }
 

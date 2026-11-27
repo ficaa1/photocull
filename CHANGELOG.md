@@ -4,6 +4,35 @@ All notable changes to PhotoCull are documented here. This file follows [Keep a 
 
 ## [Unreleased]
 
+## [0.9.8] - 2026-11-27
+
+### Copy selected originals
+
+Select photos in the grid and open **Copy picks** to see their thumbnails and filenames before copying. A multi-selection opens on **Selected photos**. Switch to **All picks** to review every flagged pick in the folder, including those outside the current filter. You can also choose a single current photo. Copying preserves the originals and their pick flags.
+
+### Tether and Live View
+
+- Use **Watch Hot Folder…** to bring RAW and JPEG files from another capture application into the active shoot. PhotoCull waits for files to settle, applies the shoot's naming and metadata, pairs companions that arrive later and remembers accepted files when you reopen the shoot.
+- Turn on **Focus meter** to track relative detail in the loupe area or at up to three pinned points. Shift-click the live image to add a point. On smaller windows the graph moves clear of the image.
+- The Camera panel exposes **Live View Setting Effect** and **Live View Quality** when the Sony body advertises them. Nearer and farther lens steps now show their direction and size, with the camera's reason when a step is unavailable.
+
+### Culling and editing
+
+- Compare sends keyboard ratings and flags to the highlighted pane as soon as it opens.
+- Long filenames keep their distinguishing endings in Grid, Compare and the next-capture display. Unreadable thumbnails show **Preview unavailable**, and dark images have a visible edge.
+- On narrow windows, **Adjustments** opens a drawer in Develop and keyboard shortcut actions wrap below their labels.
+- Toolbar hover and pressed states are distinct. Photo counts use digit grouping and singular labels, and small files display their size in bytes or KB.
+
+## [0.9.7] - 2026-11-26
+
+### Capture and culling
+
+- The Tether dock keeps the capture source, destination and next filename visible while you scroll the camera tools. Naming previews can use the connected camera's information.
+- Compare now pages through selections larger than four. Move between groups and rate or flag the active photo without rebuilding your selection.
+- If a flag, rating or trash decision fails to save, retry it on the original photo, even after auto-advance or reopening the folder.
+- Remove individual metadata filters from the results view. An empty folder now offers to scan subfolders.
+- Smaller windows group workspace and output commands into menus. Press Cmd+K or Ctrl+K to open the command palette while typing in photo search.
+
 ## [0.9.2] - 2026-11-06
 
 ### Fixed
@@ -87,7 +116,9 @@ All notable changes to PhotoCull are documented here. This file follows [Keep a 
 
 0.7.0 is reconstructed from the versioned Tauri migration commits; it has no release tag. 0.6.0 and 0.8.0 correspond to the repository tags and 0.8.0 release notes.
 
-[Unreleased]: https://github.com/ficaa1/photocull/compare/v0.9.2...HEAD
+[Unreleased]: https://github.com/ficaa1/photocull/compare/v0.9.8...HEAD
+[0.9.8]: https://github.com/ficaa1/photocull/compare/v0.9.7...v0.9.8
+[0.9.7]: https://github.com/ficaa1/photocull/compare/v0.9.6...v0.9.7
 [0.9.2]: https://github.com/ficaa1/photocull/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/ficaa1/photocull/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/ficaa1/photocull/releases/tag/v0.9.0

@@ -32,6 +32,14 @@ async function main(){
   const recipeAction=async id=>{await page.locator('#develop-recipe-menu-button').click();await page.locator('#'+id).click();};
   await page.reload();await page.evaluate(async()=>{state.settings=await api.settings({editors:[{...(await api.settings()).editors[0],path:'/mock/editor.exe'}]});});await page.evaluate(async folder=>{loadSession(await api.openPath(folder,false));setMode('develop');},photos);
   await page.waitForFunction(()=>document.querySelector('#develop-timing').textContent.includes('settled'),null,{timeout:10000}).catch(async e=>{console.error(await page.evaluate(()=>({message:document.querySelector('#develop-message').textContent,key:developView.key,active:developView.active,info:developView.info,calls:window.__developMock.calls,queue:{running:developView.queue.running,pending:developView.queue.pending},errors:document.body.textContent.slice(-500)})));throw e;});
+  const fullSize = page.viewportSize();
+  await page.setViewportSize({width:390,height:760});
+  assert.equal(await page.locator('#develop-adjustments').isVisible(), false);
+  await page.locator('#develop-adjustments-toggle').click();
+  await page.locator('#develop-adjustments').waitFor({state:'visible'});
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#develop-adjustments').isVisible(), false);
+  await page.setViewportSize(fullSize);
   // The merged views must keep their keyboard gestures within their owner.
   const zoomBefore=await page.evaluate(()=>JSON.stringify(loupe.view.zoom));
   await page.evaluate(()=>document.activeElement?.blur());

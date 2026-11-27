@@ -74,5 +74,4 @@ license texts; `rust-license-supplements.json` preserves omitted workspace
 licenses and provenance. `sources/*.crate` are unmodified MPL crate sources.
 Native versions and upstream sharp-libvips notices are recorded separately.
 The exact Windows ExifTool Strawberry Perl license archive is retained intact.
-See [licensing](../docs/licensing.md) for LGPL/native-runtime source requirements
-that must be resolved before distributing public installers.
+See [licensing](../docs/licensing.md) for the native source download and its relationship to the packaged binaries.

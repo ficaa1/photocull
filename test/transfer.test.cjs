@@ -42,6 +42,15 @@ test('copy picks transfers original bytes only; optional companion and destinati
   assert.match(exported, /xmp:Label="Blue"/, 'Independent imported color survives a pick decision'); assert.match(exported, /preserve me/);
   assert.equal(await fs.readFile(path.join(photos, 'a.xmp'), 'utf8'), xml);
   assert.equal(events.at(-1).state, 'done'); assert.equal(result.bytesCopied, result.totalBytes);
+  const unreviewed = session.items.find(item => item.name === 'unreviewed.JPG');
+  const explicit = path.join(destination, 'selection'); await fs.mkdir(explicit);
+  for (const ids of [[], [unreviewed.id, unreviewed.id], [unreviewed.id, 'missing']]) {
+    await assert.rejects(copies.copy(library.get(session.id), explicit, { ids }), /Choose photos|photos to copy changed/);
+  }
+  assert.deepEqual(await fs.readdir(explicit), []);
+  await copies.copy(library.get(session.id), explicit, { ids: [unreviewed.id] });
+  assert.deepEqual(await fs.readdir(explicit), ['unreviewed.JPG']);
+  assert.equal(await fs.readFile(path.join(explicit, unreviewed.name), 'utf8'), 'unreviewed');
 });
 test('copy preserves current sidecar metadata after automatic source writes have completed', async t => {
   const { photos, destination, library } = await setup(t, {});

@@ -65,7 +65,7 @@
         <p id="tether-panel-note" class="subtle small"></p>
         <div id="tether-resume" class="tether-resume" hidden><button id="tether-resume-last" class="tether-resume-last" type="button"><span class="tether-resume-kicker">Resume last session</span><span id="tether-resume-last-name" class="tether-resume-name"></span><span id="tether-resume-last-meta" class="tether-resume-meta"></span></button><div id="tether-resume-earlier" class="field-row"><label for="tether-resume-recent">Earlier</label><select id="tether-resume-recent"></select></div></div>
           <p class="tether-location"><span class="subtle small">Destination</span> <span id="tether-location-path" class="tether-path">No session</span><span id="tether-shot-chip" class="chip" hidden></span></p>
-          <p id="tether-next-file" class="tether-sample small"></p>
+          <p id="tether-next-file" tabindex="0" class="tether-sample small"></p>
         <div class="tether-capture-row"><button id="tether-capture" class="button primary tether-capture" type="button" aria-describedby="tether-capture-reason"><span class="tether-capture-label">Capture <kbd>T</kbd></span><span class="tether-recycle tabular"></span></button><button id="tether-composition-toggle" class="button toggle tether-test-toggle" type="button" aria-pressed="false" title="Test Shot Mode: preview shots here without saving them">Test Shot</button></div>
         <p id="tether-capture-reason" class="subtle small tether-reason" aria-live="polite"></p>
         <p id="tether-destination-warning" class="tether-warning" hidden>Camera Only: choose a destination that sends files to this computer.</p>
@@ -271,6 +271,7 @@
           <button id="tether-live-close" class="button quiet" type="button" title="Close Live View (L)">Close</button>
           <button id="tether-live-capture" class="button primary" type="button" title="Capture (T)" aria-describedby="tether-capture-reason"><span class="tether-capture-label">Capture</span><span class="tether-recycle tabular"></span></button>
         </div>
+        <div id="meter-stage-slot"></div>
         <div id="tether-live-viewport" class="tether-live-viewport" tabindex="0" aria-label="Live View image. Drag to pan at 1:1."><canvas id="tether-live-canvas"></canvas><p id="tether-live-empty" class="tether-live-empty">Waiting for frames…</p>
           <div id="tether-meter-region" class="tether-meter-region" hidden></div>
           <div id="tether-meter-points" class="tether-meter-points"></div>
@@ -283,9 +284,9 @@
         <div class="tether-live-bar bottom">
           <div class="tether-live-group" role="group" aria-label="Loupe"><button id="tether-live-loupe" class="button toggle" type="button" aria-pressed="false" title="1:1 loupe">1:1</button><button id="tether-live-reset" class="button quiet" type="button" title="Center the loupe">Reset</button></div>
           <div class="tether-live-group tether-focus-steps" role="group" aria-label="Focus">
-            <button class="button quiet" type="button" data-focus="near" data-size="3" aria-label="Focus nearer, large step">&lt;&lt;&lt;</button><button class="button quiet" type="button" data-focus="near" data-size="2" aria-label="Focus nearer, medium step">&lt;&lt;</button><button class="button quiet" type="button" data-focus="near" data-size="1" aria-label="Focus nearer, small step">&lt;</button>
+            <button class="button quiet" type="button" data-focus="near" data-size="3" aria-label="Focus nearer, large step"><svg width="18" height="16" viewBox="0 0 18 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4l-4 4 4 4 M11 4l-4 4 4 4 M15 4l-4 4 4 4"/></svg></button><button class="button quiet" type="button" data-focus="near" data-size="2" aria-label="Focus nearer, medium step"><svg width="14" height="16" viewBox="0 0 14 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4l-4 4 4 4 M11 4l-4 4 4 4"/></svg></button><button class="button quiet" type="button" data-focus="near" data-size="1" aria-label="Focus nearer, small step"><svg width="10" height="16" viewBox="0 0 10 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4l-4 4 4 4"/></svg></button>
             <button class="button" type="button" data-focus="af" aria-label="Autofocus">AF</button>
-            <button class="button quiet" type="button" data-focus="far" data-size="1" aria-label="Focus farther, small step">&gt;</button><button class="button quiet" type="button" data-focus="far" data-size="2" aria-label="Focus farther, medium step">&gt;&gt;</button><button class="button quiet" type="button" data-focus="far" data-size="3" aria-label="Focus farther, large step">&gt;&gt;&gt;</button>
+            <button class="button quiet" type="button" data-focus="far" data-size="1" aria-label="Focus farther, small step"><svg width="10" height="16" viewBox="0 0 10 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4l4 4 -4 4"/></svg></button><button class="button quiet" type="button" data-focus="far" data-size="2" aria-label="Focus farther, medium step"><svg width="14" height="16" viewBox="0 0 14 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4l4 4 -4 4 M7 4l4 4 -4 4"/></svg></button><button class="button quiet" type="button" data-focus="far" data-size="3" aria-label="Focus farther, large step"><svg width="18" height="16" viewBox="0 0 18 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4l4 4 -4 4 M7 4l4 4 -4 4 M11 4l4 4 -4 4"/></svg></button>
             <button id="tether-live-meter" class="button toggle tether-meter-toggle" type="button" aria-pressed="false" aria-controls="tether-meter" aria-label="Focus meter" title="Focus meter: relative detail at the loupe area or up to three pinned points"><svg class="icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h18" stroke-dasharray="2 3"/><path d="M3 20h18"/><path d="M3 17c3.5 0 5-10 9-10s5.5 10 9 10"/></svg></button>
           </div>
           <div class="tether-live-group" role="group" aria-label="Focus peaking"><button id="tether-live-peaking" class="button toggle" type="button" aria-pressed="false">Peaking</button><input id="tether-peaking-color" type="color" value="#ffff00" aria-label="Peaking color"><input id="tether-peaking-sensitivity" type="range" min="0" max="1" step="0.05" aria-label="Peaking sensitivity"></div>
@@ -301,6 +302,7 @@
       <footer class="statusbar"><span id="save-status"><span class="status-dot"></span> Ready</span><span id="preview-status"></span><label id="grid-size-control" class="grid-size-control" title="Thumbnail size" hidden><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8" cy="9" r="1"/><path d="m3 17 5-5 4 4 4-5 5 6"/></svg><input id="grid-size" type="range" min="160" max="320" step="5" value="205" aria-label="Thumbnail size"></label></footer>
     </main>
     <aside id="inspector" class="inspector">
+      <div id="meter-inspector-slot"></div>
       <section id="tether-inspector-histogram-panel" class="tether-histogram-panel" aria-labelledby="tether-histogram-label">
         <div class="sidebar-label tether-histogram-label"><span id="tether-histogram-label">Histogram</span><span id="tether-histogram-source" class="tabular"></span></div>
         <canvas id="tether-inspector-histogram" class="tether-inspector-histogram" width="224" height="72" role="img" aria-label="RGB and luma histogram"></canvas>
@@ -383,6 +385,9 @@
   </dialog>
   <dialog id="export-dialog">
     <div class="dialog-header"><h2>Copy picks</h2><button class="close-dialog" aria-label="Close">×</button></div>
+    <div class="field-row"><label for="copy-source">Copy from</label><select id="copy-source"><option value="picks">All picks</option><option value="selection">Selected photos</option></select></div>
+    <ul id="copy-photos" aria-label="Originals to copy"></ul>
+    <div id="copy-pages" hidden><button type="button" class="button quiet" id="copy-previous">Previous</button><span id="copy-page" role="status"></span><button type="button" class="button quiet" id="copy-next">Next</button></div>
     <p id="copy-scope" class="subtle"></p>
     <button id="copy-destination" class="destination-button"><span id="copy-destination-path">Choose folder…</span><span>↗</span></button>
     <div class="field-row"><label for="copy-folder-mode">Folder</label><select id="copy-folder-mode"><option value="flat">No subfolder</option><option value="named">Named subfolder</option><option value="preserve">Keep source folders</option></select></div>
@@ -549,6 +554,7 @@
   </dialog>
   <div id="toast" role="status" hidden></div>
   <script src="bridge.js"></script>
+  <script src="presentation.js"></script>
   <script src="naming.js"></script>
   <script src="culling.js"></script>
   <script src="image-view.js"></script>

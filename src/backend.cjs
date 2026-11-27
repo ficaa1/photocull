@@ -54,7 +54,7 @@ console.log = console.info = console.debug = console.error;
 const rendererDir = path.join(__dirname, 'renderer');
 const RENDERER_FILES = new Map([['index.html', 'text/html'], ['styles.css', 'text/css'], ['app.js', 'text/javascript'],
   ['metadata-filter.js', 'text/javascript'], ['commands.js', 'text/javascript'], ['histogram.js', 'text/javascript'], ['develop.js', 'text/javascript'], ['export.js', 'text/javascript'],
-  ['naming.js', 'text/javascript'], ['image-view.js', 'text/javascript'], ['loupe.js', 'text/javascript'], ['culling.js', 'text/javascript'], ['survey.js', 'text/javascript'], ['bridge.js', 'text/javascript'], ['server.js', 'text/javascript'],
+  ['presentation.js', 'text/javascript'], ['naming.js', 'text/javascript'], ['image-view.js', 'text/javascript'], ['loupe.js', 'text/javascript'], ['culling.js', 'text/javascript'], ['survey.js', 'text/javascript'], ['bridge.js', 'text/javascript'], ['server.js', 'text/javascript'],
   ['contact-sheet-layout.js', 'text/javascript'], ['contact-sheet.js', 'text/javascript'], ['slideshow.js', 'text/javascript'],
   ['tether.js', 'text/javascript'], ['overlays.js', 'text/javascript'], ['focus-meter.js', 'text/javascript']]);
 

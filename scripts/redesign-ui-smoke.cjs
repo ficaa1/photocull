@@ -181,6 +181,17 @@ async function main() {
     await page.locator('#grid-mode').click();
     const cards = page.locator('.grid-card');
     await cards.first().click();
+    await cards.nth(1).click({modifiers:['Shift']});
+    const firstNameInPair = await cards.first().getAttribute('aria-label');
+    await page.keyboard.press('c');
+    assert.equal(await page.locator('#photo-name').textContent(), firstNameInPair);
+    const otherRating = await page.locator('.compare-pane:not(.active) select').inputValue();
+    await page.keyboard.press('3');
+    await page.waitForFunction(() => document.querySelector('.compare-pane.active select').value === '3');
+    assert.equal(await page.locator('.compare-pane:not(.active) select').inputValue(), otherRating);
+    await page.keyboard.press('c');
+    await page.locator('#grid-mode').click();
+    await cards.first().click();
     await cards.nth(5).click({modifiers:['Shift']});
     await page.keyboard.press('c');
     await page.locator('.compare-pages').getByRole('button',{name:'Next 2'}).click();

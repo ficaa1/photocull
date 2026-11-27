@@ -105,7 +105,16 @@
       this.editAgain=button('Edit again',()=>this.reedit(),{id:'develop-edit-again'});
       this.resultPanel.append(this.resultPath,node('div',{class:'develop-actions'},[button('Show in folder',()=>this.api.revealDevelop(this.context.session.id,this.context.photo.id),{id:'develop-result-reveal'}),this.editAgain]),this.editWarning);
       this.stage.append(node('div',{class:'develop-topline'},[this.photoTitle,this.resultToggle]),this.frameBox,this.notice,node('div',{class:'develop-image-bar'},[this.beforeButton,this.splitButton,this.timing]));
-      this.panel = node('aside',{class:'develop-panel','aria-label':'Develop controls'});
+      this.panel = node('aside',{class:'develop-panel',id:'develop-adjustments','aria-label':'Develop controls'});
+      const toggle = button('Adjustments', () => {
+        const open = this.root.classList.toggle('adjustments-open');
+        toggle.setAttribute('aria-expanded', String(open));
+      }, { id:'develop-adjustments-toggle', 'aria-controls':'develop-adjustments', 'aria-expanded':'false' });
+      this.root.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && toggle.offsetWidth && this.root.classList.contains('adjustments-open')) {
+          event.preventDefault(); event.stopPropagation(); toggle.click(); toggle.focus();
+        }
+      });
       this.plot = node('canvas',{id:'develop-histogram',width:560,height:220,'aria-label':'Histogram: drag tonal zones to adjust',tabindex:0});
       this.low = button('▲', () => this.toggleClipping(), {id:'develop-shadow-clip','aria-label':'Shadow clipping overlay','aria-pressed':'false'});
       this.high = button('▲', () => this.toggleClipping(), {id:'develop-highlight-clip','aria-label':'Highlight clipping overlay','aria-pressed':'false'});
@@ -145,7 +154,7 @@
       many.append(node('div',{class:'develop-actions'},[button('Copy settings',() => this.copy(),{id:'develop-copy'}),this.pasteButton,
         button('Apply to selected',() => this.apply('selected'),{id:'develop-apply-selected'}),button('Apply to picks',() => this.apply('picks'),{id:'develop-apply-picks'})]));
       this.batchButton = button('Edit in…',() => this.openBatch(),{id:'develop-send',class:'button primary'}); this.controls.append(this.batchButton);
-      this.root.append(this.stage,this.panel);
+      this.root.append(toggle,this.stage,this.panel);
       this.bindHistogram(); this.buildBatch();
     }
     group(title,open) { const d = node('details',{'data-develop-group':title},[node('summary',{text:title})]); d.open = open; this.controls.append(d); return d; }

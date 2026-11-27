@@ -29,13 +29,13 @@ async function existing(file) {
 
 class TransferService {
   constructor({ onProgress = () => {}, captureDate = async () => null, recipeSettings = () => null, metadataWriter } = {}) { this.recipeSettings = recipeSettings; this.onProgress = onProgress; this.captureDate = captureDate; this.active = null; this.metadataWriter = metadataWriter || new MetadataWriter(); }
-  async copy(session, destination, { includeJpeg = false, includeXmp = false, metadataSettings, naming, folders, embedMetadata = false, verify = false } = {}) {
+  async copy(session, destination, { ids, includeJpeg = false, includeXmp = false, metadataSettings, naming, folders, embedMetadata = false, verify = false } = {}) {
     if (this.active) throw new Error('Another copy is already running.');
     const validated = normalizeSettings({ naming: naming || {}, folders: folders || {} });
     naming = validated.naming; folders = validated.folders;
     const controller = new AbortController();
     const operation = { id: randomUUID(), controller }; this.active = operation;
-    const work = this.run(operation, session, destination, { includeJpeg: includeJpeg === true, includeXmp: includeXmp === true, metadataSettings, naming, folders, embedMetadata: embedMetadata === true, verify: verify === true });
+    const work = this.run(operation, session, destination, { ids, includeJpeg: includeJpeg === true, includeXmp: includeXmp === true, metadataSettings, naming, folders, embedMetadata: embedMetadata === true, verify: verify === true });
     operation.work = work;
     try { return await work; } finally { if (this.active === operation) this.active = null; }
   }
@@ -43,7 +43,11 @@ class TransferService {
   async close() { this.cancel(); await this.active?.work?.catch(() => {}); await this.metadataWriter.close(); }
   async run(operation, session, destination, options) {
     // Capture decisions before any filesystem or destination-dialog delays.
-    const picks = session.items.filter(i => i.flag === 'pick' && !i.trashed).map(i => ({ ...i }));
+    const ids = options.ids;
+    if (ids !== undefined && (!Array.isArray(ids) || !ids.length || ids.length > session.items.length)) throw new Error('Choose photos from the open folder.');
+    const selected = ids && new Set(ids);
+    const picks = session.items.filter(i => !i.trashed && (selected ? selected.has(i.id) : i.flag === 'pick')).map(i => ({ ...i }));
+    if (selected && picks.length !== ids.length) throw new Error('The photos to copy changed. Reopen Copy picks to review them.');
     if (!picks.length) throw new Error('Pick at least one photo before copying.');
     const signal = operation.controller.signal;
     const root = await fs.realpath(destination), sourceRoot = await fs.realpath(session.folder);

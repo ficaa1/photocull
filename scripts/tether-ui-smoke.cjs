@@ -681,6 +681,14 @@ async function main() {
     await page.locator('#tether-live-meter').click();
     assert.equal(await pressed('#tether-live-meter'), 'true');
     await page.locator('#tether-meter').waitFor({ state: 'visible' });
+    const meterViewport = page.viewportSize();
+    await page.setViewportSize({ width: 1024, height: 700 });
+    await page.locator('#meter-inspector-slot #tether-meter, #meter-stage-slot #tether-meter').waitFor({state:'visible'});
+    const canvasArea = await page.locator('#tether-live-canvas').boundingBox();
+    const panelArea = await page.locator('#tether-meter').boundingBox();
+    assert.ok(panelArea.x >= canvasArea.x + canvasArea.width || panelArea.y >= canvasArea.y + canvasArea.height || panelArea.x + panelArea.width <= canvasArea.x || panelArea.y + panelArea.height <= canvasArea.y);
+    await page.setViewportSize(meterViewport);
+    await page.locator('#tether-live-viewport #tether-meter').waitFor({state:'visible'});
     const samples = id => page.evaluate(id => tether.meter.traces.get(id)?.series.values.length ?? 0, id);
     const traces = () => page.evaluate(() => Object.fromEntries([...tether.meter.traces].map(([id, t]) => [id, t.series.values.slice()])));
     const legend = () => page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#tether-meter-legend .tether-meter-trace')].map(li => [li.dataset.trace, { value: li.querySelector('.tether-meter-value').textContent, peak: li.classList.contains('at-peak') }])));
