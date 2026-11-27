@@ -18,6 +18,12 @@ Run `node --test --test-name-pattern='stable external-app arrivals' test/tether.
 
 In the native desktop app, use separate temporary incoming and capture directories. With no camera connected, start by choosing **Watch Hot Folder…**. Cancel one native pick, then select the incoming folder and confirm the dock shows it. Copy a disposable JPEG in chunks and rename a disposable RAW from a temporary extension. Try RAW first and JPEG first with matching stems, change a JPEG’s rating before its RAW arrives, and verify one counter advance and one Library item per completed pair. Confirm Follow, configured naming, initial ratings, capture metadata and Develop settings. Compare incoming names and hashes before and after. Try an overlapping capture or backup directory, a missing source, **Stop Watching**, and resuming the shoot after restarting the app. Check that USB and Wi-Fi still connect after the watch stops.
 
+## Sony camera Live View settings
+
+Run `cargo test --locked camera_live_view_settings` from `src-tauri` for scripted SDI 200 and 300 sessions. They check advertised rows, locked and missing settings, the SDI 300 Set list, exact one-byte writes and readback, and access changes after a refresh.
+
+On a supported native desktop, record the body firmware and negotiated SDI version. Use an α7 III over USB and an α7C II over USB and Wi-Fi. Check the Camera settings on connect and while streaming. Change Setting Effect on the body where the menu allows it and confirm PhotoCull updates. Where PhotoCull enables the control, set Off and On in manual exposure with a dark preview and confirm the camera menu and feed follow. Switch to a mode with a constrained menu and verify the choices or locked state update. On the α7C II in SDI 300, select Low and High where offered, verify readback and continued frame delivery, and record JPEG dimensions and size. Confirm the captured-file quality stays at its prior setting and restore the camera’s starting settings. [Wire evidence and model limits](sony-ptp-macos-spec.md#live-view)
+
 ## Develop, Dehancer and export (2026-11-05)
 
 Renderer smokes cover recipes, preview scheduling, histogram interaction, loupe geometry and export options. Native export checks exercise JPEG, JPEG XL, TIFF, PNG, AVIF and WebP; resizing, color spaces, metadata policies, skip-existing behavior and cancellation. Source hashes must remain unchanged. Develop and finished-image export require the desktop shell.

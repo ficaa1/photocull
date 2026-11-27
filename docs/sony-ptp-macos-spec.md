@@ -283,11 +283,13 @@ Hex values below omit the 0x prefix. Types refer to the PTP DataType table above
 | D221 Live View Status | u8 | 00 supported/disabled, 01 enabled, 02 unsupported (property can also be absent). A readout governs whether the host can fetch frames. |
 | D222 Still Image Save Destination | u16 | 0001 host/PC only, 0010 camera only, 0011 host and camera. M3’s actual enum is **[0001,0011]**; CM2’s is **[0001,0011,0010]**. Sony v3 defines this property as Get. Display the effective destination and direct the user to the camera menu if a change is required. |
 | D22C Focus Area | u16 | 0001 wide, 0002 zone, 0003 center; 0101/0102/0103 flexible spot S/M/L, 0104 expand flexible spot. These seven appear on M3 in the recorded state. Tracking/lock-on 0201/0202/0203 wide/zone/center, 0204/0205/0206 spot S/M/L, 0207 expand. Additional sizes are model-dependent. Show only current choices. |
+| D231 Live View Setting Effect | u8 enum | 01 On, 02 Off, 00 Unknown (readback only). M3’s SDI 200 capture reports On with GetSet 01 and IsEnabled 00. CM2’s SDI 300 capability list advertises D231. |
 | D200 Flash Compensation | i16 | Signed milli-EV. M3 includes −3000…+3000 detents. This code has no file-format function. |
 | 5004 Compression Setting | u8, legacy | M3 advertises 02 JPEG Std, 03 Fine, 04 X.Fine, 10 RAW, 12/13/14 RAW+JPEG Std/Fine/X.Fine. CM2 legacy-shaped summary adds 01 JPEG Light and 11 RAW+JPEG Light. In its SDI 300 capability dataset 5004 is absent. |
 | D253 File Format, D252 JPEG Quality | u8 each, v3 | D253: 01 RAW, 02 RAW+JPEG, 03 JPEG, 04 RAW+HEIF, 05 HEIF. D252: 01 X.Fine, 02 Fine, 03 Std, 04 Light. CM2 advertises both. |
 | D288 RAW File Type | u8, v3 | 01 compressed, 02 lossless L, 03 lossless M, 04 lossless S, 05 uncompressed, 06 unsized lossless on applicable bodies. CM2 advertises D288 and its menu offers lossless L/M/S. M3 lacks this code in the trace. D289/D28A are separate slot-specific properties where advertised. [CM2 RAW types][cm2raw] |
 | D268 PC Save Image Size, D269 PC Save Image Format | u8 each where present | D268: 01 original, 02 2M. D269: 00 disabled, 01 RAW & JPEG, 02 JPEG only, 03 RAW only, 04 RAW & HEIF, 05 HEIF only. The host file set may differ from the card file set. |
+| D26A Live View Quality | u8 enum, SDI 300 | 01 Low, 02 High. CM2’s SDI 300 capability list advertises D26A. Sony documents an effect on preview image data size and possible changes to JPEG dimensions. |
 | D232, D235, D24C, E042/E043 | various | M3 reports D232 as u32, current 00AA00FE, disabled in that snapshot. Its semantics as a writable focus coordinate were not established. Keep opaque. D235 u8 is Near/Far Enable Status, 0/1 disabled/enabled. D24C u8 reads relative focal position 0…100. CM2 advertises D235/D24C and E042/E043 (u16 absolute target/readback 0…FFFF), omits D232. Sony warns that CM2 firmware 2.00 changed focus-position calibration. Key saved positions to body, lens and firmware. [Sony firmware advisory][Sony] |
 
 **Drive brackets.** Use the exact advertised values. In M3’s exposure brackets the low 16-bit word for an N-shot centered bracket has the form `0x8000 | (N << 8) | b`. For continuous 0.3/0.5/0.7/1/2/3 EV, b = 37/57/77/11/21/31 hex. For single bracket the corresponding b = 36/56/76/10/20/30. The M3 dump has N=3/5/9 for the first four intervals, N=3/5 for 2 and 3 EV. In v3 a continuous exposure bracket has prefix 0004 in the high word and single exposure bracket 0005. Examples: 00048337 = continuous 3 at 0.3 EV, 00058536 = single 5 at 0.3 EV. Directional two-frame variants use distinct codes, e.g. 0004C237/0004C23F for +/− at 0.3. WB low/high = 8018/8028 (v3 high word 0006); DRO low/high = 8019/8029 (v3 0007). The CM2 legacy summary also advertises 8040 focus bracket; v3 defines 000A8040. The table in Sony’s Still Capture Mode section maps further variable increments. This decoding is for displaying returned values, never for generating unsupported choices. [M3 bytes][M3wire] · [CM2 dump][CM2dump] · [Sony Still Capture Mode][S3] · [gphoto drive mappings][config]
@@ -361,6 +363,14 @@ B101 = Sony RAW (ARW), 3801 = EXIF/JPEG, 3808 = JFIF, B110 = Sony HEIF. 3800 is 
 
 ## Live View
 
+The Camera settings panel shows **Live View Setting Effect** and **Live View Quality** when the negotiated capability list and current descriptor both supply the setting in its documented format. Setting Effect controls whether the camera preview reflects shooting settings. Setting Effect Off can help when framing under studio flash. Live View Quality controls the camera’s preview JPEG. The recorded file quality has its own control. [Sony camera help for Setting Effect][cm2effect] · [Sony PTP 3, August 2025, pp. 463 and 492][S325]
+
+The α7 III SDI 200 trace shows D231 as `31 d2 02 00 01 00 00 01 02 02 00 01 02` at offset 0x148 in the 9209 data container. PhotoCull displays On with the control locked in that state. libgphoto2 maps D231 to the generic Sony absolute setter for a UINT8 value when the camera allows a write. The α7C II 2.01 SDI 300 PTP/IP capability dataset lists D231 and D26A. Its capability list alone gives no current modes, flags or choices. [α7 III 9209 bytes][M3wire] · [libgphoto2 D231 choices][gphotoeffect] · [libgphoto2 absolute setter][gphotoset] · [α7C II 9202 bytes][CM2caps]
+
+PhotoCull accepts a write only with advertised operation 9205, an enabled Get/Set descriptor and a documented value in the camera’s current Set list. SDI 300 uses its two-list descriptor to determine writable choices. If the setting is locked, its current value still appears. Body changes refresh through the existing property events and polling, and each write is checked against fresh readback. D26A is qualified for SDI 300. The SDI 200 profile has evidence for D231 only.
+
+On both target bodies, aperture preview is available through a camera custom key. A Sony PC Remote control for that stopped-down preview remains unqualified. The α7C II 2.01 capability capture omits E009 and E00A. Those codes are documented as Depth of Field Adjustment Mode and its ND/gain interlocking state on other cameras. PhotoCull leaves aperture preview on the body. [α7 III Aperture Preview][m3dof] · [α7C II Aperture Preview][cm2dof] · [Sony PTP 3, August 2025, pp. 542–543][S325] · [α7C II 9202 bytes][CM2caps]
+
 Wait for D221 = 01. For SDI 3.00, use **1008(FFFFC002) once** at stream startup. Its ObjectCompressedSize is an estimated worst case, useful as an allocation hint. Fetch a frame with **1009(FFFFC002)**. Sony specifies 2009 if Live View is disabled. A too-early frame may come with zero image size and 200F. Recheck status if persistent. In its multi-model implementation libgphoto2 also queries 1008, retries a temporarily invalid handle after 50 ms and backs off 20 ms on access denied. The PTP 2 sequence also shows 1008 followed by 1009. Verify on M3 firmware whether a single initial 1008 suffices for a sustained stream. The preview is polled as a still object. [Sony PTP 2 sequence and dataset pp. 14, 22][S2] · [Sony PTP 3 GetObject/GetObjectInfo pp. 66–67][S3] · [upstream Sony preview][lib]
 
 | Payload offset | SDI 2.00 | SDI 3.00 |
@@ -425,12 +435,17 @@ The legacy profile is specified in **Sony Camera Control PTP 2 Reference, April 
 [m3dest]: https://helpguide.sony.net/ilc/1720/v1/en/contents/TP0001661953.html
 [m3format]: https://helpguide.sony.net/ilc/1720/v1/en/contents/TP0001661944.html
 [m3power]: https://helpguide.sony.net/ilc/1720/v1/en/contents/TP0001653178.html
+[m3dof]: https://helpguide.sony.net/ilc/1720/v1/en/contents/TP0001629742.html
 [cm2menu]: https://helpguide.sony.net/ilc/2360/v1/en/contents/0601_usb_connection.html
 [cm2connect]: https://helpguide.sony.net/ilc/2360/v1/en/contents/0903_pc_remote_function.html
 [cm2dest]: https://helpguide.sony.net/ilc/2360/v1/en/contents/201h_remote_shoot_setting.html
 [cm2power]: https://helpguide.sony.net/ilc/2360/v1/en/contents/0601B_usb_power_supply.html
 [cm2format]: https://helpguide.sony.net/ilc/2360/v1/en/contents/0404M_file_format.html
 [cm2raw]: https://helpguide.sony.net/ilc/2360/v1/en/contents/0404I_raw_file_type.html
+[cm2effect]: https://helpguide.sony.net/ilc/2360/v1/en/contents/0414_live_view_disp_set.html
+[cm2dof]: https://helpguide.sony.net/ilc/2360/v1/en/contents/0414_aperture_preview.html
+[gphotoeffect]: https://github.com/gphoto/libgphoto2/blob/6d5c61ef7687b74fe792e4aeae7fc40f2ad42d88/camlibs/ptp2/config.c#L8304-L8308
+[gphotoset]: https://github.com/gphoto/libgphoto2/blob/6d5c61ef7687b74fe792e4aeae7fc40f2ad42d88/camlibs/ptp2/ptp.c#L4870-L4889
 [ICC]: https://developer.apple.com/documentation/imagecapturecore
 [send]: https://developer.apple.com/documentation/imagecapturecore/iccameradevice/requestsendptpcommand(_:outdata:completion:)
 [device]: https://developer.apple.com/documentation/imagecapturecore/icdevice

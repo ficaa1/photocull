@@ -398,7 +398,7 @@ impl HostRole {
     }
 }
 
-const PANEL: [(&str, &str, u16); 26] = [
+const PANEL: [(&str, &str, u16); 28] = [
     ("program", "Mode", prop::EXPOSURE_PROGRAM),
     ("shutter", "Shutter", prop::SHUTTER_SPEED),
     ("aperture", "Aperture", prop::F_NUMBER),
@@ -429,6 +429,16 @@ const PANEL: [(&str, &str, u16); 26] = [
     ("battery", "Battery", prop::BATTERY_REMAINING),
     ("focusIndication", "Focus", prop::FOCUS_INDICATION),
     ("focalPosition", "Focus position", prop::FOCAL_POSITION),
+    (
+        "liveViewSettingEffect",
+        "Live View Setting Effect",
+        prop::LIVE_VIEW_SETTING_EFFECT,
+    ),
+    (
+        "liveViewQuality",
+        "Live View Quality",
+        prop::LIVE_VIEW_QUALITY,
+    ),
 ];
 
 /// Panel key for a property code, with `quality` covering both the legacy and v3 file format.
@@ -825,9 +835,11 @@ impl<T: PtpTransport> SonySession<T> {
                 return Err(e.into());
             }
         };
+        let live_view_writes = self.live_view_settings_can_write();
         self.rejected_snapshot = snapshot.ambiguous.then_some(data);
         self.ambiguous = snapshot.ambiguous;
         self.grammar = Some(snapshot.grammar);
+        let live_view_access_changed = self.live_view_settings_can_write() != live_view_writes;
         let next: BTreeMap<u16, DevicePropDesc> = snapshot
             .descriptors
             .into_iter()
@@ -835,7 +847,10 @@ impl<T: PtpTransport> SonySession<T> {
             .collect();
         let mut changed: Vec<u16> = next
             .iter()
-            .filter(|(code, d)| self.props.get(code) != Some(d))
+            .filter(|(code, d)| {
+                self.props.get(code) != Some(d)
+                    || (live_view_access_changed && prop::is_live_view_setting(**code))
+            })
             .map(|(code, _)| *code)
             .collect();
         changed.extend(self.props.keys().filter(|c| !next.contains_key(c)));
@@ -1231,6 +1246,40 @@ impl<T: PtpTransport> SonySession<T> {
         }
     }
 
+    fn panel_descriptor(&self, code: u16) -> Option<&DevicePropDesc> {
+        let desc = self.property(code)?;
+        if prop::is_live_view_setting(code)
+            && (!desc.has_live_view_setting_format(self.version)
+                || !self.ext.as_ref().is_some_and(|ext| ext.has_property(code)))
+        {
+            return None;
+        }
+        Some(desc)
+    }
+
+    fn property_write_route(&self, desc: &DevicePropDesc) -> WriteRoute {
+        let can_write = if prop::is_live_view_setting(desc.code) {
+            self.live_view_settings_can_write()
+        } else {
+            !self.ambiguous
+        };
+        if can_write {
+            codec::write_route(desc, self.version)
+        } else {
+            WriteRoute::ReadOnly
+        }
+    }
+
+    fn live_view_settings_can_write(&self) -> bool {
+        !self.ambiguous
+            // A single v3 list cannot distinguish the Set choices from the reportable values.
+            && (self.version < codec::SDI_300 || self.grammar == Some(Grammar::TwoList))
+            && self
+                .device
+                .as_ref()
+                .is_some_and(|info| info.supports(op::SDIO_SET_EXT_DEVICE_PROP_VALUE))
+    }
+
     /// Writes `value_id` after checking the expected revision: a choice ID for lists, a decimal
     /// number for ranges, or `inc`/`dec`/a signed step for detent controls. Reads back and
     /// returns the changed codes.
@@ -1241,7 +1290,7 @@ impl<T: PtpTransport> SonySession<T> {
         expected_rev: Option<u64>,
     ) -> Result<Vec<u16>> {
         self.require_ready()?;
-        let desc = self.props.get(&code).cloned().ok_or_else(|| {
+        let desc = self.panel_descriptor(code).cloned().ok_or_else(|| {
             SessionError::Unsupported("The camera does not report this setting.".into())
         })?;
         if let Some(rev) = expected_rev {
@@ -1250,10 +1299,7 @@ impl<T: PtpTransport> SonySession<T> {
                 return Err(SessionError::StaleRevision { current });
             }
         }
-        if self.ambiguous {
-            return Err(SessionError::Locked(self.lock_reason(&desc)));
-        }
-        match codec::write_route(&desc, self.version) {
+        match self.property_write_route(&desc) {
             WriteRoute::ReadOnly => Err(SessionError::Locked(self.lock_reason(&desc))),
             WriteRoute::Absolute => {
                 let parsed = match desc.form {
@@ -1794,10 +1840,14 @@ impl<T: PtpTransport> SonySession<T> {
         code_for_key(key, self.props.contains_key(&prop::COMPRESSION))
     }
 
-    fn choices(&self, code: u16, values: &[PropValue]) -> Vec<Choice> {
+    fn choices<'a>(
+        &self,
+        code: u16,
+        values: impl IntoIterator<Item = &'a PropValue>,
+    ) -> Vec<Choice> {
         let menu = self.profile.current_menu();
         values
-            .iter()
+            .into_iter()
             .map(|v| Choice {
                 id: v.id(),
                 label: codec::value_label(code, v, menu),
@@ -1812,11 +1862,7 @@ impl<T: PtpTransport> SonySession<T> {
         desc: &DevicePropDesc,
     ) -> CameraProperty {
         let menu = self.profile.current_menu();
-        let route = if self.ambiguous {
-            WriteRoute::ReadOnly
-        } else {
-            codec::write_route(desc, self.version)
-        };
+        let route = self.property_write_route(desc);
         let readings = [
             prop::BATTERY_REMAINING,
             prop::FOCUS_INDICATION,
@@ -1868,15 +1914,9 @@ impl<T: PtpTransport> SonySession<T> {
             items
         } else {
             match (&desc.form, kind) {
-                (
-                    Form::Enum {
-                        writable,
-                        reportable,
-                    },
-                    PropertyKind::Enum,
-                ) => {
+                (Form::Enum { reportable, .. }, PropertyKind::Enum) => {
                     if access == Access::ReadWrite {
-                        self.choices(desc.code, writable)
+                        self.choices(desc.code, desc.writable_enum_values())
                     } else {
                         self.choices(desc.code, reportable)
                     }
@@ -1938,7 +1978,8 @@ impl<T: PtpTransport> SonySession<T> {
                 } else {
                     *code
                 };
-                self.props.get(&code).map(|d| self.describe(key, label, d))
+                self.panel_descriptor(code)
+                    .map(|d| self.describe(key, label, d))
             })
             .collect()
     }
@@ -3567,6 +3608,161 @@ mod tests {
         assert!(matches!(
             s.set_property(prop::SAVE_DESTINATION, "0001", None),
             Err(SessionError::Locked(m)) if m.contains("Remote Shoot Setting")
+        ));
+        s.transport().finish();
+    }
+
+    fn panel_property(s: &SonySession<ScriptedTransport>, key: &str) -> CameraProperty {
+        s.camera_properties()
+            .into_iter()
+            .find(|p| p.key == key)
+            .unwrap()
+    }
+
+    #[test]
+    fn camera_live_view_settings_respect_legacy_access() {
+        let mut descs = m3_descriptors();
+        let mut s = m3(descs.clone());
+        let code = s.code_for_key("liveViewSettingEffect").unwrap();
+        assert_eq!(code, 0xD231);
+        let effect = panel_property(&s, "liveViewSettingEffect");
+        assert_eq!(
+            (effect.kind, effect.access, effect.display.as_str()),
+            (PropertyKind::Enum, Access::ReadOnly, "On")
+        );
+        assert!(matches!(
+            s.set_property(code, "02", Some(effect.prop_rev)),
+            Err(SessionError::Locked(reason)) if reason.contains("current mode")
+        ));
+        assert!(s
+            .camera_properties()
+            .iter()
+            .all(|p| p.key != "liveViewQuality"));
+        assert!(matches!(
+            s.set_property(0xD26A, "02", None),
+            Err(SessionError::Unsupported(_))
+        ));
+
+        descs
+            .iter_mut()
+            .find(|d| d.code == code)
+            .unwrap()
+            .is_enabled = 1;
+        let enabled = codec::encode_snapshot(&descs, Grammar::SingleList);
+        snapshot(s.transport_mut(), enabled.clone());
+        assert_eq!(s.refresh_properties().unwrap(), [0xD231]);
+        let effect = panel_property(&s, "liveViewSettingEffect");
+        assert_eq!(effect.access, Access::ReadWrite);
+        let t = s.transport_mut();
+        expect_out(t, 0x9205, &[0xD231], &[0x02]);
+        let readback = with_current(descs, code, PropValue::U8(2));
+        snapshot(t, codec::encode_snapshot(&readback, Grammar::SingleList));
+        assert_eq!(
+            s.set_property(code, "02", Some(effect.prop_rev)).unwrap(),
+            [0xD231]
+        );
+        assert_eq!(panel_property(&s, "liveViewSettingEffect").display, "Off");
+        s.transport().finish();
+
+        let mut info = device_info("ILCE-7M3");
+        info.operations.retain(|op| *op != 0x9205);
+        let mut t = ScriptedTransport::new();
+        m3_handshake_as(&mut t, info, enabled);
+        let mut s = SonySession::new(t, SessionConfig::default());
+        s.connect().unwrap();
+        assert_eq!(
+            panel_property(&s, "liveViewSettingEffect").access,
+            Access::ReadOnly
+        );
+        assert!(matches!(
+            s.set_property(code, "02", None),
+            Err(SessionError::Locked(_))
+        ));
+        s.transport().finish();
+    }
+
+    #[test]
+    fn camera_live_view_settings_follow_v3_set_lists_and_readback() {
+        let mut descs = cm2_descriptors();
+        descs.iter_mut().find(|d| d.code == 0xD231).unwrap().get_set = 0;
+        let quality = descs.iter_mut().find(|d| d.code == 0xD26A).unwrap();
+        quality.form = Form::Enum {
+            writable: vec![PropValue::U8(2), PropValue::U8(0x7F)],
+            reportable: vec![PropValue::U8(1), PropValue::U8(2), PropValue::U8(0x7F)],
+        };
+        let mut s = cm2(descs.clone());
+        let effect = panel_property(&s, "liveViewSettingEffect");
+        assert_eq!(effect.access, Access::ReadOnly);
+        assert_eq!(effect.choices[0].label, "Unknown");
+        assert!(matches!(
+            s.set_property(0xD231, "02", None),
+            Err(SessionError::Locked(_))
+        ));
+
+        let code = s.code_for_key("liveViewQuality").unwrap();
+        assert_eq!(code, 0xD26A);
+        let quality = panel_property(&s, "liveViewQuality");
+        assert_eq!(
+            (quality.kind, quality.access, quality.display.as_str()),
+            (PropertyKind::Enum, Access::ReadWrite, "Low")
+        );
+        let choices: Vec<_> = quality
+            .choices
+            .iter()
+            .map(|c| (c.id.as_str(), c.label.as_str()))
+            .collect();
+        assert_eq!(choices, [("02", "High")]);
+        for invalid in ["01", "7F"] {
+            assert!(matches!(
+                s.set_property(code, invalid, Some(quality.prop_rev)),
+                Err(SessionError::InvalidValue(_))
+            ));
+        }
+        let t = s.transport_mut();
+        expect_out(t, 0x9205, &[0xD26A], &[0x02]);
+        let readback = with_current(descs, code, PropValue::U8(2));
+        snapshot(t, codec::encode_snapshot(&readback, Grammar::TwoList));
+        assert_eq!(
+            s.set_property(code, "02", Some(quality.prop_rev)).unwrap(),
+            [0xD26A]
+        );
+        let current = panel_property(&s, "liveViewQuality");
+        assert_eq!(current.display, "High");
+        assert!(current.prop_rev > quality.prop_rev);
+
+        // Equal lists isolate the access change from the raw descriptor change.
+        let equal_lists = with_current(cm2_descriptors(), code, PropValue::U8(2));
+        let only_quality = equal_lists
+            .into_iter()
+            .filter(|d| d.code == code)
+            .collect::<Vec<_>>();
+        snapshot(
+            s.transport_mut(),
+            codec::encode_snapshot(&only_quality, Grammar::TwoList),
+        );
+        let changed = s.refresh_properties().unwrap();
+        assert!(changed.contains(&0xD231));
+        assert!(s
+            .camera_properties()
+            .iter()
+            .all(|p| p.key != "liveViewSettingEffect"));
+        assert!(matches!(
+            s.set_property(0xD231, "02", None),
+            Err(SessionError::Unsupported(_))
+        ));
+        let rw = panel_property(&s, "liveViewQuality");
+        assert_eq!(rw.access, Access::ReadWrite);
+        snapshot(
+            s.transport_mut(),
+            codec::encode_snapshot(&only_quality, Grammar::SingleList),
+        );
+        assert_eq!(s.refresh_properties().unwrap(), [0xD26A]);
+        let ro = panel_property(&s, "liveViewQuality");
+        assert_eq!((ro.access, ro.display.as_str()), (Access::ReadOnly, "High"));
+        assert!(ro.prop_rev > rw.prop_rev);
+        assert!(matches!(
+            s.set_property(code, "01", None),
+            Err(SessionError::Locked(_))
         ));
         s.transport().finish();
     }

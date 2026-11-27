@@ -64,6 +64,7 @@ pub mod prop {
     pub const FOCUS_AREA: u16 = 0xD22C;
     pub const MAGNIFIER_STATUS: u16 = 0xD22D;
     pub const MAGNIFIER_RATIO: u16 = 0xD22F;
+    pub const LIVE_VIEW_SETTING_EFFECT: u16 = 0xD231;
     pub const FOCUS_COORDINATE: u16 = 0xD232;
     pub const NEAR_FAR_ENABLE: u16 = 0xD235;
     pub const FOCAL_POSITION: u16 = 0xD24C;
@@ -75,6 +76,10 @@ pub mod prop {
     pub const PC_SAVE_FORMAT: u16 = 0xD269;
     pub const LIVE_VIEW_QUALITY: u16 = 0xD26A;
     pub const RAW_FILE_TYPE: u16 = 0xD288;
+
+    pub fn is_live_view_setting(code: u16) -> bool {
+        matches!(code, LIVE_VIEW_SETTING_EFFECT | LIVE_VIEW_QUALITY)
+    }
 }
 
 /// Sony control codes (9207).
@@ -362,13 +367,34 @@ impl DevicePropDesc {
         self.current.as_i128()
     }
 
+    pub fn has_live_view_setting_format(&self, sdi_version: u16) -> bool {
+        self.data_type == dtype::UINT8
+            && matches!(self.form, Form::Enum { .. })
+            && match self.code {
+                prop::LIVE_VIEW_SETTING_EFFECT => true,
+                prop::LIVE_VIEW_QUALITY => sdi_version >= SDI_300,
+                _ => false,
+            }
+    }
+
+    pub fn writable_enum_values(&self) -> impl Iterator<Item = &PropValue> {
+        let values = match &self.form {
+            Form::Enum { writable, .. } => writable.as_slice(),
+            _ => &[],
+        };
+        let live_view = prop::is_live_view_setting(self.code);
+        values.iter().filter(move |value| {
+            !live_view || live_view_setting_choice_label(self.code, value).is_some()
+        })
+    }
+
     /// Whether `value` is an advertised write choice.
     pub fn accepts(&self, value: &PropValue) -> bool {
         if value.data_type() != self.data_type {
             return false;
         }
         match &self.form {
-            Form::Enum { writable, .. } => writable.contains(value),
+            Form::Enum { .. } => self.writable_enum_values().any(|choice| choice == value),
             Form::Range { min, max, step } => {
                 let (Some(v), Some(lo), Some(hi), Some(st)) = (
                     value.as_i128(),
@@ -1197,6 +1223,16 @@ pub fn pc_save_format_label(v: u8) -> Option<&'static str> {
     })
 }
 
+fn live_view_setting_choice_label(code: u16, value: &PropValue) -> Option<&'static str> {
+    match (code, value) {
+        (prop::LIVE_VIEW_SETTING_EFFECT, PropValue::U8(1)) => Some("On"),
+        (prop::LIVE_VIEW_SETTING_EFFECT, PropValue::U8(2)) => Some("Off"),
+        (prop::LIVE_VIEW_QUALITY, PropValue::U8(1)) => Some("Low"),
+        (prop::LIVE_VIEW_QUALITY, PropValue::U8(2)) => Some("High"),
+        _ => None,
+    }
+}
+
 /// Human label for any property value; unknown values stay readable as raw hex.
 pub fn value_label(code: u16, value: &PropValue, current_menu: bool) -> String {
     let bits = value.bits();
@@ -1246,6 +1282,12 @@ pub fn value_label(code: u16, value: &PropValue, current_menu: bool) -> String {
                 _ => None,
             },
             prop::LIVE_VIEW_STATUS => Some(live_view_status_label(u8v).into()),
+            prop::LIVE_VIEW_SETTING_EFFECT if matches!(value, PropValue::U8(0)) => {
+                Some("Unknown".into())
+            }
+            prop::LIVE_VIEW_SETTING_EFFECT | prop::LIVE_VIEW_QUALITY => {
+                live_view_setting_choice_label(code, value).map(String::from)
+            }
             prop::SAVE_DESTINATION => save_destination_label(u16v, current_menu).map(String::from),
             prop::FOCUS_AREA => focus_area_label(u16v).map(String::from),
             prop::COMPRESSION => compression_label(u8v).map(String::from),
@@ -1325,8 +1367,8 @@ const ABSOLUTE_CODES: [u16; 17] = [
 /// Write dispatch per property: SDI 200 exposure readouts move by notches; v3 exposure and the
 /// ordinary settings are absolute. Program mode and save destination are camera-owned.
 pub fn write_route(desc: &DevicePropDesc, sdi_version: u16) -> WriteRoute {
-    let has_choices = matches!(&desc.form, Form::Enum { writable, .. } if !writable.is_empty())
-        || matches!(desc.form, Form::Range { .. });
+    let has_choices =
+        desc.writable_enum_values().next().is_some() || matches!(desc.form, Form::Range { .. });
     if !has_choices || desc.is_enabled != 1 {
         return WriteRoute::ReadOnly;
     }
@@ -1340,7 +1382,12 @@ pub fn write_route(desc: &DevicePropDesc, sdi_version: u16) -> WriteRoute {
             WriteRoute::ReadOnly
         };
     }
-    if ABSOLUTE_CODES.contains(&desc.code) && desc.get_set == 1 {
+    let absolute = if prop::is_live_view_setting(desc.code) {
+        desc.has_live_view_setting_format(sdi_version)
+    } else {
+        ABSOLUTE_CODES.contains(&desc.code)
+    };
+    if absolute && desc.get_set == 1 {
         WriteRoute::Absolute
     } else {
         WriteRoute::ReadOnly
